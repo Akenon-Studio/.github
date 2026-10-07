@@ -11,7 +11,10 @@ never code, secrets or product plans.
 | `.github/workflows/pr-title.yml` | Reusable check: PR titles must be conventional commits |
 | `rulesets/` | Branch and tag rules, repo merge settings, and which repos they apply to |
 | `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only) |
-| `scripts/verify-settings.py` | Checks live GitHub settings match `rulesets/` and the org settings |
+| `rulesets/board.json` | The org project board's fields and linked repos |
+| `rulesets/board-views.md` | Exact specs for the board's nine views, made by hand (no API) |
+| `scripts/apply-board.py` | Creates or updates the board from `rulesets/board.json` |
+| `scripts/verify-settings.py` | Checks live GitHub settings match `rulesets/`, the org settings and the board |
 | `profile/README.md` | The public org profile |
 | `SECURITY.md`, `CONTRIBUTING.md` | Org-wide security policy and contribution rules |
 

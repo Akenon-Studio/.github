@@ -1,0 +1,213 @@
+{
+  "_comment": "The org project board (design 6.6). apply-board.py creates it and its fields; verify-settings.py checks them. Type (issue type) and Owner (Assignees) are GitHub's built-in fields. Views cannot be scripted: see board-views.md. Single-select option names match the issue form answers exactly.",
+  "title": "Akenon Studio",
+  "description": "All work across the org: one board, every repo. Fields come from the issue forms.",
+  "fields": [
+    {
+      "name": "Status",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Todo",
+          "color": "GRAY",
+          "description": "Not started"
+        },
+        {
+          "name": "In progress",
+          "color": "BLUE",
+          "description": "Someone is working on it"
+        },
+        {
+          "name": "Waiting for human",
+          "color": "ORANGE",
+          "description": "Paused until a person answers or reviews"
+        },
+        {
+          "name": "Blocked",
+          "color": "RED",
+          "description": "Cannot move until something else is done"
+        },
+        {
+          "name": "In review",
+          "color": "PURPLE",
+          "description": "PR open, waiting for approval"
+        },
+        {
+          "name": "Done",
+          "color": "GREEN",
+          "description": "Finished"
+        }
+      ]
+    },
+    {
+      "name": "Discipline",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Software",
+          "color": "BLUE",
+          "description": ""
+        },
+        {
+          "name": "Animation",
+          "color": "PURPLE",
+          "description": ""
+        },
+        {
+          "name": "Hardware",
+          "color": "ORANGE",
+          "description": ""
+        },
+        {
+          "name": "Brand",
+          "color": "PINK",
+          "description": ""
+        },
+        {
+          "name": "Marketing",
+          "color": "YELLOW",
+          "description": ""
+        },
+        {
+          "name": "Legal and admin",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Phase",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "1",
+          "color": "GREEN",
+          "description": "Bring the code up to standard"
+        },
+        {
+          "name": "2",
+          "color": "BLUE",
+          "description": "The enforced workflow (Peras)"
+        },
+        {
+          "name": "3",
+          "color": "PURPLE",
+          "description": "Features"
+        }
+      ]
+    },
+    {
+      "name": "Priority",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Urgent",
+          "color": "RED",
+          "description": ""
+        },
+        {
+          "name": "High",
+          "color": "ORANGE",
+          "description": ""
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": ""
+        },
+        {
+          "name": "Low",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Iteration",
+      "type": "ITERATION",
+      "_comment": "Weekly, Saturday to Friday: the Friday planning meeting closes one week and commits the next.",
+      "start_date": "2026-10-03",
+      "duration": 7
+    },
+    {
+      "name": "Audit",
+      "type": "SINGLE_SELECT",
+      "_comment": "Audit findings only, phase 1. Options match the Audit finding form.",
+      "options": [
+        {
+          "name": "Secrets and access",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Legal and IP",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Code quality",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Docs",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Release readiness",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Onboarding",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Privacy",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Hardware",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Severity",
+      "type": "SINGLE_SELECT",
+      "_comment": "Audit findings only, phase 1.",
+      "options": [
+        {
+          "name": "Critical",
+          "color": "RED",
+          "description": ""
+        },
+        {
+          "name": "High",
+          "color": "ORANGE",
+          "description": ""
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": ""
+        },
+        {
+          "name": "Low",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Peras",
+      "type": "TEXT",
+      "_comment": "Cycle state and link, intents only. Set by Peras, never by hand."
+    }
+  ],
+  "linked_repos": "managed"
+}
