@@ -9,6 +9,9 @@ never code, secrets or product plans.
 | `.github/ISSUE_TEMPLATE/` | The issue forms every repo uses (blank issues are off) |
 | `.github/PULL_REQUEST_TEMPLATE.md` | The PR template every repo uses |
 | `.github/workflows/pr-title.yml` | Reusable check: PR titles must be conventional commits |
+| `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps with `needs-fields` |
+| `scripts/issue_fields.py` | What that workflow runs; the forms are its only definition of what is required |
+| `tests/` | Unit tests (`python3 -m unittest discover tests`), run by `.github/workflows/tests.yml` |
 | `rulesets/` | Branch and tag rules, repo merge settings, and which repos they apply to |
 | `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only) |
 | `rulesets/board.json` | The org project board: fields, linked repos and the nine views |
@@ -27,3 +30,10 @@ Why it works this way: `handbook` → modernisation design, sections 6.2 and 6.6
 
 Org-level rulesets need GitHub Enterprise, so on GitHub Team every repo carries its own copy of the
 same rules, applied by the script. The verify script catches any repo that drifts.
+
+## New repos
+
+Every repo carries two small caller workflows, copied from this repo: `pr-title-caller.yml` and
+`issue-fields-caller.yml` (in the copy, `uses:` points at
+`akenon-studio/.github/.github/workflows/<name>.yml@main`). The issue automation logs in as the
+org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.
