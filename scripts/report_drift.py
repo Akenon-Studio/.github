@@ -52,10 +52,6 @@ the change made properly in a PR to `rulesets/`.
 
 Software
 
-### Phase
-
-1
-
 ### Priority
 
 High

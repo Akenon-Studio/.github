@@ -76,27 +76,6 @@
       ]
     },
     {
-      "name": "Phase",
-      "type": "SINGLE_SELECT",
-      "options": [
-        {
-          "name": "1",
-          "color": "GREEN",
-          "description": "Bring the code up to standard"
-        },
-        {
-          "name": "2",
-          "color": "BLUE",
-          "description": "The enforced workflow (Peras)"
-        },
-        {
-          "name": "3",
-          "color": "PURPLE",
-          "description": "Features"
-        }
-      ]
-    },
-    {
       "name": "Priority",
       "type": "SINGLE_SELECT",
       "options": [
@@ -267,7 +246,6 @@
       "fields": [
         "Title",
         "Discipline",
-        "Phase",
         "Priority",
         "Assignees",
         "Repository"
@@ -346,7 +324,7 @@
     {
       "name": "Audit",
       "layout": "TABLE_LAYOUT",
-      "filter": "is:open type:\"Audit finding\",Decision phase:1",
+      "filter": "is:open type:\"Audit finding\",Decision",
       "fields": [
         "Title",
         "Audit",
@@ -359,7 +337,7 @@
         "Severity",
         "ASC"
       ],
-      "_comment": "Phase 1 only; delete this view from board.json when phase 1 ends."
+      "_comment": "Phase 1 only (audit findings exist only in phase 1); delete this view from board.json when phase 1 ends."
     }
   ]
 }

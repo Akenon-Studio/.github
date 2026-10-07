@@ -55,13 +55,6 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: phase
-    attributes:
-      label: Phase
-      options: ["1", "2", "3"]
-    validations:
-      required: true
-  - type: dropdown
     id: priority
     attributes:
       label: Priority
