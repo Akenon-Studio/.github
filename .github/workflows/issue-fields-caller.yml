@@ -1,0 +1,13 @@
+name: issue-fields-caller
+
+on:
+  issues:
+    types: [opened, edited, reopened, typed, untyped]
+
+permissions:
+  contents: read
+
+jobs:
+  issue-fields:
+    uses: ./.github/workflows/issue-fields.yml
+    secrets: inherit

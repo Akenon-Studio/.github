@@ -1,0 +1,51 @@
+# Reusable: puts an issue on the org board with its fields filled from the form answers, and flags
+# missing or invalid answers with the needs-fields label (design 6.6; scripts/issue_fields.py).
+# Every repo (this one included, see issue-fields-caller.yml) calls it with:
+#
+#   on: { issues: { types: [opened, edited, reopened, typed, untyped] } }
+#   jobs: { issue-fields: { uses: akenon-studio/.github/.github/workflows/issue-fields.yml@main,
+#                           secrets: inherit } }
+#
+# GITHUB_TOKEN cannot write to an org board, so this logs in as the org's GitHub App: org
+# variable AKENON_APP_ID and org secret AKENON_APP_PRIVATE_KEY.
+name: issue-fields
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # opened and typed arrive together for a new issue; handle them one at a time
+  group: issue-fields-${{ github.repository }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get the scripts and forms
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          persist-credentials: false
+
+      - name: Log in as the org app
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Sync the issue to the board
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          pip install --quiet pyyaml
+          python3 scripts/issue_fields.py "$REPO" "$NUMBER"
