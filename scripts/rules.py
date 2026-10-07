@@ -57,6 +57,30 @@ def repo_rulesets(repo):
     return out
 
 
+# GraphQL names for the settings in repo-settings.json. Read through GraphQL because the REST API
+# hides merge settings from read-only callers such as the daily check's app.
+REPO_SETTINGS_GRAPHQL = {
+    "allow_squash_merge": "squashMergeAllowed",
+    "allow_merge_commit": "mergeCommitAllowed",
+    "allow_rebase_merge": "rebaseMergeAllowed",
+    "allow_auto_merge": "autoMergeAllowed",
+    "allow_update_branch": "allowUpdateBranch",
+    "delete_branch_on_merge": "deleteBranchOnMerge",
+    "squash_merge_commit_title": "squashMergeCommitTitle",
+    "squash_merge_commit_message": "squashMergeCommitMessage",
+    "has_wiki": "hasWikiEnabled",
+}
+
+
+def repo_settings(repo):
+    """A repo's settings from repo-settings.json, keyed by their REST names."""
+    fields = " ".join(REPO_SETTINGS_GRAPHQL.values())
+    query = f'query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields} }} }}'
+    res = gh("graphql", body={"query": query, "variables": {"o": ORG, "n": repo}})
+    live = res["data"]["repository"]
+    return {rest: live[name] for rest, name in REPO_SETTINGS_GRAPHQL.items()}
+
+
 def differences(want, have, path=""):
     """Every place `have` falls short of `want`. Extra keys GitHub adds in `have` are ignored."""
     diffs = []
