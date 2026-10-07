@@ -1,0 +1,365 @@
+{
+  "_comment": "The org project board (design 6.6). apply-board.py creates the board, its fields, linked repos and views; verify-settings.py checks them. Owner is the built-in Assignees field; Type is the issue type, usable in filters but not as a column through the API. The API can set a view's name, layout, filter and columns but not its grouping, sorting or board column field: apply-board.py lists those as steps to do by hand, and verify-settings.py checks them. Single-select option names match the issue form answers exactly.",
+  "title": "Akenon Studio",
+  "description": "All work across the org: one board, every repo. Fields come from the issue forms.",
+  "fields": [
+    {
+      "name": "Status",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Todo",
+          "color": "GRAY",
+          "description": "Not started"
+        },
+        {
+          "name": "In progress",
+          "color": "BLUE",
+          "description": "Someone is working on it"
+        },
+        {
+          "name": "Waiting for human",
+          "color": "ORANGE",
+          "description": "Paused until a person answers or reviews"
+        },
+        {
+          "name": "Blocked",
+          "color": "RED",
+          "description": "Cannot move until something else is done"
+        },
+        {
+          "name": "In review",
+          "color": "PURPLE",
+          "description": "PR open, waiting for approval"
+        },
+        {
+          "name": "Done",
+          "color": "GREEN",
+          "description": "Finished"
+        }
+      ]
+    },
+    {
+      "name": "Discipline",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Software",
+          "color": "BLUE",
+          "description": ""
+        },
+        {
+          "name": "Animation",
+          "color": "PURPLE",
+          "description": ""
+        },
+        {
+          "name": "Hardware",
+          "color": "ORANGE",
+          "description": ""
+        },
+        {
+          "name": "Brand",
+          "color": "PINK",
+          "description": ""
+        },
+        {
+          "name": "Marketing",
+          "color": "YELLOW",
+          "description": ""
+        },
+        {
+          "name": "Legal and admin",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Phase",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "1",
+          "color": "GREEN",
+          "description": "Bring the code up to standard"
+        },
+        {
+          "name": "2",
+          "color": "BLUE",
+          "description": "The enforced workflow (Peras)"
+        },
+        {
+          "name": "3",
+          "color": "PURPLE",
+          "description": "Features"
+        }
+      ]
+    },
+    {
+      "name": "Priority",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Urgent",
+          "color": "RED",
+          "description": ""
+        },
+        {
+          "name": "High",
+          "color": "ORANGE",
+          "description": ""
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": ""
+        },
+        {
+          "name": "Low",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Iteration",
+      "type": "ITERATION",
+      "_comment": "Weekly, Saturday to Friday: the Friday planning meeting closes one week and commits the next.",
+      "start_date": "2026-10-03",
+      "duration": 7
+    },
+    {
+      "name": "Audit",
+      "type": "SINGLE_SELECT",
+      "_comment": "Audit findings only, phase 1. Options match the Audit finding form.",
+      "options": [
+        {
+          "name": "Secrets and access",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Legal and IP",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Code quality",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Docs",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Release readiness",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Onboarding",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Privacy",
+          "color": "GRAY",
+          "description": ""
+        },
+        {
+          "name": "Hardware",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Severity",
+      "type": "SINGLE_SELECT",
+      "_comment": "Audit findings only, phase 1.",
+      "options": [
+        {
+          "name": "Critical",
+          "color": "RED",
+          "description": ""
+        },
+        {
+          "name": "High",
+          "color": "ORANGE",
+          "description": ""
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": ""
+        },
+        {
+          "name": "Low",
+          "color": "GRAY",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Peras",
+      "type": "TEXT",
+      "_comment": "Cycle state and link, intents only. Set by Peras, never by hand."
+    }
+  ],
+  "linked_repos": "managed",
+  "views": [
+    {
+      "name": "Needs a human",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open -label:needs-fields status:\"Waiting for human\",\"In review\"",
+      "fields": [
+        "Title",
+        "Status",
+        "Assignees",
+        "Repository",
+        "Peras",
+        "Linked pull requests"
+      ],
+      "group_by": "Status",
+      "sort": [
+        "Created",
+        "ASC"
+      ],
+      "_comment": "Filters cannot OR across fields, so this relies on Status: a new Decision starts in Waiting for human (form automation), an issue whose PR awaits review is In review, and Peras sets Waiting for human when a cycle pauses."
+    },
+    {
+      "name": "This week",
+      "layout": "BOARD_LAYOUT",
+      "filter": "-label:needs-fields iteration:@current",
+      "fields": [
+        "Title",
+        "Assignees",
+        "Status",
+        "Discipline",
+        "Priority"
+      ],
+      "column": "Status"
+    },
+    {
+      "name": "My work",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open -label:needs-fields assignee:@me -status:Done",
+      "fields": [
+        "Title",
+        "Status",
+        "Priority",
+        "Iteration",
+        "Repository"
+      ],
+      "group_by": "Status",
+      "sort": [
+        "Priority",
+        "ASC"
+      ]
+    },
+    {
+      "name": "Backlog",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open -label:needs-fields no:iteration -status:Done",
+      "fields": [
+        "Title",
+        "Discipline",
+        "Phase",
+        "Priority",
+        "Assignees",
+        "Repository"
+      ],
+      "group_by": "Discipline",
+      "sort": [
+        "Priority",
+        "ASC"
+      ],
+      "_comment": "Unplanned work, for Friday planning."
+    },
+    {
+      "name": "By discipline",
+      "layout": "BOARD_LAYOUT",
+      "filter": "is:open -label:needs-fields -status:Done",
+      "fields": [
+        "Title",
+        "Assignees",
+        "Status",
+        "Priority",
+        "Iteration"
+      ],
+      "column": "Discipline",
+      "sort": [
+        "Priority",
+        "ASC"
+      ]
+    },
+    {
+      "name": "Roadmap",
+      "layout": "ROADMAP_LAYOUT",
+      "filter": "-label:needs-fields -type:Bug,\"Audit finding\"",
+      "fields": [],
+      "group_by": "Phase",
+      "sort": [
+        "Priority",
+        "ASC"
+      ],
+      "_comment": "Dates come from Iteration; set Date fields to Iteration and zoom to Quarter by hand."
+    },
+    {
+      "name": "Peras cycles",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open type:Intent has:peras",
+      "fields": [
+        "Title",
+        "Peras",
+        "Status",
+        "Priority",
+        "Assignees",
+        "Linked pull requests"
+      ],
+      "sort": [
+        "Peras",
+        "ASC"
+      ],
+      "_comment": "Stage, risk and budget columns arrive with Peras in phase 2 (design 7.9)."
+    },
+    {
+      "name": "Bugs to triage",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open type:Bug",
+      "fields": [
+        "Title",
+        "Repository",
+        "Priority",
+        "Assignees",
+        "Labels"
+      ],
+      "sort": [
+        "Created",
+        "ASC"
+      ],
+      "_comment": "A bug leaves this view when it is closed as triaged into an intent or a task."
+    },
+    {
+      "name": "Audit",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open type:\"Audit finding\",Decision phase:1",
+      "fields": [
+        "Title",
+        "Audit",
+        "Severity",
+        "Status",
+        "Assignees"
+      ],
+      "group_by": "Audit",
+      "sort": [
+        "Severity",
+        "ASC"
+      ],
+      "_comment": "Phase 1 only; delete this view from board.json when phase 1 ends."
+    }
+  ]
+}
