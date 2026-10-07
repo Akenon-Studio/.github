@@ -1,0 +1,4 @@
+{
+  "_comment": "Required status checks on main. 'all' applies to every managed repo; a repo's own list is added to it. Add a repo's CI checks here once its CI exists, never before (a required check that never runs blocks every merge).",
+  "all": ["pr-title / check"]
+}

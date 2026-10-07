@@ -1,0 +1,71 @@
+name: Bug report
+description: Something is broken. It gets triaged into an intent or a task.
+type: Bug
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Screenshots, recordings, logs or crash report IDs. Write `none` if you have none.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: App version, operating system, display.
+      placeholder: e.g. 0.4.1, macOS 14.7, 11" OLED
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options: [Desktop app, Web, API, SDK, Runtime, Signals, Animations, Peras, Hardware, Docs, CI and tooling]
+    validations:
+      required: true
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation, Hardware]
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options: ["1", "2", "3"]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Urgent = customers blocked or data at risk.
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true

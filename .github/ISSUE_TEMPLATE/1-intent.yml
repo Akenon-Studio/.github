@@ -1,0 +1,114 @@
+name: Intent
+description: Work for an agent to do through Peras (feature, bug fix, animation, improvement, chore, research)
+type: Intent
+labels: ["intent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An intent says **what** you want and **why**. Peras turns it into a spec you approve before any work starts.
+        Peras picks it up once it is labelled `peras:ready`. Every required field must be filled in; anything missing is flagged with `needs-fields`.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: [Feature, Bug fix, Animation, Improvement, Chore, Research]
+    validations:
+      required: true
+  - type: textarea
+    id: what-and-why
+    attributes:
+      label: What and why
+      description: The outcome you want and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: Rough bullets. The clarifier turns each into an acceptance criterion with a test.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options: [Desktop app, Web, API, SDK, Runtime, Signals, Animations, Peras, Hardware, Docs, CI and tooling]
+    validations:
+      required: true
+  - type: textarea
+    id: protected-paths
+    attributes:
+      label: Protected paths
+      description: Files or folders the agent must not change, one path or glob per line. Write `none` if there are none. These become enforced policy.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: protected-behaviour
+    attributes:
+      label: Protected behaviour
+      description: Behaviour that must not change (e.g. "keep the colour palette"). Write `none` if there is none.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      description: Peras suggests a level; you confirm. High = payments, accounts, sandbox, security, CI, Peras itself.
+      options: [Low, Medium, High]
+    validations:
+      required: true
+  - type: input
+    id: limits
+    attributes:
+      label: Limits
+      description: Budget cap and deadline. Leave empty to use the defaults for the risk level.
+      placeholder: e.g. 3 cycles, by 2026-11-01
+  - type: textarea
+    id: bug-details
+    attributes:
+      label: Bug details (required when Kind is Bug fix)
+      description: Steps to reproduce, expected vs actual, evidence (screenshots, logs), environment (app version, OS, display).
+  - type: textarea
+    id: animation-details
+    attributes:
+      label: Animation details (required when Kind is Animation)
+      description: |
+        Kind of change, references, mood, which signals drive what, target displays and performance tier,
+        creative freedom (exact / explore within the brief / surprise me), and elements that must stay.
+  - type: textarea
+    id: feature-details
+    attributes:
+      label: Feature details (required when Kind is Feature)
+      description: Who it is for, which surfaces it touches, related issues.
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation]
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options: ["1", "2", "3"]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true
+  - type: input
+    id: decisions
+    attributes:
+      label: Design decisions
+      description: IDs of the design decisions this implements, if any (e.g. D-6.2.3).

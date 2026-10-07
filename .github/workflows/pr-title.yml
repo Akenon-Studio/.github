@@ -1,0 +1,31 @@
+# Reusable: checks that a PR title is a conventional commit. Every repo (this one included, see
+# pr-title-caller.yml) calls it with:
+#
+#   on: { pull_request: { types: [opened, edited, synchronize, reopened] } }
+#   jobs: { pr-title: { uses: akenon-studio/.github/.github/workflows/pr-title.yml@main } }
+#
+# The required status check is named "pr-title / check" in every repo.
+name: pr-title
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Title is a conventional commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|chore|docs|refactor|test|perf|build|ci|revert)(\([a-z0-9][a-z0-9/-]*\))?!?: [^ ].*'
+          if printf '%s' "$TITLE" | grep -Eq "$pattern"; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::PR title must be a conventional commit, e.g. 'feat: add pairing screen' or 'fix(api): handle expired tokens'. Got: $TITLE"
+            exit 1
+          fi

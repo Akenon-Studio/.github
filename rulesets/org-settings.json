@@ -1,0 +1,12 @@
+{
+  "_comment": "Org settings checked by verify-settings.py. 'apply' ones are set by apply-rules.py; 'check_only' ones can only be changed in the GitHub UI.",
+  "apply": {
+    "members_can_create_repositories": false,
+    "members_can_create_public_repositories": false,
+    "members_can_create_private_repositories": false,
+    "default_repository_permission": "read"
+  },
+  "check_only": {
+    "two_factor_requirement_enabled": true
+  }
+}

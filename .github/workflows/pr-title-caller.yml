@@ -1,0 +1,12 @@
+name: pr-title-caller
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    uses: ./.github/workflows/pr-title.yml

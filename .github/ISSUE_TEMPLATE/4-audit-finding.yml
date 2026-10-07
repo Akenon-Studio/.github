@@ -1,0 +1,65 @@
+name: Audit finding
+description: A problem found by a phase 1 audit
+type: Audit finding
+labels: ["audit"]
+body:
+  - type: dropdown
+    id: audit
+    attributes:
+      label: Audit
+      options: [Secrets and access, Legal and IP, Code quality, Docs, Release readiness, Onboarding, Privacy, Hardware]
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options: [Critical, High, Medium, Low]
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding
+      description: What is wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Paths, line numbers, links or commands that show it.
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Recommended fix
+    validations:
+      required: true
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation, Hardware, Brand, Marketing, Legal and admin]
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options: ["1", "2", "3"]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true
+  - type: input
+    id: decisions
+    attributes:
+      label: Design decisions
+      description: IDs of the design decisions this relates to, if any (e.g. D-6.2.3).

@@ -1,0 +1,3 @@
+# Repos the rules apply to, one per line. Add each new repo here when it is created.
+# The old ani-motion-* repos are not managed; they are archived after the move (phase 1, step 6).
+.github

@@ -1,0 +1,68 @@
+name: Decision
+description: A question for the partners to decide
+type: Decision
+labels: ["decision"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: The decision needed, as one question.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What led to this and what it affects.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: Each option with its trade-offs.
+      placeholder: |
+        **A. ...** — pros / cons
+        **B. ...** — pros / cons
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation
+      description: Which option and why. Write `none` to leave it open.
+    validations:
+      required: true
+  - type: input
+    id: decide-by
+    attributes:
+      label: Decide by
+      placeholder: YYYY-MM-DD
+    validations:
+      required: true
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation, Hardware, Brand, Marketing, Legal and admin]
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options: ["1", "2", "3"]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        Record the outcome as a comment and close the issue. Decisions that change the design are made in the design document first, through a PR.

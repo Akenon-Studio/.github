@@ -1,0 +1,61 @@
+name: Task
+description: Work a person does, in any discipline (including hand-written code under the repo rules)
+type: Task
+labels: ["task"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What needs doing.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Why it matters now.
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: How anyone can tell it is finished.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation, Hardware, Brand, Marketing, Legal and admin]
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options: ["1", "2", "3"]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Links
+      description: Related issues, documents or decisions. Write `none` if there are none.
+    validations:
+      required: true
+  - type: input
+    id: decisions
+    attributes:
+      label: Design decisions
+      description: IDs of the design decisions this implements, if any (e.g. D-6.2.3).
