@@ -24,7 +24,7 @@ import sys
 
 import yaml
 
-from board import find_board, graphql, spec
+from board import find_board_fields, graphql, spec
 from rules import ROOT, gh
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
@@ -196,7 +196,7 @@ def main():
     problems = check(issue_type, issue["body"], forms)
 
     want = spec()
-    board = find_board(want["title"])
+    board = find_board_fields(want["title"])
     item_id, status = board_item(board, issue)
     names = {f.get("name") for f in board["fields"]["nodes"]}
     values = board_values(issue_type, issue["body"], forms, names)

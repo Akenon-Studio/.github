@@ -50,6 +50,23 @@ def find_board(title):
     return boards[0] if boards else None
 
 
+def find_board_fields(title):
+    """The open org project with this title, with only its id and fields: what the issue
+    automation needs. About 1 GraphQL point, against about 200 for find_board, which reads every
+    view; GitHub allows an app 5,000 points an hour, and each new issue runs the automation
+    several times."""
+    data = graphql("""query($org: String!, $title: String!) { organization(login: $org) {
+        projectsV2(first: 20, query: $title) { nodes { id title closed fields(first: 50) { nodes {
+          ... on ProjectV2FieldCommon { id name }
+          ... on ProjectV2SingleSelectField { options { id name } } } } } } } }""",
+                   org=ORG, title=title)
+    boards = [p for p in data["organization"]["projectsV2"]["nodes"]
+              if p["title"] == title and not p["closed"]]
+    if len(boards) != 1:
+        raise SystemExit(f"expected one open project called '{title}', found {len(boards)}")
+    return boards[0]
+
+
 def fields_by_name(board):
     return {f["name"]: f for f in board["fields"]["nodes"] if "name" in f}
 
