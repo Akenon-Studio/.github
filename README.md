@@ -16,6 +16,7 @@ never code, secrets or product plans.
 | `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only) |
 | `rulesets/board.json` | The org project board: fields, linked repos and the nine views |
 | `scripts/apply-board.py` | Creates or updates the board from `rulesets/board.json` |
+| `.github/workflows/settings-check.yml` | Daily: runs `verify-settings.py` as a read-only app and keeps one `settings-drift` issue open while anything differs |
 | `scripts/verify-settings.py` | Checks live GitHub settings match `rulesets/`, the org settings and the board |
 | `profile/README.md` | The public org profile |
 | `SECURITY.md`, `CONTRIBUTING.md` | Org-wide security policy and contribution rules |
