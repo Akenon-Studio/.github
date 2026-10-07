@@ -22,7 +22,6 @@ TASK = {
     "Why": "New partners cannot set up",
     "Done when": "- a partner sets up alone",
     "Discipline": "Software",
-    "Phase": "1",
     "Priority": "High",
     "Links": "none",
     "Design decisions": "_No response_",
@@ -41,7 +40,6 @@ INTENT = {
     "Animation details (required when Kind is Animation)": "_No response_",
     "Feature details (required when Kind is Feature)": "For everyone with a display",
     "Discipline": "Software",
-    "Phase": "3",
     "Priority": "Medium",
     "Design decisions": "_No response_",
 }
@@ -118,19 +116,19 @@ class CheckTest(unittest.TestCase):
 
     def test_issue_made_without_the_form(self):
         problems = check("Task", "Just do the thing", FORMS)
-        self.assertEqual(len(problems), 7)
+        self.assertEqual(len(problems), 6)
 
 
 class BoardValuesTest(unittest.TestCase):
     def test_dropdowns_named_like_board_fields(self):
-        fields = {"Discipline", "Phase", "Priority", "Audit", "Severity", "Status"}
+        fields = {"Discipline", "Priority", "Audit", "Severity", "Status"}
         self.assertEqual(board_values("Task", body(**TASK), FORMS, fields),
-                         {"Discipline": "Software", "Phase": "1", "Priority": "High"})
+                         {"Discipline": "Software", "Priority": "High"})
 
     def test_invalid_values_are_left_out(self):
-        fields = {"Discipline", "Phase", "Priority"}
-        self.assertEqual(board_values("Task", body(**{**TASK, "Phase": "9"}), FORMS, fields),
-                         {"Discipline": "Software", "Priority": "High"})
+        fields = {"Discipline", "Priority"}
+        self.assertEqual(board_values("Task", body(**{**TASK, "Priority": "Someday"}), FORMS, fields),
+                         {"Discipline": "Software"})
 
 
 if __name__ == "__main__":
