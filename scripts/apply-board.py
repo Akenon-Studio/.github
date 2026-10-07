@@ -3,13 +3,14 @@
 options, and the repos linked to it. Safe to re-run; it never deletes fields or items.
 
 Usage: scripts/apply-board.py
-Needs an org member logged in to gh with the project scope. Views are made by hand from
-rulesets/board-views.md, since GitHub has no API for them.
+Needs an org member logged in to gh with the project scope. The API cannot set a view's grouping,
+sorting or board column field, so the script ends by listing those as steps to do by hand.
 """
 
 import datetime
 
-from board import board_differences, fields_by_name, find_board, graphql, linked_repos, spec
+from board import (board_differences, fields_by_name, find_board, graphql, hand_steps,
+                   linked_repos, spec, view_differences, views_by_name)
 from rules import ORG
 
 
@@ -77,11 +78,47 @@ def main():
                 linkProjectV2ToRepository(input: {projectId: $p, repositoryId: $r}) { clientMutationId } }""",
                     p=board["id"], r=rid)
             print(f"repo '{repo}': linked")
+    apply_views(find_board(want["title"]), want)
     board = find_board(want["title"])
-    diffs = board_differences(board, want)
+    diffs = [d for d in board_differences(board, want) if d not in
+             {f"view '{n}': {s}" for n, s in hand_steps(board, want)}]
     if diffs:
         raise SystemExit("Board still differs from rulesets/board.json:\n  - " + "\n  - ".join(diffs))
-    print(f"Done: {board['url']}\nNow create the views by hand from rulesets/board-views.md.")
+    print(f"Done: {board['url']}")
+    steps = hand_steps(board, want)
+    if steps:
+        print("\nSet these by hand in each view's menu, then save the view:")
+        for name, step in steps:
+            print(f"  - {name}: {step}")
+
+
+DEFAULT_VIEW = "View 1"  # the view GitHub makes with every new project
+
+
+def apply_views(board, want):
+    ids = {f["name"]: f["id"] for f in board["fields"]["nodes"] if "name" in f}
+    have = views_by_name(board)
+    for v in want["views"]:
+        config = {"name": v["name"], "layout": v["layout"]}
+        if v["fields"]:  # roadmaps take no column list
+            config["configuration"] = {"visibleFieldIds": [ids[n] for n in v["fields"]]}
+        if v["name"] in have:
+            graphql("""mutation($input: UpdateProjectV2ViewInput!) {
+                updateProjectV2View(input: $input) { clientMutationId } }""",
+                    input={"viewId": have[v["name"]]["id"], "filter": v["filter"], **config})
+        else:
+            view = graphql("""mutation($input: CreateProjectV2ViewInput!) {
+                createProjectV2View(input: $input) { projectV2View { id } } }""",
+                           input={"projectId": board["id"], **config})
+            graphql("""mutation($input: UpdateProjectV2ViewInput!) {
+                updateProjectV2View(input: $input) { clientMutationId } }""",
+                    input={"viewId": view["createProjectV2View"]["projectV2View"]["id"],
+                           "filter": v["filter"]})
+            print(f"view '{v['name']}': created")
+    if DEFAULT_VIEW in have and DEFAULT_VIEW not in {v["name"] for v in want["views"]}:
+        graphql("""mutation($id: ID!) { deleteProjectV2View(input: {viewId: $id}) { clientMutationId } }""",
+                id=have[DEFAULT_VIEW]["id"])
+        print(f"view '{DEFAULT_VIEW}': deleted (GitHub's default)")
 
 
 if __name__ == "__main__":

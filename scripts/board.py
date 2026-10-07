@@ -17,6 +17,13 @@ FIELDS = """
     } }
   } }
   repositories(first: 50) { nodes { name } }
+  views(first: 50) { nodes {
+    id name layout filter
+    fields(first: 50) { nodes { ... on ProjectV2FieldCommon { name } } }
+    groupByFields(first: 5) { nodes { ... on ProjectV2FieldCommon { name } } }
+    verticalGroupByFields(first: 5) { nodes { ... on ProjectV2FieldCommon { name } } }
+    sortByFields(first: 5) { nodes { direction field { ... on ProjectV2FieldCommon { name } } } }
+  } }
 """
 
 
@@ -89,4 +96,54 @@ def board_differences(board, want):
     for repo in linked_repos(want["linked_repos"]):
         if repo not in linked:
             diffs.append(f"repo '{repo}' is not linked to the board")
+    return diffs + view_differences(board, want) + [f"view '{n}': {d}" for n, d in hand_steps(board, want)]
+
+
+def views_by_name(board):
+    return {v["name"]: v for v in board["views"]["nodes"]}
+
+
+def names(conn):
+    return [n["name"] for n in conn["nodes"] if "name" in n]
+
+
+def view_differences(board, want):
+    """Differences in what apply-board.py sets: views, their layout, filter and columns."""
+    diffs = []
+    have = views_by_name(board)
+    for v in want["views"]:
+        live = have.get(v["name"])
+        if live is None:
+            diffs.append(f"view '{v['name']}' is missing")
+            continue
+        if live["layout"] != v["layout"]:
+            diffs.append(f"view '{v['name']}': layout {live['layout']}, expected {v['layout']}")
+        if (live["filter"] or "") != v["filter"]:
+            diffs.append(f"view '{v['name']}': filter {live['filter']!r}, expected {v['filter']!r}")
+        # The API sets which columns show, not their order (GitHub puts built-in fields first).
+        if v["fields"] and sorted(names(live["fields"])) != sorted(v["fields"]):
+            diffs.append(f"view '{v['name']}': columns {names(live['fields'])}, expected {v['fields']}")
+    for extra in sorted(set(have) - {v["name"] for v in want["views"]}):
+        diffs.append(f"view '{extra}' is not in board.json")
     return diffs
+
+
+def hand_steps(board, want):
+    """(view, step) pairs for settings the API cannot make: grouping, sorting, board columns."""
+    steps = []
+    have = views_by_name(board)
+    for v in want["views"]:
+        live = have.get(v["name"])
+        if live is None:
+            continue
+        group = names(live["groupByFields"])
+        if group != ([v["group_by"]] if "group_by" in v else []):
+            steps.append((v["name"], f"Group by: {v.get('group_by', 'none')} (now {group or 'none'})"))
+        column = names(live["verticalGroupByFields"])
+        if "column" in v and column != [v["column"]]:
+            steps.append((v["name"], f"Column field: {v['column']} (now {column or 'none'})"))
+        sort = [[s["field"]["name"], s["direction"]] for s in live["sortByFields"]["nodes"]]
+        if sort != ([v["sort"]] if "sort" in v else []):
+            want_sort = " ".join(v["sort"]).replace("ASC", "ascending") if "sort" in v else "none"
+            steps.append((v["name"], f"Sort by: {want_sort} (now {sort or 'none'})"))
+    return steps
