@@ -301,12 +301,12 @@
       "layout": "ROADMAP_LAYOUT",
       "filter": "-label:needs-fields -type:Bug,\"Audit finding\"",
       "fields": [],
-      "group_by": "Phase",
+      "group_by": "Parent issue",
       "sort": [
         "Priority",
         "ASC"
       ],
-      "_comment": "Dates come from Iteration; set Date fields to Iteration and zoom to Quarter by hand."
+      "_comment": "Rows are parent issues (phase steps, partner workstreams; design 6.6). Dates come from Iteration; set Date fields to Iteration and zoom to Quarter by hand."
     },
     {
       "name": "Peras cycles",
