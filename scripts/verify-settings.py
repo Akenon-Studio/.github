@@ -9,7 +9,8 @@ and linked repos (rulesets/board.json), and any repo in the org that is neither 
 import sys
 
 from board import board_differences, find_board, spec
-from rules import ORG, desired_rulesets, differences, gh, load, managed_repos, repo_rulesets
+from rules import (ORG, desired_rulesets, differences, gh, load, managed_repos, repo_rulesets,
+                   repo_settings)
 
 
 def main():
@@ -23,7 +24,7 @@ def main():
     managed = managed_repos()
     for repo in managed:
         problems += [f"{repo} settings: {d}"
-                     for d in differences(load("repo-settings.json"), gh(f"repos/{ORG}/{repo}"))]
+                     for d in differences(load("repo-settings.json"), repo_settings(repo))]
         have = repo_rulesets(repo)
         for ruleset in desired_rulesets(repo):
             if ruleset["name"] not in have:
