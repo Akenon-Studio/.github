@@ -19,6 +19,14 @@ never code, secrets or product plans.
 
 Why it works this way: `handbook` → modernisation design, sections 6.2 and 6.6.
 
+## Approvals: interim rule
+
+Until Peras opens PRs as its own app (phase 2, step 4), `rulesets/main.json` requires **0
+approvals** and no CODEOWNERS sign-off on every repo; the owner reviews the diff and merges. PRs
+only, required checks, squash and no bypass still apply. At phase 2 step 4 set it back to
+`"required_approving_review_count": 1`, `"require_code_owner_review": true` and
+`"require_last_push_approval": true` (design 6.2).
+
 ## Changing the rules
 
 1. Edit the files in `rulesets/` in a PR. It needs one approval like any other change.
