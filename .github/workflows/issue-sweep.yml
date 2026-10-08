@@ -1,0 +1,44 @@
+# Every 15 minutes: re-checks issues across the managed repos for changes no issue event reports
+# (design 6.8; scripts/issue_sweep.py): a board Status set to Blocked, parent or "blocked by" links
+# added or removed, a parent closed while its sub-issues are open (it is reopened). Fixes the
+# `needs-fields` label and comment like the issue-fields workflow does.
+#
+# Logs in as the org's GitHub App (org variable AKENON_APP_ID, org secret AKENON_APP_PRIVATE_KEY),
+# like issue-fields: the Actions token cannot write to other repos' issues or the org board.
+name: issue-sweep
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in as the org app
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Re-check issues
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          pip install --quiet pyyaml
+          python3 scripts/issue_sweep.py
