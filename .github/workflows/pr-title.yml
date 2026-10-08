@@ -4,9 +4,11 @@
 #   on: { pull_request: { types: [opened, edited, synchronize, reopened] } }
 #   jobs: { pr-title: { uses: akenon-studio/.github/.github/workflows/pr-title.yml@main } }
 #
-# Its jobs are the required status checks "pr-title / check" (the title is a conventional commit)
-# and "pr-title / closes-issue" (the body closes at least one whole issue, design 6.8;
-# scripts/pr_closes_issue.py). A new job here runs in every repo without changing the callers.
+# Its jobs are the status checks "pr-title / check" (the title is a conventional commit),
+# "pr-title / closes-issue" (the body closes at least one whole issue, design 6.8;
+# scripts/pr_closes_issue.py) and "pr-title / claude-md" (every CLAUDE.md passes
+# scripts/claude_md.py, design 6.8; not required until handbook#79). A new job here runs in every
+# repo without changing the callers.
 name: pr-title
 
 on:
@@ -48,3 +50,33 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: python3 scripts/pr_closes_issue.py
+
+  claude-md:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Get the repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Get the script
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the script; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: akenon-github
+          persist-credentials: false
+
+      - name: Every CLAUDE.md is capped and every rule has a reason
+        run: |
+          pip install --quiet pyyaml
+          status=0
+          files=$(find repo -name CLAUDE.md -not -path '*/node_modules/*' -not -path '*/.git/*')
+          [ -n "$files" ] || echo "No CLAUDE.md in this repo."
+          for f in $files; do
+            python3 akenon-github/scripts/claude_md.py "$f" --root repo --repo "${GITHUB_REPOSITORY#*/}" || status=1
+          done
+          exit $status
