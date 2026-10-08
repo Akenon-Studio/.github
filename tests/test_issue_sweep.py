@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from issue_fields import load_forms, problems_text  # noqa: E402
+from issue_fields import link_problems, load_forms, problems_text  # noqa: E402
 from issue_sweep import in_managed_repo, out_of_date  # noqa: E402
 from test_issue_fields import TASK, body  # noqa: E402
 
@@ -15,8 +15,10 @@ FORMS = load_forms()
 BOARD = "PVT_board"
 
 
-def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook"):
-    return {"number": 1, "body": body(**TASK), "issueType": {"name": "Task"},
+def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
+          author="User"):
+    return {"number": 1, "title": "Write the guide", "body": body(**TASK), "issueType": {"name": "Task"},
+            "author": {"__typename": author, "login": "someone"},
             "repository": {"nameWithOwner": repo},
             "labels": {"nodes": [{"name": l} for l in labels]},
             "parent": {"number": 24} if parent else None,
@@ -39,10 +41,11 @@ class OutOfDateTest(unittest.TestCase):
     def test_fixed_but_still_labelled_is_synced(self):
         self.assertTrue(out_of_date(issue(labels=["needs-fields"]), FORMS, BOARD))
 
+    def test_bot_opened_issue_without_a_parent_is_left_alone(self):
+        self.assertFalse(out_of_date(issue(parent=False, author="Bot"), FORMS, BOARD))
+
     def test_labelled_with_the_right_comment_is_left_alone(self):
-        text = problems_text(["The issue has no parent. Add it as a sub-issue of the phase step, "
-                              "partner workstream or feature it belongs to. Only intents and "
-                              "parents of other issues stand alone."])
+        text = problems_text(link_problems("Task", False, 0, "Todo", 0))
         self.assertFalse(out_of_date(issue(parent=False, labels=["needs-fields"], comments=[text]),
                                      FORMS, BOARD))
 
