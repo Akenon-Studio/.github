@@ -7,7 +7,8 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from issue_fields import board_values, check, load_forms, parse_body  # noqa: E402
+from issue_fields import (board_values, check, link_problems, load_forms, open_sub_issues,  # noqa: E402
+                          parse_body, problems_text, reopen_text)
 
 FORMS = load_forms()
 
@@ -129,6 +130,60 @@ class BoardValuesTest(unittest.TestCase):
         fields = {"Discipline", "Priority"}
         self.assertEqual(board_values("Task", body(**{**TASK, "Priority": "Someday"}), FORMS, fields),
                          {"Discipline": "Software"})
+
+
+class LinkProblemsTest(unittest.TestCase):
+    def test_task_with_a_parent_passes(self):
+        self.assertEqual(link_problems("Task", True, 0, "Todo", 0), [])
+
+    def test_task_without_a_parent_fails(self):
+        problems = link_problems("Task", False, 0, "Todo", 0)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("no parent", problems[0])
+
+    def test_top_level_issues_need_no_parent(self):
+        self.assertEqual(link_problems("Intent", False, 0, "Todo", 0), [])
+        self.assertEqual(link_problems("Task", False, 3, "Todo", 0), [])  # a step or workstream
+
+    def test_blocked_without_a_blocked_by_link_fails(self):
+        problems = link_problems("Task", True, 0, "Blocked", 0)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Blocked", problems[0])
+
+    def test_blocked_with_a_blocked_by_link_passes(self):
+        self.assertEqual(link_problems("Task", True, 0, "Blocked", 2), [])
+
+    def test_both_problems_at_once(self):
+        self.assertEqual(len(link_problems("Bug", False, 0, "Blocked", 0)), 2)
+
+
+def sub(number, state, repo="Akenon-Studio/handbook"):
+    return {"number": number, "state": state, "repository": {"nameWithOwner": repo}}
+
+
+class EarlyCloseTest(unittest.TestCase):
+    def test_open_sub_issues_are_named(self):
+        subs = [sub(1, "CLOSED"), sub(2, "OPEN"), sub(7, "OPEN", "Akenon-Studio/platform")]
+        self.assertEqual(open_sub_issues(subs),
+                         ["Akenon-Studio/handbook#2", "Akenon-Studio/platform#7"])
+
+    def test_all_closed_means_nothing_open(self):
+        self.assertEqual(open_sub_issues([sub(1, "CLOSED")]), [])
+        self.assertEqual(open_sub_issues([]), [])
+
+    def test_reopen_comment_names_them(self):
+        text = reopen_text(["Akenon-Studio/handbook#2"])
+        self.assertIn("- Akenon-Studio/handbook#2", text)
+        self.assertIn("Reopened", text)
+
+
+class CommentTest(unittest.TestCase):
+    def test_lists_each_problem(self):
+        text = problems_text(["**Why** is required but empty.", "The issue has no parent."])
+        self.assertIn("- **Why** is required but empty.\n- The issue has no parent.", text)
+
+    def test_no_problems(self):
+        self.assertIn("All required answers are filled in", problems_text([]))
 
 
 if __name__ == "__main__":

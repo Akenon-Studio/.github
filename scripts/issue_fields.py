@@ -11,6 +11,12 @@ problems gets the `needs-fields` label and one comment listing them; once fixed,
 and the comment says so. The issue body is the source of truth: edit the answer there and the
 board follows.
 
+Links between issues are checked too (design 6.8): every issue has a parent unless it is top level
+(an Intent, or a parent of other issues: phase steps and partner workstreams); an issue whose
+board Status is Blocked has a "blocked by" link; and a closed issue with open sub-issues is
+reopened with a comment naming them. Board changes, links and closing send no event every repo's
+caller listens to, so scripts/issue_sweep.py re-checks on a schedule.
+
 Usage: scripts/issue_fields.py <owner/repo> <issue number>
 In Actions it runs from the issue-fields workflow with an org GitHub App token in GH_TOKEN.
 """
@@ -30,6 +36,7 @@ from rules import ROOT, gh
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
 MARKER = "<!-- issue-fields -->"
+REOPEN_MARKER = "<!-- issue-fields: reopened -->"
 EMPTY = {"", "_No response_"}
 REQUIRED_WHEN = re.compile(r"\(required when (.+?) is (.+?)\)")
 START_STATUS = {"Decision": "Waiting for human"}  # everything else starts in Todo
@@ -106,6 +113,31 @@ def check(issue_type, text, forms):
     return problems
 
 
+def link_problems(issue_type, has_parent, sub_issues, status, blocked_by):
+    """Problems with an issue's links (design 6.8, checks 3 and 4). `sub_issues` and `blocked_by`
+    are counts."""
+    problems = []
+    if not has_parent and issue_type != "Intent" and not sub_issues:
+        problems.append("The issue has no parent. Add it as a sub-issue of the phase step, partner "
+                        "workstream or feature it belongs to. Only intents and parents of other "
+                        "issues stand alone.")
+    if status == "Blocked" and not blocked_by:
+        problems.append("Status is **Blocked** but nothing is linked as blocking it. Add a "
+                        "\"blocked by\" link (Relationships, in the sidebar) to the issue it waits on.")
+    return problems
+
+
+def open_sub_issues(sub_issues):
+    """'owner/repo#n' for each open sub-issue, from the GraphQL subIssues nodes."""
+    return [f"{s['repository']['nameWithOwner']}#{s['number']}" for s in sub_issues
+            if s["state"] == "OPEN"]
+
+
+def reopen_text(open_subs):
+    return (f"{REOPEN_MARKER}\nReopened: a parent can't close while its sub-issues are open "
+            "(design 6.8). Close or move these first:\n\n" + "\n".join(f"- {s}" for s in open_subs))
+
+
 def board_values(issue_type, text, forms, field_names):
     """{board field: option} for valid dropdown answers whose label is a board field."""
     answers = parse_body(text)
@@ -120,22 +152,64 @@ def board_values(issue_type, text, forms, field_names):
 
 # --- GitHub side -------------------------------------------------------------------------------
 
+# What the checks read about an issue; issue_sweep.py reads the same for many issues at once.
+ISSUE_FIELDS = """id number state body issueType { name } labels(first: 50) { nodes { name } }
+  repository { nameWithOwner }
+  parent { number }
+  subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
+  blockedBy(first: 1) { totalCount }
+  projectItems(first: 20) { nodes { id project { id }
+    fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
+
+
 def load_issue(repo, number):
     owner, name = repo.split("/")
-    data = graphql("""query($o: String!, $n: String!, $i: Int!) { repository(owner: $o, name: $n) {
-        issue(number: $i) { id state body issueType { name } labels(first: 50) { nodes { name } }
-          projectItems(first: 20) { nodes { id project { id }
-            fieldValueByName(name: "Status") {
-              ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }""",
-                   o=owner, n=name, i=int(number))
+    data = graphql(f"""query($o: String!, $n: String!, $i: Int!) {{ repository(owner: $o, name: $n) {{
+        issue(number: $i) {{ {ISSUE_FIELDS} }} }} }}""", o=owner, n=name, i=int(number))
     return data["repository"]["issue"]
+
+
+def status_on(board_id, issue):
+    """The issue's Status on the board, or None if it isn't there or has none."""
+    for item in issue["projectItems"]["nodes"]:
+        if item["project"]["id"] == board_id:
+            return (item["fieldValueByName"] or {}).get("name")
+    return None
+
+
+def all_problems(issue, forms, status):
+    issue_type = (issue["issueType"] or {}).get("name")
+    return check(issue_type, issue["body"], forms) + link_problems(
+        issue_type, issue["parent"] is not None, len(issue["subIssues"]["nodes"]), status,
+        issue["blockedBy"]["totalCount"])
+
+
+def problems_text(problems):
+    """The text of the issue's one comment for these problems."""
+    if not problems:
+        return f"{MARKER}\nAll required answers are filled in. Thanks."
+    return (f"{MARKER}\nThis issue is missing something the board needs, so it is labelled "
+            f"`{LABEL}` and kept out of planning views. To fix:\n\n"
+            + "\n".join(f"- {p}" for p in problems))
+
+
+def reopen_if_early(repo, number, issue):
+    """Reopen a closed issue that still has open sub-issues. True if it did."""
+    open_subs = open_sub_issues(issue["subIssues"]["nodes"])
+    if issue["state"] != "CLOSED" or not open_subs:
+        return False
+    gh(f"repos/{repo}/issues/{number}", "-X", "PATCH", body={"state": "open"})
+    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST",
+       body={"body": reopen_text(open_subs)})
+    issue["state"] = "OPEN"
+    return True
 
 
 def board_item(board, issue):
     """The issue's item on the board, adding it if needed. Returns (item id, status or None)."""
     for item in issue["projectItems"]["nodes"]:
         if item["project"]["id"] == board["id"]:
-            return item["id"], (item["fieldValueByName"] or {}).get("name")
+            return item["id"], status_on(board["id"], issue)
     item = graphql("""mutation($p: ID!, $c: ID!) { addProjectV2ItemById(
         input: {projectId: $p, contentId: $c}) { item { id } } }""", p=board["id"], c=issue["id"])
     return item["addProjectV2ItemById"]["item"]["id"], None
@@ -167,15 +241,12 @@ def our_comment(repo, number):
 def report(repo, number, issue, problems):
     labels = {l["name"] for l in issue["labels"]["nodes"]}
     comment = our_comment(repo, number)
+    text = problems_text(problems)
     if problems:
-        text = (f"{MARKER}\nThis issue is missing answers the board needs, so it is labelled "
-                f"`{LABEL}` and kept out of planning views. Edit the issue to fix:\n\n"
-                + "\n".join(f"- {p}" for p in problems))
         if LABEL not in labels:
             ensure_label(repo)
             gh(f"repos/{repo}/issues/{number}/labels", "-X", "POST", body={"labels": [LABEL]})
     else:
-        text = f"{MARKER}\nAll required answers are filled in. Thanks."
         if LABEL in labels:
             gh(f"repos/{repo}/issues/{number}/labels/{LABEL}", "-X", "DELETE")
         if comment is None:
@@ -186,17 +257,11 @@ def report(repo, number, issue, problems):
         gh(f"repos/{repo}/issues/comments/{comment['id']}", "-X", "PATCH", body={"body": text})
 
 
-def main():
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    repo, number = sys.argv[1], sys.argv[2]
-    forms = load_forms()
+def sync(repo, number, forms, board):
+    """Run every check on one issue and update the board, label and comment. Returns a summary."""
     issue = load_issue(repo, number)
+    reopened = reopen_if_early(repo, number, issue)
     issue_type = (issue["issueType"] or {}).get("name")
-    problems = check(issue_type, issue["body"], forms)
-
-    want = spec()
-    board = find_board_fields(want["title"])
     item_id, status = board_item(board, issue)
     names = {f.get("name") for f in board["fields"]["nodes"]}
     values = board_values(issue_type, issue["body"], forms, names)
@@ -204,10 +269,17 @@ def main():
         values["Status"] = START_STATUS.get(issue_type, "Todo")
     for name, option in values.items():
         set_field(board, item_id, name, option)
-
+    problems = all_problems(issue, forms, values.get("Status", status))
     report(repo, number, issue, problems)
-    print(json.dumps({"issue": f"{repo}#{number}", "type": issue_type, "set": values,
-                      "problems": problems}, indent=2))
+    return {"issue": f"{repo}#{number}", "type": issue_type, "set": values,
+            "reopened": reopened, "problems": problems}
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    board = find_board_fields(spec()["title"])
+    print(json.dumps(sync(sys.argv[1], sys.argv[2], load_forms(), board), indent=2))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # Reusable: puts an issue on the org board with its fields filled from the form answers, and flags
-# missing or invalid answers with the needs-fields label (design 6.6; scripts/issue_fields.py).
+# missing or invalid answers, a missing parent or a Blocked issue with no "blocked by" link with
+# the needs-fields label (design 6.6, 6.8; scripts/issue_fields.py). Changes no event reports here
+# (board Status, links, closing a parent early) are caught by the issue-sweep workflow.
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
 #
 #   on: { issues: { types: [opened, edited, reopened, typed, untyped] } }
