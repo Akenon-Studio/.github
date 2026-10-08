@@ -277,7 +277,7 @@
     {
       "name": "Roadmap",
       "layout": "ROADMAP_LAYOUT",
-      "filter": "-label:needs-fields -type:Bug,\"Audit finding\"",
+      "filter": "-label:needs-fields -type:Bug",
       "fields": [],
       "group_by": "Parent issue",
       "sort": [
