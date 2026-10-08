@@ -6,7 +6,9 @@ These rules apply to every repo in the org. They are enforced by GitHub, not by 
 
 1. Branch from `main`: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
 2. Open a PR. Its **title must be a conventional commit** (`feat: add pairing screen`), because
-   PRs are squash-merged and the title becomes the commit and the changelog entry.
+   PRs are squash-merged and the title becomes the commit and the changelog entry. Its **body
+   closes at least one whole issue** (`Closes #12` or `Closes akenon-studio/handbook#12`); work that
+   does only part of an issue splits it into sub-issues first (handbook design 6.8).
 3. All required checks pass, the branch is up to date with `main`, and every conversation is
    resolved.
 4. **One approval from another person.** Never the author, never a bot or agent. A new push
