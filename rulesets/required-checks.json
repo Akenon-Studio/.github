@@ -6,5 +6,9 @@
   "platform": [
     "checks",
     "security"
+  ],
+  "animations": [
+    "checks",
+    "security"
   ]
 }
