@@ -2,7 +2,8 @@
 """Check that live GitHub settings match rulesets/ (design 6.7). Exits 1 if anything differs.
 
 Usage: scripts/verify-settings.py
-Reports: org settings, each managed repo's merge settings and rulesets, the project board's fields
+Reports: org settings and issue types, each managed repo's merge settings, rulesets and labels,
+the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
 (rulesets/repo-lists.json), and any repo in the org that is neither managed nor archived.
 """
@@ -15,8 +16,8 @@ import subprocess
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (ORG, desired_rulesets, differences, gh, load, managed_repos, repo_rulesets,
-                   repo_settings)
+from rules import (ORG, desired_labels, desired_rulesets, differences, gh, issue_type_differences,
+                   label_differences, load, managed_repos, repo_rulesets, repo_settings, try_gh)
 
 
 def missing_from(text, repos, pattern, skip=()):
@@ -52,6 +53,12 @@ def main():
     want = {**settings["apply"], **settings["check_only"]}
     problems += [f"org: {d}" for d in differences(want, org)]
 
+    types = try_gh(f"orgs/{ORG}/issue-types")
+    if types is None:
+        print("note: can't read the org's issue types; not checked")
+    else:
+        problems += [f"org: {d}" for d in issue_type_differences(load("issue-types.json")["types"], types)]
+
     managed = managed_repos()
     for repo in managed:
         problems += [f"{repo} settings: {d}"
@@ -65,6 +72,11 @@ def main():
                          for d in differences(ruleset, have[ruleset["name"]])]
         for extra in sorted(set(have) - {r["name"] for r in desired_rulesets(repo)}):
             problems.append(f"{repo}: unexpected ruleset '{extra}'")
+        labels = try_gh(f"repos/{ORG}/{repo}/labels?per_page=100")
+        if labels is None:
+            print(f"note: can't read {repo}'s labels; not checked")
+        else:
+            problems += [f"{repo}: {d}" for d in label_differences(desired_labels(repo), labels)]
 
     board = spec()
     problems += [f"board: {d}" for d in board_differences(find_board(board["title"]), board)]

@@ -1,0 +1,17 @@
+{
+  "_comment": "Labels every managed repo has ('all'), plus a repo's own. The issue forms add their label; the automation adds needs-fields and settings-drift. apply-rules.py creates or updates them, verify-settings.py checks name, colour and description. Labels not listed (GitHub's defaults) are left alone.",
+  "all": [
+    {"name": "task", "color": "ededed", "description": "Task form"},
+    {"name": "bug", "color": "d73a4a", "description": "Bug report form"},
+    {"name": "triage", "color": "fbca04", "description": "Bug not yet triaged into an intent or a task"},
+    {"name": "intent", "color": "ededed", "description": "Intent form"},
+    {"name": "audit", "color": "ededed", "description": "Audit finding form"},
+    {"name": "decision", "color": "ededed", "description": "Decision form"},
+    {"name": "process-failure", "color": "ededed", "description": "Process failure form"},
+    {"name": "deferred", "color": "c5def5", "description": "Audit finding deferred to a later phase, with the reason on the issue"},
+    {"name": "needs-fields", "color": "d93f0b", "description": "Missing or invalid form answers; kept out of planning views"}
+  ],
+  ".github": [
+    {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"}
+  ]
+}

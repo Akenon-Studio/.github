@@ -16,7 +16,8 @@ Links between issues are checked too (design 6.8): every issue has a parent unle
 "Deferred work" parent, handbook#83, top level even while empty), a Bug report not yet triaged,
 or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report); an issue whose
 board Status is Blocked has a "blocked by" link; and a closed issue with open sub-issues is
-reopened with a comment naming them. Board changes, links and closing send no event every repo's
+reopened with a comment naming them. A Process failure closed while its answer to "What now
+prevents this, by code?" is "Not decided yet" is reopened too. Board changes, links and closing send no event every repo's
 caller listens to, so scripts/issue_sweep.py re-checks on a schedule.
 
 Usage: scripts/issue_fields.py <owner/repo> <issue number>
@@ -24,16 +25,14 @@ In Actions it runs from the issue-fields workflow with an org GitHub App token i
 """
 
 import json
-import os
 import pathlib
 import re
-import subprocess
 import sys
 
 import yaml
 
 from board import find_board_fields, graphql, spec
-from rules import ROOT, gh
+from rules import ROOT, ensure_label, gh
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
@@ -149,9 +148,25 @@ def open_sub_issues(sub_issues):
             if s["state"] == "OPEN"]
 
 
-def reopen_text(open_subs):
-    return (f"{REOPEN_MARKER}\nReopened: a parent can't close while its sub-issues are open "
-            "(design 6.8). Close or move these first:\n\n" + "\n".join(f"- {s}" for s in open_subs))
+PREVENTION = "What now prevents this, by code?"
+UNDECIDED = "Not decided yet"
+
+
+def reopen_reasons(issue_type, text, sub_issues):
+    """Why a closed issue must be open again (design 6.8). Empty means it may stay closed."""
+    reasons = []
+    open_subs = open_sub_issues(sub_issues)
+    if open_subs:
+        reasons.append("A parent can't close while its sub-issues are open. Close or move these "
+                       "first: " + ", ".join(open_subs) + ".")
+    if issue_type == "Process failure" and parse_body(text).get(PREVENTION) == UNDECIDED:
+        reasons.append(f"A process failure stays open while **{PREVENTION}** is "
+                       f"\"{UNDECIDED}\". Add the check, or say why it can't be code, then close it.")
+    return reasons
+
+
+def reopen_text(reasons):
+    return f"{REOPEN_MARKER}\nReopened (design 6.8):\n\n" + "\n".join(f"- {r}" for r in reasons)
 
 
 def board_values(issue_type, text, forms, field_names):
@@ -210,14 +225,21 @@ def problems_text(problems):
             + "\n".join(f"- {p}" for p in problems))
 
 
+def closed_too_early(issue):
+    """reopen_reasons() for a closed issue as GraphQL returns it; empty for an open one."""
+    if issue["state"] != "CLOSED":
+        return []
+    return reopen_reasons((issue["issueType"] or {}).get("name"), issue["body"],
+                          issue["subIssues"]["nodes"])
+
+
 def reopen_if_early(repo, number, issue):
-    """Reopen a closed issue that still has open sub-issues. True if it did."""
-    open_subs = open_sub_issues(issue["subIssues"]["nodes"])
-    if issue["state"] != "CLOSED" or not open_subs:
+    """Reopen a closed issue that must stay open. True if it did."""
+    reasons = closed_too_early(issue)
+    if not reasons:
         return False
     gh(f"repos/{repo}/issues/{number}", "-X", "PATCH", body={"state": "open"})
-    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST",
-       body={"body": reopen_text(open_subs)})
+    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": reopen_text(reasons)})
     issue["state"] = "OPEN"
     return True
 
@@ -240,14 +262,6 @@ def set_field(board, item_id, name, option):
         clientMutationId } }""", p=board["id"], i=item_id, f=field["id"], o=option_id)
 
 
-def ensure_label(repo):
-    # gh label create --force creates or updates; quiet if it already exists as wanted.
-    subprocess.run([os.environ.get("GH", "gh"), "label", "create", LABEL, "-R", repo, "--force",
-                    "--color", "D93F0B", "--description",
-                    "Missing or invalid form answers; kept out of planning views"],
-                   check=True, capture_output=True)
-
-
 def our_comment(repo, number):
     for c in gh(f"repos/{repo}/issues/{number}/comments?per_page=100") or []:
         if c["body"].startswith(MARKER):
@@ -261,7 +275,7 @@ def report(repo, number, issue, problems):
     text = problems_text(problems)
     if problems:
         if LABEL not in labels:
-            ensure_label(repo)
+            ensure_label(repo, LABEL)
             gh(f"repos/{repo}/issues/{number}/labels", "-X", "POST", body={"labels": [LABEL]})
     else:
         if LABEL in labels:
