@@ -13,5 +13,10 @@
   ],
   "firmware": [
     "security"
+  ],
+  "hardware": [
+    "security",
+    "lfs",
+    "kicad"
   ]
 }
