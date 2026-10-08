@@ -8,7 +8,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
 from issue_fields import (board_values, check, link_problems, load_forms, open_sub_issues,  # noqa: E402
-                          parse_body, problems_text, reopen_text)
+                          parse_body, problems_text, reopen_reasons, reopen_text)
 
 FORMS = load_forms()
 
@@ -48,7 +48,8 @@ INTENT = {
 
 class FormsTest(unittest.TestCase):
     def test_every_issue_type_has_a_form(self):
-        self.assertEqual(sorted(FORMS), ["Audit finding", "Bug", "Decision", "Intent", "Task"])
+        self.assertEqual(sorted(FORMS), ["Audit finding", "Bug", "Decision", "Intent",
+                                        "Process failure", "Task"])
 
     def test_required_fields_come_from_the_yaml(self):
         task = {f["label"]: f for f in FORMS["Task"]}
@@ -132,6 +133,49 @@ class BoardValuesTest(unittest.TestCase):
                          {"Discipline": "Software"})
 
 
+PREVENTION = "What now prevents this, by code?"
+CHECK = "The check (required when What now prevents this, by code? is A check was added)"
+NOT_CODE = "Why it can't be code (required when What now prevents this, by code? is It can't be code)"
+PROCESS_FAILURE = {
+    "What went wrong": "An agent kept its progress in private notes",
+    "Where it happened": "handbook#59",
+    PREVENTION: "A check was added",
+    CHECK: "Akenon-Studio/.github#22",
+    NOT_CODE: "_No response_",
+    "Discipline": "Software",
+    "Priority": "High",
+}
+
+
+class ProcessFailureTest(unittest.TestCase):
+    def test_complete_process_failure_passes(self):
+        self.assertEqual(check("Process failure", body(**PROCESS_FAILURE), FORMS), [])
+
+    def test_check_added_needs_the_link(self):
+        problems = check("Process failure", body(**{**PROCESS_FAILURE, CHECK: "_No response_"}), FORMS)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("The check", problems[0])
+
+    def test_cant_be_code_needs_the_reason(self):
+        answers = {**PROCESS_FAILURE, PREVENTION: "It can't be code", CHECK: "_No response_"}
+        problems = check("Process failure", body(**answers), FORMS)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Why it can't be code", problems[0])
+
+    def test_not_decided_is_a_valid_answer_while_open(self):
+        answers = {**PROCESS_FAILURE, PREVENTION: "Not decided yet", CHECK: "_No response_"}
+        self.assertEqual(check("Process failure", body(**answers), FORMS), [])
+
+    def test_closed_while_not_decided_must_reopen(self):
+        answers = {**PROCESS_FAILURE, PREVENTION: "Not decided yet", CHECK: "_No response_"}
+        reasons = reopen_reasons("Process failure", body(**answers), [])
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("Not decided yet", reasons[0])
+
+    def test_closed_once_decided_may_stay_closed(self):
+        self.assertEqual(reopen_reasons("Process failure", body(**PROCESS_FAILURE), []), [])
+
+
 class LinkProblemsTest(unittest.TestCase):
     def test_task_with_a_parent_passes(self):
         self.assertEqual(link_problems("Task", True, 0, "Todo", 0), [])
@@ -171,9 +215,18 @@ class EarlyCloseTest(unittest.TestCase):
         self.assertEqual(open_sub_issues([sub(1, "CLOSED")]), [])
         self.assertEqual(open_sub_issues([]), [])
 
+    def test_parent_with_open_sub_issues_must_reopen(self):
+        reasons = reopen_reasons("Task", body(**TASK), [sub(2, "OPEN")])
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("Akenon-Studio/handbook#2", reasons[0])
+
+    def test_parent_with_closed_sub_issues_may_stay_closed(self):
+        self.assertEqual(reopen_reasons("Task", body(**TASK), [sub(2, "CLOSED")]), [])
+
     def test_reopen_comment_names_them(self):
-        text = reopen_text(["Akenon-Studio/handbook#2"])
-        self.assertIn("- Akenon-Studio/handbook#2", text)
+        text = reopen_text(reopen_reasons("Task", "", [sub(2, "OPEN")]))
+        self.assertIn("- A parent can't close", text)
+        self.assertIn("Akenon-Studio/handbook#2", text)
         self.assertIn("Reopened", text)
 
 

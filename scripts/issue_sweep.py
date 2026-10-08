@@ -3,7 +3,8 @@
 (design 6.8): a board Status set to Blocked, a parent or "blocked by" link added or removed, a
 parent closed while its sub-issues are open. Runs the issue_fields.py checks on every open issue in
 the managed repos and syncs only those whose `needs-fields` label or comment is out of date, then
-reopens any parent closed in the last few hours that still has open sub-issues.
+reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
+or a Process failure whose prevention is not decided yet.
 
 Usage: scripts/issue_sweep.py
 In Actions it runs from the issue-sweep workflow with the org GitHub App token in GH_TOKEN.
@@ -13,7 +14,7 @@ import datetime
 import json
 
 from board import find_board_fields, graphql, spec
-from issue_fields import (ISSUE_FIELDS, LABEL, MARKER, all_problems, load_forms, open_sub_issues,
+from issue_fields import (ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early, load_forms,
                           problems_text, status_on, sync)
 from rules import ORG, managed_repos
 
@@ -60,7 +61,7 @@ def main():
             results.append(sync(issue["repository"]["nameWithOwner"], issue["number"], forms, board))
     since = (datetime.datetime.now(datetime.timezone.utc) - CLOSED_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     for issue in search(f"org:{ORG} is:issue is:closed closed:>={since}"):
-        if in_managed_repo(issue, managed) and open_sub_issues(issue["subIssues"]["nodes"]):
+        if in_managed_repo(issue, managed) and closed_too_early(issue):
             results.append(sync(issue["repository"]["nameWithOwner"], issue["number"], forms, board))
     print(json.dumps(results, indent=2) if results else "Every issue is up to date.")
 

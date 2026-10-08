@@ -1,0 +1,54 @@
+name: Process failure
+description: A mistake in how work is done (not a code bug), and what now prevents it, by code
+type: Process failure
+labels: ["process-failure"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A lesson goes to code first (handbook design 6.8). This issue stays open while the answer below is "Not decided yet".
+  - type: textarea
+    id: what-went-wrong
+    attributes:
+      label: What went wrong
+      description: The mistake, when, and what it cost. Facts, not blame.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where it happened
+      description: Links to the issues, PRs or files involved.
+    validations:
+      required: true
+  - type: dropdown
+    id: prevention
+    attributes:
+      label: What now prevents this, by code?
+      options: [A check was added, It can't be code, Not decided yet]
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: The check (required when What now prevents this, by code? is A check was added)
+      description: Link to the check, hook or script, and the PR that added it.
+  - type: textarea
+    id: why-not-code
+    attributes:
+      label: Why it can't be code (required when What now prevents this, by code? is It can't be code)
+      description: The reason. The scheduled architecture review re-reads it and asks whether a check can cover it now.
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation, Hardware, Brand, Marketing, Legal and admin]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true
