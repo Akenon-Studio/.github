@@ -52,6 +52,8 @@ def main():
     for p in found:
         print(f"::error::{p}")
     if found:
+        print("Fix the PR body; saving it runs this check again. Re-running the job does not help: "
+              "it reads the body the PR had when the run started.")
         sys.exit(1)
     print("OK: the PR closes " + ", ".join(dict.fromkeys(refs(CLOSES, body, repo))))
 
