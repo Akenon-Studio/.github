@@ -13,9 +13,8 @@ board follows.
 
 Links between issues are checked too (design 6.8): every issue has a parent unless it is top level
 (an Intent; a parent of other issues, which is what phase steps and partner workstreams are; or the
-handbook issue titled exactly "Deferred findings", top level even while empty), a Bug report not
-yet triaged, or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report); an
-issue whose
+"Deferred work" parent, handbook#83, top level even while empty), a Bug report not yet triaged,
+or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report); an issue whose
 board Status is Blocked has a "blocked by" link; and a closed issue with open sub-issues is
 reopened with a comment naming them. Board changes, links and closing send no event every repo's
 caller listens to, so scripts/issue_sweep.py re-checks on a schedule.
@@ -116,25 +115,27 @@ def check(issue_type, text, forms):
     return problems
 
 
-DEFERRED = ("handbook", "Deferred findings")  # (repo, exact title) of the top-level parent of deferred audit findings
+# "Deferred work" (deferred findings and later-phase tasks): top level. Matched by number, so a
+# rename doesn't break it.
+DEFERRED = ("handbook", 83)
 NO_PARENT_TYPES = {"Intent", "Bug"}  # Bug: a report needs no parent until it is triaged
 
 
-def needs_parent(issue_type, sub_issues, repo="", title="", by_bot=False):
+def needs_parent(issue_type, sub_issues, repo="", number=0, by_bot=False):
     """False for issues design 6.8 lets stand alone; `repo` is the repo name without the owner."""
     return not (issue_type in NO_PARENT_TYPES or sub_issues or by_bot
-                or (repo.lower(), title.strip()) == DEFERRED)
+                or (repo.lower(), int(number)) == DEFERRED)
 
 
-def link_problems(issue_type, has_parent, sub_issues, status, blocked_by, repo="", title="",
+def link_problems(issue_type, has_parent, sub_issues, status, blocked_by, repo="", number=0,
                   by_bot=False):
     """Problems with an issue's links (design 6.8, checks 3 and 4). `sub_issues` and `blocked_by`
     are counts."""
     problems = []
-    if not has_parent and needs_parent(issue_type, sub_issues, repo, title, by_bot):
+    if not has_parent and needs_parent(issue_type, sub_issues, repo, number, by_bot):
         problems.append("The issue has no parent. Add it as a sub-issue of the phase step, partner "
-                        "workstream or feature it belongs to (deferred audit findings go under "
-                        "Deferred findings). Only intents, untriaged bugs and parents of other "
+                        "workstream or feature it belongs to (deferred findings and later-phase "
+                        "work go under handbook#83, Deferred work). Only intents, untriaged bugs and parents of other "
                         "issues stand alone.")
     if status == "Blocked" and not blocked_by:
         problems.append("Status is **Blocked** but nothing is linked as blocking it. Add a "
@@ -168,7 +169,7 @@ def board_values(issue_type, text, forms, field_names):
 # --- GitHub side -------------------------------------------------------------------------------
 
 # What the checks read about an issue; issue_sweep.py reads the same for many issues at once.
-ISSUE_FIELDS = """id number state title body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
+ISSUE_FIELDS = """id number state body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
   repository { nameWithOwner }
   parent { number }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
@@ -197,7 +198,7 @@ def all_problems(issue, forms, status):
     return check(issue_type, issue["body"], forms) + link_problems(
         issue_type, issue["parent"] is not None, len(issue["subIssues"]["nodes"]), status,
         issue["blockedBy"]["totalCount"], issue["repository"]["nameWithOwner"].split("/")[1],
-        issue["title"], (issue["author"] or {}).get("__typename") == "Bot")
+        issue["number"], (issue["author"] or {}).get("__typename") == "Bot")
 
 
 def problems_text(problems):

@@ -156,14 +156,12 @@ class LinkProblemsTest(unittest.TestCase):
     def test_both_problems_at_once(self):
         self.assertEqual(len(link_problems("Task", False, 0, "Blocked", 0)), 2)
 
-    def test_deferred_findings_parent_is_top_level_even_when_empty(self):
-        self.assertEqual(link_problems("Task", False, 0, "Todo", 0, "handbook", "Deferred findings"), [])
+    def test_deferred_work_parent_is_top_level_even_when_empty(self):
+        self.assertEqual(link_problems("Task", False, 0, "Todo", 0, "handbook", 83), [])
 
-    def test_deferred_findings_title_must_match_exactly_in_handbook(self):
-        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, "handbook",
-                                           "Deferred findings for later")), 1)
-        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, "platform",
-                                           "Deferred findings")), 1)
+    def test_deferred_work_is_handbook_83_only(self):
+        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, "handbook", 84)), 1)
+        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, "platform", 83)), 1)
 
     def test_untriaged_bug_needs_no_parent(self):
         self.assertEqual(link_problems("Bug", False, 0, "Todo", 0), [])
@@ -172,11 +170,10 @@ class LinkProblemsTest(unittest.TestCase):
         self.assertEqual(len(link_problems("Bug", False, 0, "Blocked", 0)), 1)
 
     def test_issue_opened_by_the_automation_needs_no_parent(self):
-        self.assertEqual(link_problems("Task", False, 0, "Todo", 0, ".github", "Live settings "
-                                       "differ from rulesets/", by_bot=True), [])
+        self.assertEqual(link_problems("Task", False, 0, "Todo", 0, ".github", 5, by_bot=True), [])
 
     def test_issue_opened_by_a_person_still_needs_one(self):
-        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, ".github", "x",
+        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, ".github", 5,
                                            by_bot=False)), 1)
 
 

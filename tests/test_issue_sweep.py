@@ -17,7 +17,7 @@ BOARD = "PVT_board"
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User"):
-    return {"number": 1, "title": "Write the guide", "body": body(**TASK), "issueType": {"name": "Task"},
+    return {"number": 1, "body": body(**TASK), "issueType": {"name": "Task"},
             "author": {"__typename": author, "login": "someone"},
             "repository": {"nameWithOwner": repo},
             "labels": {"nodes": [{"name": l} for l in labels]},
