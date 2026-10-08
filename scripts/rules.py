@@ -160,3 +160,46 @@ def issue_type_differences(want, have):
     diffs += [f"issue type '{n}' is not in issue-types.json"
               for n in sorted(set(live) - {t["name"] for t in want})]
     return diffs
+
+
+AUTOMATION_OWNERS = "automation-owners"
+TEAM_KEYS = ("name", "description", "privacy")
+
+
+def team(slug):
+    """A team's definition from rulesets/teams.json."""
+    return next(t for t in load("teams.json")["teams"] if t["slug"] == slug)
+
+
+def automation_owners():
+    """The people the automation hands its work to (design 6.8), as logins. Read from the code, not
+    from GitHub, so the automation needs no permission to read teams."""
+    return list(team(AUTOMATION_OWNERS)["members"])
+
+
+def team_differences(want, have, members, repos):
+    """How a live team falls short of its definition. `have` is the team as the API returns it (None
+    if missing), `members` its members' logins, `repos` {repo name: permission} for its repos.
+    Logins compare without case."""
+    if have is None:
+        return [f"team '{want['slug']}' is missing"]
+    diffs = [f"team '{want['slug']}': expected {k} {want[k]!r}, got {have.get(k)!r}"
+             for k in TEAM_KEYS if have.get(k) != want[k]]
+    wanted, live = {m.lower(): m for m in want["members"]}, {m.lower(): m for m in members}
+    diffs += [f"team '{want['slug']}': {wanted[m]} is not a member"
+              for m in sorted(wanted.keys() - live.keys())]
+    diffs += [f"team '{want['slug']}': {live[m]} is a member but not in teams.json"
+              for m in sorted(live.keys() - wanted.keys())]
+    for repo in managed_repos():
+        if repos.get(repo) != want["repo_permission"]:
+            diffs.append(f"team '{want['slug']}': expected {want['repo_permission']!r} on {repo}, "
+                         f"got {repos.get(repo)!r}")
+    return diffs
+
+
+def team_repo_permission(permissions):
+    """The single permission name the teams API gives as `role_name`, or derived from the flags."""
+    for name in ("admin", "maintain", "push", "triage", "pull"):
+        if permissions.get(name):
+            return name
+    return None

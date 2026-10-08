@@ -2,7 +2,7 @@
 """Check that live GitHub settings match rulesets/ (design 6.7). Exits 1 if anything differs.
 
 Usage: scripts/verify-settings.py
-Reports: org settings and issue types, each managed repo's merge settings, rulesets and labels,
+Reports: org settings, issue types and teams (rulesets/teams.json), each managed repo's merge settings, rulesets and labels,
 the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
 (rulesets/repo-lists.json), and any repo in the org that is neither managed nor archived.
@@ -17,7 +17,8 @@ import sys
 
 from board import board_differences, find_board, spec
 from rules import (ORG, desired_labels, desired_rulesets, differences, gh, issue_type_differences,
-                   label_differences, load, managed_repos, repo_rulesets, repo_settings, try_gh)
+                   label_differences, load, managed_repos, repo_rulesets, repo_settings,
+                   team_differences, team_repo_permission, try_gh)
 
 
 def missing_from(text, repos, pattern, skip=()):
@@ -58,6 +59,20 @@ def main():
         print("note: can't read the org's issue types; not checked")
     else:
         problems += [f"org: {d}" for d in issue_type_differences(load("issue-types.json")["types"], types)]
+
+    teams_readable = try_gh(f"orgs/{ORG}/teams") is not None
+    for t in load("teams.json")["teams"]:
+        if not teams_readable:
+            print(f"note: can't read the org's teams; team '{t['slug']}' not checked")
+            continue
+        members = try_gh(f"orgs/{ORG}/teams/{t['slug']}/members?per_page=100")
+        if members is None:
+            problems.append(f"org: team '{t['slug']}' is missing")
+            continue
+        repos = {r["name"]: team_repo_permission(r.get("permissions") or {})
+                 for r in gh(f"orgs/{ORG}/teams/{t['slug']}/repos?per_page=100") or []}
+        problems += [f"org: {d}" for d in team_differences(
+            t, gh(f"orgs/{ORG}/teams/{t['slug']}"), [m["login"] for m in members], repos)]
 
     managed = managed_repos()
     for repo in managed:

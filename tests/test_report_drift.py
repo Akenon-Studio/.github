@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
 from issue_fields import check, load_forms  # noqa: E402
-from report_drift import body, notes, problems  # noqa: E402
+from report_drift import body, new_issue, notes, problems, update  # noqa: E402
 
 OUTPUT = """note: planning is not managed by rulesets/repos.txt and not archived
 
@@ -32,6 +32,20 @@ class ReportDriftTest(unittest.TestCase):
     def test_body_is_a_complete_task_form(self):
         # so the issue-fields automation files it on the board without needs-fields
         self.assertEqual(check("Task", body(OUTPUT), load_forms()), [])
+
+
+    def test_new_issue_is_assigned_to_the_automation_owners(self):
+        self.assertEqual(new_issue(body(OUTPUT))["assignees"], ["RuvinduH"])
+
+    def test_update_reassigns_an_unassigned_issue(self):
+        text = body(OUTPUT)
+        self.assertEqual(update({"body": text, "assignees": []}, text), {"assignees": ["RuvinduH"]})
+
+    def test_update_keeps_whoever_is_assigned(self):
+        text = body(OUTPUT)
+        self.assertIsNone(update({"body": text, "assignees": [{"login": "Thytus777"}]}, text))
+        self.assertEqual(update({"body": "old", "assignees": [{"login": "Thytus777"}]}, text),
+                         {"body": text})
 
 
 if __name__ == "__main__":
