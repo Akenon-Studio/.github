@@ -338,6 +338,24 @@
         "ASC"
       ],
       "_comment": "Phase 1 only (audit findings exist only in phase 1); delete this view from board.json when phase 1 ends."
+    },
+    {
+      "name": "Process failures",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open type:\"Process failure\"",
+      "fields": [
+        "Title",
+        "Status",
+        "Discipline",
+        "Priority",
+        "Assignees",
+        "Repository"
+      ],
+      "sort": [
+        "Created",
+        "ASC"
+      ],
+      "_comment": "Open process failures (design 6.6, 6.8): mistakes no check prevents yet, for the partners and the scheduled architecture review."
     }
   ]
 }

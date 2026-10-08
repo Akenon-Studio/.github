@@ -1,0 +1,12 @@
+{
+  "_comment": "The org's issue types (design 6.6), one per issue form; the form's `type:` must name one of these. apply-rules.py creates or updates them, verify-settings.py checks them. Colours are GitHub's: gray, blue, green, yellow, orange, red, pink, purple.",
+  "types": [
+    {"name": "Task", "description": "Work a person does, in any discipline", "color": "blue", "is_enabled": true},
+    {"name": "Bug", "description": "An unexpected problem or behavior", "color": "red", "is_enabled": true},
+    {"name": "Feature", "description": "Not used: features go through an Intent", "color": "gray", "is_enabled": false},
+    {"name": "Intent", "description": "Work for an agent to do through Peras", "color": "purple", "is_enabled": true},
+    {"name": "Audit finding", "description": "A problem found by a phase 1 audit", "color": "orange", "is_enabled": true},
+    {"name": "Decision", "description": "A question for the partners to decide", "color": "yellow", "is_enabled": true},
+    {"name": "Process failure", "description": "A mistake in how work is done, and what now prevents it by code", "color": "pink", "is_enabled": true}
+  ]
+}

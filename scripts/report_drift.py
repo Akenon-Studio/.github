@@ -7,11 +7,9 @@ Exit code 0: close any open one with a comment. Anything else: fail, since the c
 The issue body is a filled-in Task form, so the issue-fields automation puts it on the board.
 """
 
-import os
-import subprocess
 import sys
 
-from rules import ORG, gh
+from rules import ORG, ensure_label, gh
 
 REPO = f"{ORG}/.github"
 LABEL = "settings-drift"
@@ -88,10 +86,7 @@ def main():
         sys.exit(f"verify-settings.py itself failed (exit {code}); see the log above")
     text = body(output)
     if issue is None:
-        subprocess.run([os.environ.get("GH", "gh"), "label", "create", LABEL, "-R", REPO,
-                        "--force", "--color", "B60205",
-                        "--description", "Live settings differ from rulesets/"],
-                       check=True, capture_output=True)
+        ensure_label(REPO, LABEL)
         made = gh(f"repos/{REPO}/issues", "-X", "POST",
                   body={"title": TITLE, "body": text, "type": "Task", "labels": [LABEL]})
         print(f"opened #{made['number']}")

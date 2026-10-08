@@ -25,6 +25,12 @@ def gh(*args, body=None):
     return json.loads(res.stdout) if res.stdout.strip() else None
 
 
+def try_gh(*args):
+    """Like gh() for reads, but None instead of exiting when this token can't read it."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", *args], capture_output=True, text=True)
+    return json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else None
+
+
 def load(name):
     return json.loads((RULES / name).read_text())
 
@@ -103,4 +109,54 @@ def differences(want, have, path=""):
             diffs.append(f"{path}: expected {want!r}, got {have!r}")
     elif want != have:
         diffs.append(f"{path}: expected {want!r}, got {have!r}")
+    return diffs
+
+
+def desired_labels(repo):
+    """The labels a repo should have (rulesets/labels.json): every repo's, then its own."""
+    labels = load("labels.json")
+    return labels["all"] + labels.get(repo, [])
+
+
+def ensure_label(full_repo, name):
+    """Create or update one label from rulesets/labels.json in 'owner/repo', for automation that
+    adds it before apply-rules.py has run there. gh label create --force is quiet if it exists."""
+    label = next(l for l in desired_labels(full_repo.split("/")[1]) if l["name"] == name)
+    subprocess.run([os.environ.get("GH", "gh"), "label", "create", name, "-R", full_repo, "--force",
+                    "--color", label["color"], "--description", label["description"]],
+                   check=True, capture_output=True)
+
+
+def label_differences(want, have):
+    """Labels missing from `have` or differing in colour or description. Names and colours
+    compare without case, as GitHub treats them."""
+    live = {l["name"].lower(): l for l in have}
+    diffs = []
+    for l in want:
+        got = live.get(l["name"].lower())
+        if got is None:
+            diffs.append(f"label '{l['name']}' is missing")
+        elif got["color"].lower() != l["color"].lower() or (got["description"] or "") != l["description"]:
+            diffs.append(f"label '{l['name']}': expected colour {l['color']} and description "
+                         f"{l['description']!r}, got {got['color']} and {got['description']!r}")
+    return diffs
+
+
+ISSUE_TYPE_KEYS = ("description", "color", "is_enabled")
+
+
+def issue_type_differences(want, have):
+    """Org issue types missing from `have` or differing from rulesets/issue-types.json."""
+    live = {t["name"]: t for t in have}
+    diffs = []
+    for t in want:
+        got = live.get(t["name"])
+        if got is None:
+            diffs.append(f"issue type '{t['name']}' is missing")
+            continue
+        for k in ISSUE_TYPE_KEYS:
+            if got.get(k) != t[k]:
+                diffs.append(f"issue type '{t['name']}': expected {k} {t[k]!r}, got {got.get(k)!r}")
+    diffs += [f"issue type '{n}' is not in issue-types.json"
+              for n in sorted(set(live) - {t["name"] for t in want})]
     return diffs

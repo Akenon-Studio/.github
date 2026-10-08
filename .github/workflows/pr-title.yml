@@ -1,12 +1,14 @@
-# Reusable: the PR checks every repo runs. Every repo (this one included, see
-# pr-title-caller.yml) calls it with:
+# Reusable: the PR checks every repo runs. Every repo (this one included, see pr-title-caller.yml)
+# calls it with:
 #
 #   on: { pull_request: { types: [opened, edited, synchronize, reopened] } }
 #   jobs: { pr-title: { uses: akenon-studio/.github/.github/workflows/pr-title.yml@main } }
 #
-# Its jobs are the required status checks "pr-title / check" (the title is a conventional commit)
-# and "pr-title / claude-md" (every CLAUDE.md passes scripts/claude_md.py, design 6.8). A new job
-# here runs in every repo without changing the callers.
+# Its jobs are the status checks "pr-title / check" (the title is a conventional commit),
+# "pr-title / closes-issue" (the body closes at least one whole issue, design 6.8;
+# scripts/pr_closes_issue.py) and "pr-title / claude-md" (every CLAUDE.md passes
+# scripts/claude_md.py, design 6.8; not required until handbook#79). A new job here runs in every
+# repo without changing the callers.
 name: pr-title
 
 on:
@@ -31,6 +33,23 @@ jobs:
             echo "::error::PR title must be a conventional commit, e.g. 'feat: add pairing screen' or 'fix(api): handle expired tokens'. Got: $TITLE"
             exit 1
           fi
+
+  closes-issue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Get the script
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the script; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          persist-credentials: false
+
+      - name: Body closes at least one whole issue
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 scripts/pr_closes_issue.py
 
   claude-md:
     runs-on: ubuntu-latest
