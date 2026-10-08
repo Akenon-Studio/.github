@@ -6,3 +6,4 @@ animations
 peras
 hardware
 handbook
+.github-private
