@@ -15,7 +15,7 @@ Closes #
 
 ## Design decisions
 
-<!-- IDs of the design decisions this implements, if any (e.g. D-6.2.3). Write "none" otherwise. -->
+<!-- Design sections this implements, if any (e.g. design 6.5). Decision IDs replace them in phase 2 (design 6.7). Write "none" otherwise. -->
 
 ## Checklist
 

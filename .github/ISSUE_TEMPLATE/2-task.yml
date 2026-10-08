@@ -51,4 +51,4 @@ body:
     id: decisions
     attributes:
       label: Design decisions
-      description: IDs of the design decisions this implements, if any (e.g. D-6.2.3).
+      description: Design sections this implements, if any (e.g. design 6.5). Decision IDs replace them in phase 2 (design 6.7).
