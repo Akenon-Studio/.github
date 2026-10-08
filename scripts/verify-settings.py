@@ -3,8 +3,8 @@
 
 Usage: scripts/verify-settings.py
 Reports: org settings, each managed repo's merge settings and rulesets, the project board's fields
-and linked repos (rulesets/board.json), the files that list every repo (rulesets/repo-lists.json),
-and any repo in the org that is neither managed nor archived.
+and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
+(rulesets/repo-lists.json), and any repo in the org that is neither managed nor archived.
 """
 
 import base64
@@ -33,6 +33,15 @@ def read_file(repo, path):
     if res.returncode != 0:
         return None
     return base64.b64decode(json.loads(res.stdout)["content"]).decode()
+
+
+def repo_files(repo):
+    """Every file path on a repo's default branch, or None if this token can't read it."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    return {t["path"] for t in json.loads(res.stdout)["tree"]}
 
 
 def main():
@@ -67,6 +76,13 @@ def main():
             continue
         problems += [f"{spec_['repo']}/{spec_['path']}: doesn't list repo '{r}'"
                      for r in missing_from(text, managed, spec_["pattern"], spec_["skip"])]
+
+    for repo in managed:
+        files = repo_files(repo)
+        if files is None:
+            print(f"note: can't read {repo}'s files; required files not checked")
+            continue
+        problems += [f"{repo}: missing {f}" for f in load("repo-lists.json")["required_files"] if f not in files]
 
     for r in gh(f"orgs/{ORG}/repos?per_page=100") or []:
         if r["name"] not in managed and not r["archived"]:
