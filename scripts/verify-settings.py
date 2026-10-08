@@ -3,14 +3,45 @@
 
 Usage: scripts/verify-settings.py
 Reports: org settings, each managed repo's merge settings and rulesets, the project board's fields
-and linked repos (rulesets/board.json), and any repo in the org that is neither managed nor archived.
+and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
+(rulesets/repo-lists.json), and any repo in the org that is neither managed nor archived.
 """
 
+import base64
+import json
+import os
+import re
+import subprocess
 import sys
 
 from board import board_differences, find_board, spec
 from rules import (ORG, desired_rulesets, differences, gh, load, managed_repos, repo_rulesets,
                    repo_settings)
+
+
+def missing_from(text, repos, pattern, skip=()):
+    """Managed repos a repo-list file doesn't name."""
+    return [r for r in repos if r not in skip
+            and not re.search(pattern.replace("{repo}", re.escape(r)), text, re.MULTILINE)]
+
+
+def read_file(repo, path):
+    """A file's text from a repo's default branch, or None if this token can't read it (the daily
+    run's read-only app has no contents access, so that run skips these checks)."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/contents/{path}"],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    return base64.b64decode(json.loads(res.stdout)["content"]).decode()
+
+
+def repo_files(repo):
+    """Every file path on a repo's default branch, or None if this token can't read it."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    return {t["path"] for t in json.loads(res.stdout)["tree"]}
 
 
 def main():
@@ -37,6 +68,21 @@ def main():
 
     board = spec()
     problems += [f"board: {d}" for d in board_differences(find_board(board["title"]), board)]
+
+    for spec_ in load("repo-lists.json")["lists"]:
+        text = read_file(spec_["repo"], spec_["path"])
+        if text is None:
+            print(f"note: can't read {spec_['repo']}/{spec_['path']}; repo list not checked")
+            continue
+        problems += [f"{spec_['repo']}/{spec_['path']}: doesn't list repo '{r}'"
+                     for r in missing_from(text, managed, spec_["pattern"], spec_["skip"])]
+
+    for repo in managed:
+        files = repo_files(repo)
+        if files is None:
+            print(f"note: can't read {repo}'s files; required files not checked")
+            continue
+        problems += [f"{repo}: missing {f}" for f in load("repo-lists.json")["required_files"] if f not in files]
 
     for r in gh(f"orgs/{ORG}/repos?per_page=100") or []:
         if r["name"] not in managed and not r["archived"]:

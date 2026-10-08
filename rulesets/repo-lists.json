@@ -1,0 +1,27 @@
+{
+  "_comment": "Files outside this repo that list every managed repo. verify-settings.py checks each one names every repo in repos.txt, so a new repo can't be forgotten in them; and that every managed repo has the files in 'required_files'. {repo} in a pattern is the repo name (regex-escaped); 'skip' lists repos a file need not name.",
+  "lists": [
+    {
+      "repo": ".github-private",
+      "path": "profile/README.md",
+      "pattern": "\\(https://github\\.com/Akenon-Studio/{repo}\\)",
+      "skip": [
+        ".github-private"
+      ]
+    },
+    {
+      "repo": "handbook",
+      "path": "design.md",
+      "pattern": "^[├└]── {repo} ",
+      "skip": []
+    }
+  ],
+  "required_files": [
+    "LICENSE",
+    "README.md",
+    ".gitignore",
+    ".github/CODEOWNERS",
+    ".github/workflows/pr-title-caller.yml",
+    ".github/workflows/issue-fields-caller.yml"
+  ]
+}
