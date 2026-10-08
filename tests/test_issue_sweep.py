@@ -16,9 +16,12 @@ BOARD = "PVT_board"
 
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
-          author="User"):
+          author="User", assignees=("someone",), ever=("someone",)):
     return {"number": 1, "body": body(**TASK), "issueType": {"name": "Task"},
             "author": {"__typename": author, "login": "someone"},
+            "assignedActors": {"nodes": [{"__typename": "User", "login": a} for a in assignees]},
+            "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": a}}
+                                        for a in ever]},
             "repository": {"nameWithOwner": repo},
             "labels": {"nodes": [{"name": l} for l in labels]},
             "parent": {"number": 24} if parent else None,
@@ -43,6 +46,18 @@ class OutOfDateTest(unittest.TestCase):
 
     def test_bot_opened_issue_without_a_parent_is_left_alone(self):
         self.assertFalse(out_of_date(issue(parent=False, author="Bot"), FORMS, BOARD))
+
+    def test_author_never_assigned_is_synced(self):
+        self.assertTrue(out_of_date(issue(assignees=(), ever=()), FORMS, BOARD))
+
+    def test_author_assigned_then_unassigned_is_left_alone(self):
+        self.assertFalse(out_of_date(issue(assignees=()), FORMS, BOARD))
+
+    def test_waiting_for_human_unassigned_is_synced(self):
+        self.assertTrue(out_of_date(issue(status="Waiting for human", assignees=()), FORMS, BOARD))
+
+    def test_waiting_for_human_assigned_is_left_alone(self):
+        self.assertFalse(out_of_date(issue(status="Waiting for human"), FORMS, BOARD))
 
     def test_labelled_with_the_right_comment_is_left_alone(self):
         text = problems_text(link_problems("Task", False, 0, "Todo", 0))

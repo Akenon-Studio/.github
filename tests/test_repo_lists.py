@@ -30,5 +30,18 @@ class MissingFrom(unittest.TestCase):
         self.assertEqual(verify.missing_from("├── platformx  x", ["platform"], l["pattern"]), ["platform"])
 
 
+class CallerTriggers(unittest.TestCase):
+    def test_reads_the_types_list(self):
+        text = "on:\n  pull_request:\n    types: [opened, edited, assigned]\n"
+        self.assertEqual(verify.triggers(text), {"opened", "edited", "assigned"})
+
+    def test_no_types_is_empty(self):
+        self.assertEqual(verify.triggers("on: push\n"), set())
+
+    def test_this_repos_pr_caller_reruns_on_assignment(self):
+        text = (ROOT / ".github/workflows/pr-title-caller.yml").read_text()
+        self.assertTrue({"assigned", "unassigned"} <= verify.triggers(text))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,7 +16,15 @@ Links between issues are checked too (design 6.8): every issue has a parent unle
 "Deferred work" parent, handbook#83, top level even while empty), a Bug report not yet triaged,
 or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report); an issue whose
 board Status is Blocked has a "blocked by" link; and a closed issue with open sub-issues is
-reopened with a comment naming them. A Process failure closed while its answer to "What now
+reopened with a comment naming them.
+
+Who is assigned is checked too (design 6.8, "Every hand-off goes to an assigned human"): an issue a
+person opened must have its author assigned, and an issue whose board Status is Waiting for human
+must have a person (not a bot or app) assigned. "The author is an assignee at creation" is checked
+in the simplest form that holds up: the author counts as assigned if they are an assignee now or
+were ever assigned (an `assigned` event in the issue's timeline). So the problem is fixed by
+assigning the author, who may then hand the issue to someone else. Issues a bot or app opens are
+exempt from the author rule. A Process failure closed while its answer to "What now
 prevents this, by code?" is "Not decided yet" is reopened too. Board changes, links and closing send no event every repo's
 caller listens to, so scripts/issue_sweep.py re-checks on a schedule.
 
@@ -142,6 +150,32 @@ def link_problems(issue_type, has_parent, sub_issues, status, blocked_by, repo="
     return problems
 
 
+WAITING = "Waiting for human"
+
+
+def assignee_problems(author, by_bot, assignees, ever_assigned, status):
+    """Problems with who is assigned (design 6.8). `assignees` are the people assigned now and
+    `ever_assigned` everyone the timeline shows was assigned, both as logins; bots never appear in
+    `assignees`."""
+    problems = []
+    known = {a.lower() for a in [*assignees, *ever_assigned]}
+    if author and not by_bot and author.lower() not in known:
+        problems.append(f"The author, @{author}, is not assigned. Assign @{author} (Assignees, in "
+                        "the sidebar); you can hand the issue to someone else after. Whoever opens "
+                        "an issue is assigned to it, so a hand-off reaches a person.")
+    if status == WAITING and not assignees:
+        problems.append(f"Status is **{WAITING}** but no person is assigned. Assign the person it "
+                        "waits on; a bot or app doesn't count, since status alone notifies no one.")
+    return problems
+
+
+def people_assigned(issue):
+    """(people assigned now, everyone ever assigned) as logins, from the GraphQL fields."""
+    now = [a["login"] for a in issue["assignedActors"]["nodes"] if a.get("__typename") == "User"]
+    ever = [(e.get("assignee") or {}).get("login") for e in issue["timelineItems"]["nodes"]]
+    return now, [e for e in ever if e]
+
+
 def open_sub_issues(sub_issues):
     """'owner/repo#n' for each open sub-issue, from the GraphQL subIssues nodes."""
     return [f"{s['repository']['nameWithOwner']}#{s['number']}" for s in sub_issues
@@ -189,6 +223,9 @@ ISSUE_FIELDS = """id number state body author { __typename login } issueType { n
   parent { number }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
   blockedBy(first: 1) { totalCount }
+  assignedActors(first: 20) { nodes { __typename ... on User { login } ... on Bot { login } } }
+  timelineItems(itemTypes: [ASSIGNED_EVENT], first: 100) { nodes {
+    ... on AssignedEvent { assignee { __typename ... on User { login } } } } }
   projectItems(first: 20) { nodes { id project { id }
     fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
 
@@ -210,10 +247,13 @@ def status_on(board_id, issue):
 
 def all_problems(issue, forms, status):
     issue_type = (issue["issueType"] or {}).get("name")
+    author = issue["author"] or {}
+    by_bot = author.get("__typename") == "Bot"
     return check(issue_type, issue["body"], forms) + link_problems(
         issue_type, issue["parent"] is not None, len(issue["subIssues"]["nodes"]), status,
         issue["blockedBy"]["totalCount"], issue["repository"]["nameWithOwner"].split("/")[1],
-        issue["number"], (issue["author"] or {}).get("__typename") == "Bot")
+        issue["number"], by_bot) + assignee_problems(
+        author.get("login"), by_bot, *people_assigned(issue), status)
 
 
 def problems_text(problems):
