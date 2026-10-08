@@ -61,6 +61,13 @@ class FailsTest(unittest.TestCase):
     def test_keyword_inside_an_html_comment_does_not_count(self):
         self.assertIn("closes no issue", problems("<!-- Closes #1 -->", REPO)[0])
 
+    def test_keyword_inside_code_does_not_count(self):
+        self.assertIn("closes no issue", problems("Write `Closes #1` in the body", REPO)[0])
+        self.assertIn("closes no issue", problems("```\nCloses #1\n```", REPO)[0])
+
+    def test_part_of_inside_code_is_a_quote_not_a_claim(self):
+        self.assertEqual(problems("Closes #5. It rejects `Part of #24` bodies.", REPO), [])
+
     def test_keyword_must_be_a_whole_word(self):
         self.assertIn("closes no issue", problems("prefixes #4", REPO)[0])
 
