@@ -9,9 +9,10 @@
 # scripts/pr_closes_issue.py) and "pr-title / claude-md" (every CLAUDE.md passes
 # scripts/claude_md.py, design 6.8) and "pr-title / author-assigned" (a PR a person opens has its
 # author among the assignees, design 6.8; scripts/pr_author_assigned.py; it reads the assignees
-# from the event, so callers also listen to `assigned` and `unassigned`). Every job runs on every
-# event: a job skipped on some events would report "skipped", which passes a required check. A new
-# job here runs in every repo without changing the callers.
+# from the event, so callers also listen to `assigned` and `unassigned`) and "pr-title / stacked" (no
+# commit on the branch is on another open PR's branch, handbook#120; scripts/pr_not_stacked.py).
+# Every job runs on every event: a job skipped on some events would report "skipped", which passes
+# a required check. A new job here runs in every repo without changing the callers.
 name: pr-title
 
 on:
@@ -106,3 +107,26 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/pr_author_assigned.py
+
+  stacked:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Get the script
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the script; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          persist-credentials: false
+
+      - name: Not stacked on another open PR
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/pr_not_stacked.py
