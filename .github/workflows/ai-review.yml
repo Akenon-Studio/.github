@@ -1,0 +1,79 @@
+# Reusable: Claude reviews a PR and comments (design 6.4: advisory, never approves, never a required
+# check). The code repos (platform, animations, peras, this one) call it with:
+#
+#   on: { pull_request: { types: [opened, synchronize, ready_for_review, reopened] } }
+#   permissions: { contents: read, pull-requests: write, id-token: write }
+#   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main } }
+#
+# scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
+# cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
+# (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request runs
+# of those four repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
+# org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
+# job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
+# every caller, this repo's included, uses the main copy. The review is posted with the
+# workflow's own token (github-actions[bot]) as one review with event COMMENT. Skipped: drafts,
+# fork PRs (GitHub gives them no OIDC token) and Renovate's dependency PRs.
+name: ai-review
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # The skips are on the steps, not the job: a skipped job reports "skipped" (tests/test_workflows.py).
+    env:
+      WANTED: >-
+        ${{ !github.event.pull_request.draft &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.user.login != 'renovate[bot]' }}
+    steps:
+      - name: Nothing to review (draft, fork or dependency update)
+        if: env.WANTED != 'true'
+        run: echo "Skipped, a draft, fork PR or Renovate update."
+
+      - name: Get the repo (for its CLAUDE.md)
+        if: env.WANTED == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Get the script
+        if: env.WANTED == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # Always main, even for this repo's own PRs: the sign-in trusts only this workflow on main
+          # (see the top), so a PR can't change what runs with the token.
+          ref: main
+          path: .akenon-github
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: env.WANTED == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Review
+        if: env.WANTED == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          pip install --quiet "anthropic==1.13.0"
+          python3 .akenon-github/scripts/ai_review.py
