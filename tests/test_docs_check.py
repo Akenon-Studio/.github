@@ -80,7 +80,7 @@ class CheckTest(unittest.TestCase):
                      "docs/architecture/a.md": HEADER + "````\n```\nsrc/gone.ts\n```\n````\n`src/gone2.ts`\n",
                      "docs/decisions/d.md": HEADER + "[old](gone.md)\n"})
         found = " ".join(check(root, "code", dict(RULE_SET, all=dict(
-            RULE_SET["all"], docs=["docs/architecture/**/*.md", "docs/decisions/**/*.md"])))))
+            RULE_SET["all"], docs=["docs/architecture/**/*.md", "docs/decisions/**/*.md"]))))
         self.assertNotIn("src/gone.ts`", found)
         self.assertIn("src/gone2.ts", found)
         self.assertNotIn("gone.md", found)

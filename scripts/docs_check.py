@@ -30,7 +30,7 @@ import urllib.parse
 import yaml
 
 RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "docs.json"
-HISTORY = re.compile(r"(^|/)decisions/|(^|/)legal/audits/")
+HISTORY = re.compile(r"(^|/)decisions/|(^|/)legal/audits/|(^|/)CHANGELOG\.md$")
 HEADER_END = re.compile(r"\n---[ \t]*(?:\n|$)")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CODE = re.compile(r"`([^`\n]+)`")
@@ -168,7 +168,8 @@ def ignored(root, token, doc_dir=""):
     """True for a path git ignores, from the repo root or the doc's folder: made at install
     (`apps/desktop/models/`)."""
     t = re.sub(r":\d+(-\d+)?$", "", token.strip())
-    tries = [t] + ([posixpath.join(doc_dir, t)] if doc_dir and doc_dir != "." else [])
+    bases = [t] + ([posixpath.join(doc_dir, t)] if doc_dir and doc_dir != "." else [])
+    tries = [c for b in bases for c in (b.rstrip("/"), b.rstrip("/") + "/")]  # `models/` rules
     return any(subprocess.run(["git", "check-ignore", "-q", "--no-index", c], cwd=root).returncode == 0
                for c in tries)
 
@@ -194,7 +195,7 @@ def code_problems(path, text, root, files, dirs, words, known=()):
     return found
 
 
-def link_problems(path, text, files, dirs):
+def link_problems(path, text, files, dirs, root=None):
     found = []
     doc_dir = pathlib.PurePosixPath(path).parent
     for n, line in body_lines(text):
@@ -205,7 +206,7 @@ def link_problems(path, text, files, dirs):
             if not rel:
                 continue
             resolved = posixpath.normpath(rel[1:] if rel.startswith("/") else str(doc_dir / rel))
-            if resolved not in files and resolved not in dirs:
+            if resolved not in files and resolved not in dirs and not (root and ignored(root, resolved)):
                 found.append(f"{path}:{n}: link to `{target}` points at nothing")
     return found
 
@@ -232,6 +233,8 @@ def check(root, repo, rules):
                          "architecture, decisions or runbooks, or add an exception with the reason "
                          "to rulesets/docs.json in the .github repo")
             continue
+        if not (root / path).is_file():
+            continue  # a dangling symlink or a submodule entry: nothing to read
         text = (root / path).read_text(errors="ignore")
         if (matches(path, r["docs"]) or exception) and not matches(path, r["no_header"]) and not (
                 exception and exception.get("no_header")):
@@ -240,7 +243,7 @@ def check(root, repo, rules):
         # here; decision records and dated audits are history (6.5 item 5).
         if repo != "handbook" and not HISTORY.search(path):
             found += code_problems(path, text, root, files, dirs, words, set(r["known_names"]))
-        links = link_problems(path, text, files, dirs)
+        links = link_problems(path, text, files, dirs, root)
         if HISTORY.search(path):
             # History is never edited, so a link that a later rename breaks is only a warning.
             for p in links:
