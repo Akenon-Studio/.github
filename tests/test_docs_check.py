@@ -87,6 +87,7 @@ class CheckTest(unittest.TestCase):
         found = " ".join(check(root, "code", RULE_SET))
         self.assertIn("odd/NOTE.md: no owner/covers header", found)
         self.assertNotIn("src/{a,b}.ts", found)
+        self.assertIn("src/{a,c}.ts", found)
         self.assertNotIn("nowhere.md", found)
 
 

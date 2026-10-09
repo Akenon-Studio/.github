@@ -67,7 +67,8 @@ def matches(path, patterns):
 def rules_for(repo, rules):
     """The map for one repo: 'all' plus the repo's own entry."""
     own, base = rules.get(repo, {}), rules["all"]
-    return {key: base.get(key, []) + own.get(key, []) for key in ("docs", "no_header", "skip")} | {
+    return {key: base.get(key, []) + own.get(key, [])
+            for key in ("docs", "no_header", "skip", "known_names")} | {
         "exceptions": {e["path"]: e for e in own.get("exceptions", [])}}
 
 
@@ -139,7 +140,10 @@ def path_exists(root, doc_dir, token, files, dirs):
     """`files` and `dirs` are sets. A path under a top-level folder that no longer exists is not
     reported: it can't be told from another repo's or a planned folder's path."""
     t = re.sub(r":\d+(-\d+)?$", "", token.strip()).rstrip("/")
-    t = re.sub(r"\{[^}]*\}", "*", t)  # docs write `src/{a,b}.ts` for several files
+    m = re.search(r"\{([^}]*)\}", t)  # docs write `src/{a,b}.ts` for several files: each must exist
+    if m:
+        return all(path_exists(root, doc_dir, t[:m.start()] + alt + t[m.end():], files, dirs)
+                   for alt in m.group(1).split(","))
     first = t.split("/")[0]
     if first not in dirs and first not in files and not (pathlib.PurePosixPath(doc_dir) / first).as_posix() in dirs:
         return True  # not this repo's tree (another repo, a planned folder, the Linux kernel...)
@@ -161,15 +165,17 @@ def ignored(root, token):
     return subprocess.run(["git", "check-ignore", "-q", "--no-index", t], cwd=root).returncode == 0
 
 
-def code_problems(path, text, root, files, dirs, words):
+def code_problems(path, text, root, files, dirs, words, known=()):
     found = []
     doc_dir = str(pathlib.PurePosixPath(path).parent)
     for n, line in body_lines(text):
         for token in CODE.findall(line):
             token = token.strip()
             if ENV_VAR.match(token):
-                if token not in words:
-                    found.append(f"{path}:{n}: env var `{token}` appears nowhere in the code")
+                if token not in words and token not in known:
+                    found.append(f"{path}:{n}: env var `{token}` appears nowhere in the code (if it "
+                                 "lives outside the code, e.g. a CI secret, add it to known_names "
+                                 "in rulesets/docs.json)")
             elif (m := FUNCTION.match(token)):
                 # A warning, not a failure: docs also name library functions (three.js's wgslFn()).
                 if m.group(1) not in words:
@@ -198,20 +204,19 @@ def link_problems(path, text, files, dirs):
 
 def check(root, repo, rules):
     r = rules_for(repo, rules)
-    files = [f for f in subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
-                                        text=True, check=True).stdout.splitlines()
-             if not matches(f, r["skip"])]
+    files = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True,
+                           check=True).stdout.splitlines()  # skipped files still count as existing
     dirs = {str(pathlib.PurePosixPath(f).parent) for f in files} | {
         "/".join(f.split("/")[:i]) for f in files for i in range(1, f.count("/") + 1)}
     words = set()  # every identifier in the repo's text files outside the docs, read once
     for f in files:
         p = root / f
-        if f.endswith(".md") or f.lower().endswith(BINARY) or not p.is_file() or p.stat().st_size > 2_000_000:
+        if f.endswith(".md") or matches(f, r["skip"]) or f.lower().endswith(BINARY) or not p.is_file() or p.stat().st_size > 2_000_000:
             continue
         words |= set(re.findall(r"[A-Za-z_$][\w$]*", p.read_text(errors="ignore")))
     files = set(files)
     found = []
-    for path in (f for f in files if f.endswith(".md")):
+    for path in sorted(f for f in files if f.endswith(".md") and not matches(f, r["skip"])):
         exception = r["exceptions"].get(path)
         in_map = matches(path, r["docs"]) or matches(path, r["no_header"]) or exception
         if not in_map:
@@ -226,7 +231,7 @@ def check(root, repo, rules):
         # The handbook speaks for every repo and for planned layout, so its paths can't resolve
         # here; decision records and dated audits are history (6.5 item 5).
         if repo != "handbook" and not HISTORY.search(path):
-            found += code_problems(path, text, root, files, dirs, words)
+            found += code_problems(path, text, root, files, dirs, words, set(r["known_names"]))
         found += link_problems(path, text, files, dirs)
     return found
 

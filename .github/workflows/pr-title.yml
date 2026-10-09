@@ -82,7 +82,7 @@ jobs:
 
       - name: Every CLAUDE.md is capped and every rule has a reason
         run: |
-          pip install --quiet pyyaml
+          pip install --quiet pyyaml==6.0.2
           status=0
           files=$(find repo -name CLAUDE.md -not -path '*/node_modules/*' -not -path '*/.git/*')
           [ -n "$files" ] || echo "No CLAUDE.md in this repo."
@@ -183,5 +183,5 @@ jobs:
 
       - name: Docs are in the map, headed, and name only what exists
         run: |
-          pip install --quiet pyyaml
+          pip install --quiet pyyaml==6.0.2
           python3 akenon-github/scripts/docs_check.py repo --repo "${GITHUB_REPOSITORY#*/}"
