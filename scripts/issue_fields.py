@@ -419,8 +419,12 @@ def reclose_due(issue):
     subs = issue["subIssuesSummary"]
     last = (issue.get("reopenEvents") or {}).get("nodes") or []
     return (issue["state"] == "OPEN" and subs["total"] > 0 and subs["completed"] >= subs["total"]
-            and bool(last) and bot_login(((last[-1] or {}).get("actor") or {}).get("login"))
-            == AUTOMATION_APP)
+            and bool(last) and is_automation(((last[-1] or {}).get("actor")) or {}))
+
+
+def is_automation(actor):
+    """The automation app itself (a reopen by a deleted account has no actor and is not)."""
+    return actor.get("__typename") == "Bot" and bot_login(actor.get("login")) == AUTOMATION_APP
 
 
 RECLOSE_TEXT = (f"{RECLOSE_MARKER}\nClosed again (design 6.8): this was reopened because it closed "
@@ -431,9 +435,10 @@ def reclose_if_done(repo, number, issue):
     """Close a parent reclose_due() picks, as completed, with a comment. True if it did."""
     if not reclose_due(issue):
         return False
+    # The comment first: if it fails, the issue stays open and the next sweep tries again.
+    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": RECLOSE_TEXT})
     gh(f"repos/{repo}/issues/{number}", "-X", "PATCH",
        body={"state": "closed", "state_reason": "completed"})
-    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": RECLOSE_TEXT})
     issue["state"] = "CLOSED"
     return True
 

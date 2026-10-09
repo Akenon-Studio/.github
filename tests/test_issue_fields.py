@@ -504,5 +504,6 @@ class RecloseTest(unittest.TestCase):
 
     def test_never_reopened_or_no_subs_or_closed_is_left_alone(self):
         self.assertFalse(reclose_due(parent(reopened_by=None)))
+        self.assertFalse(reclose_due(dict(parent(), reopenEvents={"nodes": [{"actor": None}]})))
         self.assertFalse(reclose_due(parent(total=0, completed=0)))
         self.assertFalse(reclose_due(parent(state="CLOSED")))
