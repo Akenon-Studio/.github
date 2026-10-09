@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """First-pass AI review of a PR (design 6.4: advisory; comments only, never approves).
 
-Reads the PR's diff and the repo's CLAUDE.md, asks Claude for findings through the Claude API, and
+Reads the PR's diff and the repo's CLAUDE.md, asks Claude for findings through the Claude API as structured JSON, and
 posts them as one GitHub review with event COMMENT: a summary plus inline comments on lines the PR
 adds. Uses the Claude API directly, not Claude Code: the plan's monthly API credits cover the API
 but not Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
@@ -44,30 +44,28 @@ Look for, most serious first:
 
 Comment only on lines the PR adds (the `+` lines; give the line number in the new file). Say what
 goes wrong and the fix, briefly. No praise, no style nits a linter catches. If there is nothing
-worth saying, return no comments and a one-line summary saying so. Call submit_review once."""
+worth saying, return no comments and a one-line summary saying so."""
 
-REVIEW_TOOL = {
-    "name": "submit_review",
-    "description": "Submit the review: a short summary and inline comments on added lines.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "summary": {"type": "string", "description": "What was checked and found, most serious first."},
-            "comments": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "line": {"type": "integer", "description": "Line number in the new file."},
-                        "body": {"type": "string"},
-                    },
-                    "required": ["path", "line", "body"],
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "comments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "body": {"type": "string"},
                 },
+                "required": ["path", "line", "body"],
+                "additionalProperties": False,
             },
         },
-        "required": ["summary", "comments"],
     },
+    "required": ["summary", "comments"],
+    "additionalProperties": False,
 }
 
 
@@ -161,15 +159,13 @@ def client():
 
 def ask_claude(claude_md, title, description, diff_text):
     message = client().messages.create(
-        model=MODEL, max_tokens=8000, tools=[REVIEW_TOOL],
-        tool_choice={"type": "tool", "name": "submit_review"},
-        system=INSTRUCTIONS,
+        model=MODEL, max_tokens=8000, system=INSTRUCTIONS,
+        output_config={"format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
         messages=[{"role": "user", "content":
                    f"<claude_md>\n{claude_md}\n</claude_md>\n\n<pr_title>{title}</pr_title>\n"
                    f"<pr_description>\n{description}\n</pr_description>\n\n<diff>\n{diff_text}\n</diff>"}])
-    use = next(b for b in message.content if b.type == "tool_use")
     print(f"Model {message.model}: {message.usage.input_tokens} in, {message.usage.output_tokens} out")
-    return use.input
+    return json.loads(next(b.text for b in message.content if b.type == "text"))
 
 
 def main(argv):
