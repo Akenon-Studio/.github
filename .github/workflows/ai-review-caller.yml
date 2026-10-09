@@ -1,0 +1,14 @@
+name: ai-review-caller
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  ai-review:
+    uses: ./.github/workflows/ai-review.yml
