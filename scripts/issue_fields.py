@@ -15,8 +15,9 @@ Links between issues are checked too (design 6.8): every issue has a parent unle
 (an Intent; a parent of other issues, which is what phase steps and partner workstreams are; or the
 "Deferred work" parent, handbook#83, top level even while empty), a Bug report not yet triaged,
 or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report); an issue whose
-board Status is Blocked has a "blocked by" link; and a closed issue with open sub-issues is
-reopened with a comment naming them.
+board Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
+flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
+and a closed issue with open sub-issues is reopened with a comment naming them.
 
 Who is assigned is checked too (design 6.8, "Every hand-off goes to an assigned human"): an issue a
 person opened must have its author assigned, and an issue whose board Status is Waiting for human
@@ -34,7 +35,7 @@ the confirmation up on its next run.
 
 A Process failure closed while its answer to "What now
 prevents this, by code?" is "Not decided yet" is reopened too. Board changes, links and closing send no event every repo's
-caller listens to, so scripts/issue_sweep.py re-checks on a schedule.
+caller listens to (closing a sub-issue sends none to its parent), so scripts/issue_sweep.py re-checks on a schedule.
 
 Usage: scripts/issue_fields.py <owner/repo> <issue number>
 In Actions it runs from the issue-fields workflow with an org GitHub App token in GH_TOKEN.
@@ -195,6 +196,20 @@ def link_problems(issue_type, has_parent, sub_issues, status, blocked_by, repo="
     return problems
 
 
+FINISHED_PARENT = ("All its sub-issues are closed: close it, or add a sub-issue for the work left "
+                   "(design 6.8).")
+
+
+def finished_parent_problems(state, sub_issues_total, sub_issues_closed):
+    """An open issue whose sub-issues are all closed (design 6.8, check 2): a parent holds no work
+    of its own, so either it is done or what is left needs its own sub-issue. The counts are
+    GitHub's subIssuesSummary total and completed (completed counts every closed sub-issue,
+    whatever the close reason)."""
+    if state == "OPEN" and sub_issues_total and sub_issues_closed >= sub_issues_total:
+        return [FINISHED_PARENT]
+    return []
+
+
 WAITING = "Waiting for human"
 
 
@@ -267,6 +282,7 @@ ISSUE_FIELDS = """id number state body author { __typename login } issueType { n
   repository { nameWithOwner }
   parent { number }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
+  subIssuesSummary { total completed }
   blockedBy(first: 1) { totalCount }
   assignedActors(first: 20) { nodes { __typename ... on User { login } ... on Bot { login } } }
   timelineItems(itemTypes: [ASSIGNED_EVENT], first: 100) { nodes {
@@ -298,10 +314,12 @@ def all_problems(issue, forms, status):
     by_bot = author.get("__typename") == "Bot"
     confirmed = confirmed_by_person({l["name"] for l in issue["labels"]["nodes"]},
                                     issue["labelEvents"]["nodes"])
+    subs = issue["subIssuesSummary"]
     return check(issue_type, issue["body"], forms) + link_problems(
         issue_type, issue["parent"] is not None, len(issue["subIssues"]["nodes"]), status,
         issue["blockedBy"]["totalCount"], issue["repository"]["nameWithOwner"].split("/")[1],
-        issue["number"], by_bot) + assignee_problems(
+        issue["number"], by_bot) + finished_parent_problems(
+        issue["state"], subs["total"], subs["completed"]) + assignee_problems(
         author.get("login"), by_bot, *people_assigned(issue), status) + confirmation_problems(
         issue_type, issue["body"], confirmed)
 
