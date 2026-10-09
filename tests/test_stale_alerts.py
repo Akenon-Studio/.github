@@ -32,33 +32,30 @@ class StaleTest(unittest.TestCase):
 
 class FixPrTest(unittest.TestCase):
     def setUp(self):
-        self.calls, self.real = [], stale_alerts.try_gh
+        self.calls, self.real = [], stale_alerts.renovate_titles
 
     def tearDown(self):
-        stale_alerts.try_gh = self.real
+        stale_alerts.renovate_titles = self.real
 
-    def fake(self, result):
-        def try_gh(*args):
-            self.calls.append(args)
-            return result
-        stale_alerts.try_gh = try_gh
+    def fake(self, titles):
+        def renovate_titles(repo, cache):
+            self.calls.append(repo)
+            return titles
+        stale_alerts.renovate_titles = renovate_titles
 
-    def test_one_read_per_repo_and_whole_word_titles(self):
-        self.fake([{"title": "fix(deps): update dependency braces to v3.0.4",
-                    "user": {"login": "renovate[bot]"}},
-                   {"title": "fix: braces by hand", "user": {"login": "someone"}}])
-        cache = {}
-        self.assertTrue(fix_pr(alert("2026-10-01T00:00:00Z"), cache))
-        self.assertFalse(fix_pr(dict(alert("2026-10-01T00:00:00Z"), package="brace"), cache))
-        self.assertEqual(len(self.calls), 1)
+    def test_whole_word_titles(self):
+        self.fake(["fix(deps): update dependency braces to v3.0.4"])
+        self.assertTrue(fix_pr(alert("2026-10-01T00:00:00Z", "3.0.4"), {}))
+        self.assertFalse(fix_pr(dict(alert("2026-10-01T00:00:00Z", "1.0.0"), package="brace"), {}))
 
-    def test_a_persons_pr_does_not_count(self):
-        self.fake([{"title": "fix: update braces", "user": {"login": "someone"}}])
+    def test_no_fixed_version_means_no_pr_can_fix_it(self):
+        self.fake(["fix(deps): update dependency braces to v3.0.4"])
         self.assertFalse(fix_pr(alert("2026-10-01T00:00:00Z"), {}))
+        self.assertEqual(self.calls, [])
 
     def test_unreadable_prs_are_unknown_not_no_pr(self):
         self.fake(None)
-        self.assertIsNone(fix_pr(alert("2026-10-01T00:00:00Z"), {}))
+        self.assertIsNone(fix_pr(alert("2026-10-01T00:00:00Z", "3.0.4"), {}))
 
 
 class PlainTest(unittest.TestCase):

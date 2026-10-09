@@ -71,17 +71,17 @@ jobs:
           GH_TOKEN: ${{ steps.settings.outputs.token }}
         run: python3 scripts/stale_alerts.py collect alerts.json
 
-      - name: Log in as the automation app, every repo (to see Renovate's PRs)
-        id: automation-all
+      - name: Log in as the automation app, every repo, read-only PRs (to see Renovate's)
+        id: pr-read
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          permission-issues: write
           permission-pull-requests: read
 
       - name: Open, update or close the stale-alerts issue
         env:
-          GH_TOKEN: ${{ steps.automation-all.outputs.token }}
+          GH_TOKEN: ${{ steps.automation.outputs.token }}
+          PR_READ_TOKEN: ${{ steps.pr-read.outputs.token }}
         run: python3 scripts/stale_alerts.py report alerts.json

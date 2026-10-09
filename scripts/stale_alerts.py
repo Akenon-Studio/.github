@@ -16,7 +16,9 @@ In Actions both run in the daily settings-check workflow.
 
 import datetime
 import json
+import os
 import re
+import subprocess
 import sys
 
 from one_issue import keep
@@ -61,18 +63,25 @@ def stale(alerts, now, days=STALE_DAYS):
 
 
 def renovate_titles(repo, cache):
-    """Titles of Renovate's open PRs in a repo (at most 5 are open at once, design 6.4), read once
-    per repo; None if they can't be read."""
+    """Titles of Renovate's open PRs in a repo, read once per repo with the org-wide read-only token
+    (PR_READ_TOKEN; the issue is written with GH_TOKEN, scoped to .github); None if unreadable."""
     if repo not in cache:
-        prs = try_gh(f"repos/{ORG}/{repo}/pulls?state=open&per_page=100")
-        cache[repo] = None if prs is None else [
-            p["title"] for p in prs if (p.get("user") or {}).get("login") == "renovate[bot]"]
+        env = dict(os.environ, GH_TOKEN=os.environ.get("PR_READ_TOKEN") or os.environ.get("GH_TOKEN", ""))
+        res = subprocess.run([os.environ.get("GH", "gh"), "api", "--paginate", "--slurp",
+                              f"repos/{ORG}/{repo}/pulls?state=open&per_page=100"],
+                             capture_output=True, text=True, env=env)
+        pages = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else None
+        cache[repo] = None if pages is None else [
+            p["title"] for page in pages for p in page
+            if (p.get("user") or {}).get("login") == "renovate[bot]"]
     return cache[repo]
 
 
 def fix_pr(alert, cache):
     """True if a Renovate PR in the alert's repo names the package as a whole word in its title,
-    None if the PRs couldn't be read (shown as unknown, never as "no PR")."""
+    False if no fixed version exists yet, None if the PRs couldn't be read (shown as unknown)."""
+    if not alert.get("fixed_in"):
+        return False  # no fixed version exists, so no update PR can fix it yet
     titles = renovate_titles(alert["repo"], cache)
     if titles is None:
         return None
