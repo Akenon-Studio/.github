@@ -1,0 +1,13 @@
+{
+  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo (a team needs access to a repo before it can be asked to review there); verify-settings.py checks all of it. Teams not listed here (engineers, design) are left alone.",
+  "teams": [
+    {
+      "name": "Automation owners",
+      "slug": "automation-owners",
+      "description": "Assigned the issues the automation opens and asked to review bot PRs (design 6.8). The software lead for now.",
+      "privacy": "closed",
+      "members": ["RuvinduH"],
+      "repo_permission": "pull"
+    }
+  ]
+}

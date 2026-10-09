@@ -4,12 +4,14 @@
 Usage: scripts/report_drift.py <verify output file> <verify exit code>
 Exit code 1 (drift): open the `settings-drift` issue, or update it if the problems changed.
 Exit code 0: close any open one with a comment. Anything else: fail, since the check itself broke.
-The issue body is a filled-in Task form, so the issue-fields automation puts it on the board.
+The issue body is a filled-in Task form, so the issue-fields automation puts it on the board. It is
+assigned to the automation owners (rulesets/teams.json, design 6.8), so the drift reaches a person;
+an update re-adds them if nobody is assigned.
 """
 
 import sys
 
-from rules import ORG, ensure_label, gh
+from rules import ORG, automation_owners, ensure_label, gh
 
 REPO = f"{ORG}/.github"
 LABEL = "settings-drift"
@@ -63,6 +65,22 @@ Design 6.2; `.github/workflows/settings-check.yml`
 _No response_"""
 
 
+def new_issue(text):
+    """The REST payload that opens the drift issue."""
+    return {"title": TITLE, "body": text, "type": "Task", "labels": [LABEL],
+            "assignees": automation_owners()}
+
+
+def update(issue, text):
+    """The REST PATCH payload for an open drift issue, or None if nothing changes."""
+    change = {}
+    if (issue["body"] or "").replace("\r\n", "\n") != text:
+        change["body"] = text
+    if not issue.get("assignees"):
+        change["assignees"] = automation_owners()
+    return change or None
+
+
 def open_issue():
     found = gh(f"repos/{REPO}/issues?labels={LABEL}&state=open&per_page=5") or []
     return found[0] if found else None
@@ -87,11 +105,10 @@ def main():
     text = body(output)
     if issue is None:
         ensure_label(REPO, LABEL)
-        made = gh(f"repos/{REPO}/issues", "-X", "POST",
-                  body={"title": TITLE, "body": text, "type": "Task", "labels": [LABEL]})
+        made = gh(f"repos/{REPO}/issues", "-X", "POST", body=new_issue(text))
         print(f"opened #{made['number']}")
-    elif (issue["body"] or "").replace("\r\n", "\n") != text:
-        gh(f"repos/{REPO}/issues/{issue['number']}", "-X", "PATCH", body={"body": text})
+    elif update(issue, text):
+        gh(f"repos/{REPO}/issues/{issue['number']}", "-X", "PATCH", body=update(issue, text))
         print(f"updated #{issue['number']}")
     else:
         print(f"#{issue['number']} already lists these problems")

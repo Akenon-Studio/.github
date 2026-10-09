@@ -5,7 +5,8 @@
 # Reads settings as the read-only "Akenon Studio Settings" app, whose key lives only in this repo's
 # `settings-check` environment (deployable from main only): variable SETTINGS_APP_ID, secret
 # SETTINGS_APP_PRIVATE_KEY. Files the issue as the automation app (org AKENON_APP_ID /
-# AKENON_APP_PRIVATE_KEY), so the issue-fields workflow puts it on the board.
+# AKENON_APP_PRIVATE_KEY), so the issue-fields workflow puts it on the board, assigned to the
+# automation owners (rulesets/teams.json).
 name: settings-check
 
 on:
