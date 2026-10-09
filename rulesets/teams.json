@@ -1,12 +1,14 @@
 {
-  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo (a team needs access to a repo before it can be asked to review there; a team named in CODEOWNERS needs write, 'push', or GitHub ignores it); verify-settings.py checks all of it, and that every team a managed repo's CODEOWNERS names is listed here with write access. Teams not listed here (design) are left alone.",
+  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo, or only on the repos in its optional 'repos' list (and no access to the others) (a team needs access to a repo before it can be asked to review there; a team named in CODEOWNERS needs write, 'push', or GitHub ignores it); verify-settings.py checks all of it, and that every team a managed repo's CODEOWNERS names is listed here with write access.",
   "teams": [
     {
       "name": "Automation owners",
       "slug": "automation-owners",
       "description": "Assigned the issues the automation opens and asked to review bot PRs (design 6.8). The software lead for now.",
       "privacy": "closed",
-      "members": ["RuvinduH"],
+      "members": [
+        "RuvinduH"
+      ],
       "repo_permission": "pull"
     },
     {
@@ -14,8 +16,26 @@
       "slug": "engineers",
       "description": "Core development team",
       "privacy": "closed",
-      "members": ["Thytus777", "RuvinduH"],
+      "members": [
+        "Thytus777",
+        "RuvinduH"
+      ],
       "repo_permission": "push"
+    },
+    {
+      "name": "design",
+      "slug": "design",
+      "description": "Brand and product design",
+      "privacy": "closed",
+      "members": [
+        "winterleaf354-jpg",
+        "InhibitedHail91"
+      ],
+      "repo_permission": "push",
+      "repos": [
+        "handbook",
+        "hardware"
+      ]
     }
   ]
 }

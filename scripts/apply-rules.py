@@ -10,7 +10,7 @@ import sys
 import urllib.parse
 
 from rules import (ISSUE_TYPE_KEYS, ORG, TEAM_KEYS, desired_labels, desired_rulesets, gh, load,
-                   managed_repos, repo_rulesets, try_gh)
+                   managed_repos, repo_rulesets, team_repos, try_gh)
 
 
 def apply_org():
@@ -44,9 +44,13 @@ def apply_teams():
             if m["login"].lower() not in wanted:  # e.g. the owner who created it
                 gh(f"orgs/{ORG}/teams/{t['slug']}/memberships/{m['login']}", "-X", "DELETE")
                 print(f"org {ORG}: {m['login']} removed from team '{t['slug']}'")
+        allowed = set(team_repos(t))
         for repo in managed_repos():
-            gh(f"orgs/{ORG}/teams/{t['slug']}/repos/{ORG}/{repo}", "-X", "PUT",
-               body={"permission": t["repo_permission"]})
+            if repo in allowed:
+                gh(f"orgs/{ORG}/teams/{t['slug']}/repos/{ORG}/{repo}", "-X", "PUT",
+                   body={"permission": t["repo_permission"]})
+            else:  # a team limited to some repos has no access to the others
+                try_gh(f"orgs/{ORG}/teams/{t['slug']}/repos/{ORG}/{repo}", "-X", "DELETE")
         print(f"org {ORG}: team '{t['slug']}' applied")
 
 

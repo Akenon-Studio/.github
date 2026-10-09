@@ -127,7 +127,7 @@ def main():
         text = read_file(repo, owners) if owners else None
         if text is not None:
             problems += [f"{repo}/{owners}: {d}"
-                         for d in codeowners_team_differences(text, load("teams.json")["teams"])]
+                         for d in codeowners_team_differences(text, load("teams.json")["teams"], repo)]
 
     for path in CALLERS:
         want = triggers((ROOT / path).read_text())
