@@ -7,13 +7,19 @@ count. A PR that says it is "part of" (or "partly", "partially", "towards") an i
 close fails: that work splits the issue first, and the PR closes the new sub-issue. Quoted text
 (HTML comments, code) is not read.
 
-Usage: scripts/pr_closes_issue.py      (reads PR_BODY and GITHUB_REPOSITORY from the environment)
+A PR from a bot with no issue behind it (`no_issue` in rulesets/bots.json: Renovate's dependency
+updates) passes without one; its source label says where it came from (design 6.8, check 1).
+
+Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE and
+GITHUB_REPOSITORY from the environment)
 In Actions it runs as the `closes-issue` job of the reusable pr-title workflow.
 """
 
 import os
 import re
 import sys
+
+from rules import bot_login, bot_sources
 
 REF = (r"(?:https://github\.com/(?P<url_repo>[\w.-]+/[\w.-]+)/issues/(?P<url_n>\d+)"
        r"|(?P<repo>[\w.-]+/[\w.-]+)?#(?P<n>\d+))\b")
@@ -46,7 +52,17 @@ def problems(body, repo):
     return found
 
 
+def exempt(author, author_type, sources):
+    """True for a PR from a listed bot whose PRs have no issue behind them."""
+    return author_type == "Bot" and sources.get(bot_login(author), {}).get("no_issue", False)
+
+
 def main():
+    author = os.environ.get("PR_AUTHOR", "")
+    if exempt(author, os.environ.get("PR_AUTHOR_TYPE", ""), bot_sources()):
+        print(f"OK: opened by {author}, a bot with no issue behind its PRs; its source label "
+              "says where it came from (rulesets/bots.json)")
+        return
     body, repo = os.environ.get("PR_BODY", ""), os.environ["GITHUB_REPOSITORY"]
     found = problems(body, repo)
     for p in found:

@@ -9,7 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from issue_fields import (all_problems, assignee_problems, board_values, check,  # noqa: E402
                           confirmation_problems, confirmed_by_person, finished_parent_problems,
-                          link_problems, load_forms,
+                          link_problems, load_forms, source_problems,
                           open_sub_issues, parse_body, people_assigned, problems_text,
                           reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options)
 
@@ -472,3 +472,14 @@ class EpicOptionsTest(unittest.TestCase):
     def test_renamed_epic_keeps_its_option(self):
         options = epic_options(LIVE, "handbook#136", "Phase 2: the working flow")
         self.assertEqual(options, [dict(LIVE[0], name="Phase 2: the working flow")])
+
+
+class SourceLabelTest(unittest.TestCase):
+    SOURCES = {"dependencies", "settings-drift"}
+
+    def test_a_bots_issue_needs_a_source_label(self):
+        self.assertEqual(len(source_problems("renovate", True, {"task"}, self.SOURCES)), 1)
+        self.assertEqual(source_problems("renovate", True, {"dependencies"}, self.SOURCES), [])
+
+    def test_a_persons_issue_needs_none(self):
+        self.assertEqual(source_problems("RuvinduH", False, set(), self.SOURCES), [])

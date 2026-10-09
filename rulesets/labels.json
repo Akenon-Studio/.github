@@ -11,7 +11,9 @@
     {"name": "process-failure", "color": "ededed", "description": "Process failure form"},
     {"name": "confirmed", "color": "0e8a16", "description": "A person checked this critical or high audit finding's evidence (design 6.1)"},
     {"name": "deferred", "color": "c5def5", "description": "Audit finding deferred to a later phase, with the reason on the issue"},
-    {"name": "needs-fields", "color": "d93f0b", "description": "Missing or invalid form answers; kept out of planning views"}
+    {"name": "needs-fields", "color": "d93f0b", "description": "Missing or invalid form answers; kept out of planning views"},
+    {"name": "dependencies", "color": "0366d6", "description": "Source label: a dependency update or alert, from Renovate or the automation (design 6.8)"},
+    {"name": "peras", "color": "5319e7", "description": "Source label: opened by Peras (design 6.8)"}
   ],
   ".github": [
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},

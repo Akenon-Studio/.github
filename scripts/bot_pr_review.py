@@ -8,15 +8,19 @@ later removal or a finished review is left alone.
 A CODEOWNERS entry was not used: it cannot tell a bot's PR from a person's, so it would also ask
 the team to review people's changes to the same files.
 
+It also adds a listed bot's source label (rulesets/bots.json) to its PR when the PR carries none of
+them, so every bot PR says where it came from (design 6.8).
+
 Usage: scripts/bot_pr_review.py [--dry-run]
 """
 
 import sys
 
 from board import graphql
-from rules import AUTOMATION_OWNERS, ORG, gh, managed_repos
+from rules import AUTOMATION_OWNERS, ORG, bot_login, bot_sources, gh, managed_repos
 
 PR_FIELDS = """number author { __typename login } repository { nameWithOwner }
+  labels(first: 50) { nodes { name } }
   timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], first: 100) { nodes {
     ... on ReviewRequestedEvent { requestedReviewer { __typename ... on Team { slug } } } } }"""
 
@@ -47,10 +51,32 @@ def needs_review(pr, managed, team=AUTOMATION_OWNERS):
     return team not in asked
 
 
+def missing_source_label(pr, managed, sources):
+    """The label to add to a listed bot's open PR that carries none of its source labels, or None."""
+    owner, name = pr["repository"]["nameWithOwner"].split("/")
+    author = pr["author"] or {}
+    if owner.lower() != ORG or name not in managed or author.get("__typename") != "Bot":
+        return None
+    source = sources.get(bot_login(author.get("login")))
+    have = {l["name"] for l in pr["labels"]["nodes"]}
+    if not source or have & set(source["labels"]):
+        return None
+    return source["labels"][0]
+
+
 def main():
     dry_run = "--dry-run" in sys.argv[1:]
     managed = set(managed_repos())
-    todo = [pr for pr in open_prs() if needs_review(pr, managed)]
+    sources = bot_sources()
+    prs = open_prs()
+    for pr in prs:
+        label = missing_source_label(pr, managed, sources)
+        if label:
+            repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+            if not dry_run:
+                gh(f"repos/{repo}/issues/{n}/labels", "-X", "POST", body={"labels": [label]})
+            print(f"{repo}#{n}: {'would add' if dry_run else 'added'} source label {label}")
+    todo = [pr for pr in prs if needs_review(pr, managed)]
     for pr in todo:
         repo, n = pr["repository"]["nameWithOwner"], pr["number"]
         if not dry_run:
