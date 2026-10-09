@@ -533,7 +533,7 @@ def sync(repo, number, forms, board):
     """Run every check on one issue and update the board, label and comment. Returns a summary."""
     issue = load_issue(repo, number)
     reopened = reopen_if_early(repo, number, issue)
-    reclosed = reclose_if_done(repo, number, issue)
+    reclosed = not reopened and reclose_if_done(repo, number, issue)
     issue_type = (issue["issueType"] or {}).get("name")
     item_id, status = board_item(board, issue)
     names = {f.get("name") for f in board["fields"]["nodes"]}
