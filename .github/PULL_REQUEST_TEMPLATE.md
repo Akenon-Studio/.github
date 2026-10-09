@@ -10,8 +10,10 @@ Closes #
 ## Docs
 
 - [ ] Docs updated for this change
-- [ ] Docs that cover the changed code are still accurate (tick only if you checked)
 - [ ] No docs affected
+
+<!-- If the docs check lists a doc that covers code you changed and it is still accurate, add a
+     ticked line for it here (only if you checked): - [x] Still accurate: docs/architecture/x.md -->
 
 ## Design decisions
 

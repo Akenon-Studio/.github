@@ -14,7 +14,9 @@
 # "pr-title / gaming" (the PR doesn't pass by weakening checks: skipped or focused tests, deleted
 # test files, @ts-ignore, eslint-disable, `any`; design 7.13 stage 6; scripts/gaming_check.py) and
 # "pr-title / docs" (every doc is in the fixed map with its owner/covers header, and names only
-# paths, env vars and links that exist; design 6.5; scripts/docs_check.py, rulesets/docs.json).
+# paths, env vars and links that exist; design 6.5; scripts/docs_check.py, rulesets/docs.json) and
+# "pr-title / docs-covered" (a PR that changes code a doc covers updates the doc or ticks "Still
+# accurate: <doc>" in its body; design 6.5 item 3; scripts/docs_covered.py).
 # Every job runs on every event: a job skipped on some events would report "skipped", which passes
 # a required check. A new job here runs in every repo without changing the callers.
 name: pr-title
@@ -185,3 +187,31 @@ jobs:
         run: |
           pip install --quiet pyyaml==6.0.2
           python3 akenon-github/scripts/docs_check.py repo --repo "${GITHUB_REPOSITORY#*/}"
+
+  docs-covered:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get the repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          fetch-depth: 2 # the merge commit and its base parent (HEAD^1) are all the diff needs
+          persist-credentials: false
+
+      - name: Get the script
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the script; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: akenon-github
+          persist-credentials: false
+
+      - name: Docs covering the changed code are updated or still accurate
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pip install --quiet pyyaml==6.0.2
+          # The checkout is the merge commit: its first parent is the base it was merged onto.
+          python3 akenon-github/scripts/docs_covered.py repo --repo "${GITHUB_REPOSITORY#*/}" --base HEAD^1

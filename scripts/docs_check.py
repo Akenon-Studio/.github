@@ -61,6 +61,15 @@ def glob_re(pattern):
     return re.compile(f"^{out}$")
 
 
+def expand_braces(glob):
+    """`src/{a,b}.ts` as ['src/a.ts', 'src/b.ts'] (nested braces expand too)."""
+    m = re.search(r"\{([^{}]*)\}", glob)
+    if not m:
+        return [glob]
+    return [g for alt in m.group(1).split(",")
+            for g in expand_braces(glob[:m.start()] + alt + glob[m.end():])]
+
+
 def matches(path, patterns):
     return any(glob_re(p).match(path) for p in patterns)
 
@@ -108,8 +117,8 @@ def header_problems(path, text, owners, files, check_covers):
         found.append(f"{path}: `covers` is empty")
     elif check_covers:
         for g in globs:
-            rx = glob_re(re.sub(r"\{[^}]*\}", "*", g))
-            if not any(rx.match(f) or f.startswith(g.rstrip("/") + "/") for f in files):
+            if not any(glob_re(e).match(f) or f.startswith(e.rstrip("/") + "/")
+                       for e in expand_braces(g) for f in files):
                 found.append(f"{path}: `covers` glob {g!r} matches no file")
     return found
 
