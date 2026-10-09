@@ -8,6 +8,8 @@ with a comment. Runs with the automation app's token, so the issue-fields automa
 issue on the board.
 """
 
+import urllib.parse
+
 from rules import automation_owners, ensure_label, gh
 
 
@@ -28,9 +30,9 @@ def update(issue, text):
 
 
 def open_issue(repo, label):
-    # The issues endpoint also returns PRs, and Renovate's PRs share the `dependencies` label.
-    found = [i for i in gh(f"repos/{repo}/issues?labels={label}&state=open&per_page=20") or []
-             if "pull_request" not in i]
+    # Issues only: Renovate's PRs share the `dependencies` label, and the issues endpoint lists PRs.
+    q = urllib.parse.quote(f'repo:{repo} is:issue is:open label:"{label}"')
+    found = (gh(f"search/issues?q={q}&per_page=5") or {}).get("items") or []
     return found[0] if found else None
 
 

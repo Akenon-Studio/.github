@@ -51,11 +51,6 @@ jobs:
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat verify.txt
 
-      - name: List open Dependabot alerts
-        env:
-          GH_TOKEN: ${{ steps.settings.outputs.token }}
-        run: python3 scripts/stale_alerts.py collect alerts.json
-
       - name: Log in as the automation app
         id: automation
         uses: actions/create-github-app-token@v2
@@ -69,6 +64,12 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
         run: python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
+
+      # After the drift report, so a failure here can't hide drift.
+      - name: List open Dependabot alerts
+        env:
+          GH_TOKEN: ${{ steps.settings.outputs.token }}
+        run: python3 scripts/stale_alerts.py collect alerts.json
 
       - name: Log in as the automation app, every repo (to see Renovate's PRs)
         id: automation-all
