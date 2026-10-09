@@ -17,6 +17,10 @@ class StaleTest(unittest.TestCase):
         stale = stale_docs(["packages/signals/src/fft.ts", "README.md"], DOCS)
         self.assertEqual(stale, {"docs/architecture/signals.md": ["packages/signals/src/fft.ts"]})
 
+    def test_non_doc_markdown_counts_as_covered_code(self):
+        docs = {"docs/runbooks/agents.md": ["CLAUDE.md"]}
+        self.assertEqual(stale_docs(["CLAUDE.md"], docs), {"docs/runbooks/agents.md": ["CLAUDE.md"]})
+
     def test_changing_the_doc_too_is_enough(self):
         self.assertEqual(stale_docs(["packages/sdk/src/x.ts", "packages/sdk/README.md"], DOCS), {})
 
@@ -32,6 +36,10 @@ class TickTest(unittest.TestCase):
     def test_a_ticked_line_per_doc_clears_it(self):
         body = "## Docs\n- [x] Still accurate: docs/architecture/signals.md\n- [ ] Still accurate: packages/sdk/README.md\n"
         self.assertEqual(list(problems(self.STALE, body)), ["packages/sdk/README.md"])
+
+    def test_ticks_hidden_in_comments_or_code_dont_count(self):
+        body = "<!-- - [x] Still accurate: docs/architecture/signals.md -->\n```\n- [x] Still accurate: packages/sdk/README.md\n```"
+        self.assertEqual(sorted(problems(self.STALE, body)), sorted(self.STALE))
 
     def test_backticks_and_capital_x(self):
         body = "* [X] Still accurate: `packages/sdk/README.md`\n- [x] Still accurate: docs/architecture/signals.md"

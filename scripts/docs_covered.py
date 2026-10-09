@@ -60,7 +60,8 @@ def stale_docs(changed, docs):
     for doc, globs in docs.items():
         if doc in changed_set:
             continue
-        hits = [f for f in changed if not f.endswith(".md") and any(
+        # Docs themselves aren't covered code; other Markdown (CLAUDE.md, templates) can be.
+        hits = [f for f in changed if f not in docs and any(
             glob_re(e).match(f) or f.startswith(e.rstrip("/") + "/")
             for g in globs for e in expand_braces(g))]
         if hits:
@@ -69,7 +70,9 @@ def stale_docs(changed, docs):
 
 
 def problems(stale, body):
-    ticked = set(TICK.findall(body or ""))
+    # Only ticks the reviewer can see: not inside HTML comments or fenced code.
+    visible = re.sub(r"<!--.*?-->|```.*?```|~~~.*?~~~", "", body or "", flags=re.S)
+    ticked = set(TICK.findall(visible))
     return {doc: files for doc, files in stale.items() if doc not in ticked}
 
 
