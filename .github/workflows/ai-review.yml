@@ -72,6 +72,17 @@ jobs:
             -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
             -d '{"model": "claude-sonnet-5-5", "max_tokens": 5, "messages": [{"role": "user", "content": "Say ok"}]}' \
             | jq '{type, model, stop_reason, error}'
+          echo "Large max_tokens:"
+          curl -sS https://api.anthropic.com/v1/messages -H "authorization: Bearer $token" \
+            -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+            -d '{"model": "claude-sonnet-5-5", "max_tokens": 64000, "messages": [{"role": "user", "content": "Say ok"}]}' \
+            | jq '{type, stop_reason, error}'
+          echo "As Claude Code:"
+          curl -sS https://api.anthropic.com/v1/messages -H "authorization: Bearer $token" \
+            -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+            -H "user-agent: claude-cli/2.0.0 (external, sdk-ts)" -H "x-app: cli" \
+            -d '{"model": "claude-sonnet-5-5", "max_tokens": 5, "messages": [{"role": "user", "content": "Say ok"}]}' \
+            | jq '{type, stop_reason, error}'
 
       - name: Review
         if: env.WANTED == 'true'
