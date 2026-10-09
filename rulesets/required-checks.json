@@ -8,7 +8,8 @@
     "pr-title / stacked",
     "security-scan / secrets",
     "security-scan / dependencies",
-    "security-scan / code"
+    "security-scan / code",
+    "security-scan / licences"
   ],
   ".github": [
     "unit"

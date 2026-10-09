@@ -1,0 +1,49 @@
+{
+  "_comment": "Licences a dependency may have (design 6.4), read by scripts/licence_check.py in the shared security-scan workflow ('security-scan / licences'). 'allowed' are SPDX ids anyone may add. An 'exceptions' entry lets one package (a glob, so per-platform builds match) use a licence outside the list: it says why, and the PR that adds it is the recorded human approval, so name it in 'approved_in'. A licence expression passes if it can be satisfied from the list: one side of an OR, every side of an AND.",
+  "allowed": [
+    "0BSD",
+    "Apache-2.0",
+    "BlueOak-1.0.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Python-2.0",
+    "Unlicense",
+    "Zlib"
+  ],
+  "exceptions": [
+    {
+      "package": "@img/sharp-libvips-*",
+      "licence": "LGPL-3.0-or-later",
+      "why": "libvips, loaded by sharp, which Next.js uses for image optimisation in the website's server. Dynamically linked and not distributed to users.",
+      "approved_in": "Akenon-Studio/.github#55"
+    },
+    {
+      "package": "lightningcss*",
+      "licence": "MPL-2.0",
+      "why": "CSS compiler used at build time by the website's tooling. Unmodified; MPL applies only to changes to its own files.",
+      "approved_in": "Akenon-Studio/.github#55"
+    },
+    {
+      "package": "axe-core",
+      "licence": "MPL-2.0",
+      "why": "Accessibility rules in the website's development tooling. Unmodified, never shipped.",
+      "approved_in": "Akenon-Studio/.github#55"
+    },
+    {
+      "package": "caniuse-lite",
+      "licence": "CC-BY-4.0",
+      "why": "Browser-support data used by build tools (browserslist). Data, not code; attribution is in the package.",
+      "approved_in": "Akenon-Studio/.github#55"
+    },
+    {
+      "package": "truncate-utf8-bytes",
+      "licence": "WTFPL",
+      "why": "Small helper pulled in by electron-builder (via sanitize-filename) when packaging the desktop app. Build-time only.",
+      "approved_in": "Akenon-Studio/.github#55"
+    }
+  ]
+}
