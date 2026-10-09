@@ -370,7 +370,7 @@
         "Labels"
       ],
       "column": "Status",
-      "group_by": "Discipline"
+      "_note": "Sliced by Discipline (the side list with a count per discipline), set by hand: the API can neither set nor read a view slice, so this is not checked."
     }
   ]
 }
