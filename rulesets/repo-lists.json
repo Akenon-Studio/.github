@@ -22,6 +22,7 @@
     ".gitignore",
     ".github/CODEOWNERS",
     ".github/workflows/pr-title-caller.yml",
-    ".github/workflows/issue-fields-caller.yml"
+    ".github/workflows/issue-fields-caller.yml",
+    ".github/workflows/security-scan-caller.yml"
   ]
 }
