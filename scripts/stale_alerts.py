@@ -35,7 +35,7 @@ def collect(path):
         while True:
             batch = try_gh(f"repos/{ORG}/{repo}/dependabot/alerts?state=open&per_page=100&page={page}")
             if batch is None:
-                skipped.append(repo)  # alerts off, or this token can't read them: not fatal
+                skipped.append(repo)
                 break
             for a in batch:
                 fixed = (a.get("security_vulnerability") or {}).get("first_patched_version") or {}
@@ -49,7 +49,11 @@ def collect(path):
             page += 1
     with open(path, "w") as f:
         json.dump(alerts, f, indent=2)
-    print(f"{len(alerts)} open alert(s)" + (f"; could not read {', '.join(skipped)}" if skipped else ""))
+    print(f"{len(alerts)} open alert(s)")
+    if skipped:
+        # Fail rather than report: an incomplete list would close the issue for alerts still open.
+        sys.exit(f"Could not read Dependabot alerts in {', '.join(skipped)} (alerts off, or the "
+                 "settings app lacks Dependabot alerts: read)")
 
 
 def stale(alerts, now, days=STALE_DAYS):
