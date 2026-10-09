@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from rules import (AUTOMATION_OWNERS, ROOT, automation_owners, codeowners_team_differences,  # noqa: E402
                    codeowners_teams, load, managed_repos, team, team_differences,
-                   team_repo_permission)
+                   team_repo_permission, team_repos)
 
 OWNERS = team(AUTOMATION_OWNERS)
 LIVE = {"name": OWNERS["name"], "slug": OWNERS["slug"], "description": OWNERS["description"],
@@ -109,3 +109,31 @@ class PermissionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+DESIGN_TEAM = team("design")
+
+
+class LimitedTeamTest(unittest.TestCase):
+    """A team with a `repos` list (handbook#103): access there, none elsewhere."""
+    DESIGN = DESIGN_TEAM
+    LIVE = {k: DESIGN_TEAM[k] for k in ("name", "slug", "description", "privacy")}
+
+    def test_design_writes_to_handbook_and_hardware_only(self):
+        self.assertEqual(sorted(team_repos(self.DESIGN)), ["handbook", "hardware"])
+        self.assertEqual(team_differences(self.DESIGN, self.LIVE,
+                                          ["winterleaf354-jpg", "InhibitedHail91"],
+                                          {"handbook": "push", "hardware": "push"}), [])
+
+    def test_access_outside_its_repos_is_a_difference(self):
+        found = team_differences(self.DESIGN, self.LIVE, ["winterleaf354-jpg", "InhibitedHail91"],
+                                 {"handbook": "push", "hardware": "push", "platform": "pull"})
+        self.assertEqual(found, ["team 'design': expected None on platform, got 'pull'"])
+
+    def test_codeowner_outside_its_repos(self):
+        teams = [{"slug": "design", "repo_permission": "push", "repos": ["handbook"]}]
+        text = "* @akenon-studio/design\n"
+        self.assertEqual(codeowners_team_differences(text, teams, "handbook"), [])
+        found = codeowners_team_differences(text, teams, "platform")
+        self.assertEqual(len(found), 1)
+        self.assertIn("no access to platform", found[0])

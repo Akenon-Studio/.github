@@ -178,6 +178,11 @@ def automation_owners():
     return list(team(AUTOMATION_OWNERS)["members"])
 
 
+def team_repos(t):
+    """The managed repos a team has access to: its `repos` list, or every managed repo."""
+    return list(t.get("repos") or managed_repos())
+
+
 def team_differences(want, have, members, repos):
     """How a live team falls short of its definition. `have` is the team as the API returns it (None
     if missing), `members` its members' logins, `repos` {repo name: permission} for its repos.
@@ -191,9 +196,11 @@ def team_differences(want, have, members, repos):
               for m in sorted(wanted.keys() - live.keys())]
     diffs += [f"team '{want['slug']}': {live[m]} is a member but not in teams.json"
               for m in sorted(live.keys() - wanted.keys())]
+    allowed = set(team_repos(want))
     for repo in managed_repos():
-        if repos.get(repo) != want["repo_permission"]:
-            diffs.append(f"team '{want['slug']}': expected {want['repo_permission']!r} on {repo}, "
+        expected = want["repo_permission"] if repo in allowed else None
+        if repos.get(repo) != expected:
+            diffs.append(f"team '{want['slug']}': expected {expected!r} on {repo}, "
                          f"got {repos.get(repo)!r}")
     return diffs
 
@@ -222,7 +229,7 @@ def codeowners_teams(text):
     return slugs
 
 
-def codeowners_team_differences(text, teams):
+def codeowners_team_differences(text, teams, repo=None):
     """Teams a CODEOWNERS file names that teams.json doesn't define, or defines without write
     access. GitHub silently ignores a CODEOWNERS team that can't write, so its reviews never get
     requested (handbook#102). The live team is checked against teams.json by team_differences."""
@@ -235,4 +242,7 @@ def codeowners_team_differences(text, teams):
         elif t["repo_permission"] not in WRITE_PERMISSIONS:
             diffs.append(f"CODEOWNERS names team '{slug}', which teams.json gives "
                          f"{t['repo_permission']!r}; a code owner needs write ('push')")
+        elif repo is not None and t.get("repos") and repo not in t["repos"]:
+            diffs.append(f"CODEOWNERS names team '{slug}', which teams.json gives no access to "
+                         f"{repo}; a code owner needs write ('push') there")
     return diffs
