@@ -62,7 +62,16 @@ jobs:
             '{grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: $a,
               federation_rule_id: $r, organization_id: $o, service_account_id: $s, workspace_id: $w}' \
             | curl -sS https://api.anthropic.com/v1/oauth/token -H "content-type: application/json" -d @- \
-            | jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)'
+            > "$RUNNER_TEMP/exchange.json"
+          jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)' "$RUNNER_TEMP/exchange.json"
+          token=$(jq -r '.access_token // empty' "$RUNNER_TEMP/exchange.json")
+          rm "$RUNNER_TEMP/exchange.json"
+          [ -n "$token" ] || exit 1
+          echo "::add-mask::$token"
+          curl -sS https://api.anthropic.com/v1/messages -H "authorization: Bearer $token" \
+            -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+            -d '{"model": "claude-sonnet-5-5", "max_tokens": 5, "messages": [{"role": "user", "content": "Say ok"}]}' \
+            | jq '{type, model, stop_reason, error}'
 
       - name: Review
         if: env.WANTED == 'true'
