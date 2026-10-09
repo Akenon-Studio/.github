@@ -13,6 +13,9 @@
 # "security-scan / code" is Semgrep community edition with its default rules (design 6.4). It fails
 # on ERROR findings; every finding, warnings included, is listed in the job summary. A false
 # positive is allowed with a `nosemgrep: <rule id>` comment on the line, saying why.
+# "security-scan / licences" checks every dependency's licence against rulesets/licences.json in
+# this repo (scripts/licence_check.py, design 6.4); like the dependency scan, it passes with
+# nothing to check in a repo without a pnpm-lock.yaml.
 name: security-scan
 
 on:
@@ -57,6 +60,38 @@ jobs:
       - name: Dependency scan (high and critical)
         if: hashFiles('pnpm-lock.yaml') != ''
         run: pnpm audit --audit-level high
+
+  licences:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Nothing to check without a pnpm-lock.yaml
+        if: hashFiles('pnpm-lock.yaml') == ''
+        run: echo "No pnpm-lock.yaml in this repo; no dependency licences to check."
+      - name: Get the allowed-licence list and the check
+        if: hashFiles('pnpm-lock.yaml') != ''
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          path: .akenon-licences
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('pnpm-lock.yaml') != ''
+      - uses: actions/setup-node@v4
+        if: hashFiles('pnpm-lock.yaml') != ''
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install (no install scripts; only the packages are needed)
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Dependency licences
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm licenses list --json | python3 .akenon-licences/scripts/licence_check.py
 
   code:
     runs-on: ubuntu-latest
