@@ -5,6 +5,7 @@
     "pr-title / closes-issue",
     "pr-title / claude-md",
     "pr-title / author-assigned",
+    "pr-title / stacked",
     "security-scan / secrets",
     "security-scan / dependencies"
   ],
