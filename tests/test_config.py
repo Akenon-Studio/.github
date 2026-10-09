@@ -34,6 +34,7 @@ class FormsMatchConfigTest(unittest.TestCase):
 
     def test_automation_labels_are_defined(self):
         self.assertIn("needs-fields", {l["name"] for l in desired_labels("platform")})
+        self.assertIn("confirmed", {l["name"] for l in desired_labels("platform")})
         self.assertIn("settings-drift", {l["name"] for l in desired_labels(".github")})
         self.assertNotIn("settings-drift", {l["name"] for l in desired_labels("platform")})
 
