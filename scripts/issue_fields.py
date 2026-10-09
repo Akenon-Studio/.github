@@ -45,6 +45,7 @@ import json
 import pathlib
 import re
 import sys
+import time
 
 import yaml
 
@@ -357,8 +358,22 @@ def board_item(board, issue):
     for item in issue["projectItems"]["nodes"]:
         if item["project"]["id"] == board["id"]:
             return item["id"], status_on(board["id"], issue)
-    item = graphql("""mutation($p: ID!, $c: ID!) { addProjectV2ItemById(
-        input: {projectId: $p, contentId: $c}) { item { id } } }""", p=board["id"], c=issue["id"])
+    try:
+        item = graphql("""mutation($p: ID!, $c: ID!) { addProjectV2ItemById(
+            input: {projectId: $p, contentId: $c}) { item { id } } }""", p=board["id"], c=issue["id"])
+    except SystemExit as e:
+        # Another writer (the issue-fields workflow on `opened`, or new-issue.py) added it a moment
+        # earlier and GitHub refuses the second add (peras#30): use the item that now exists.
+        if "already exists" not in str(e):
+            raise
+        for attempt in range(3):
+            if attempt:
+                time.sleep(1)
+            fresh = load_issue(issue["repository"]["nameWithOwner"], issue["number"])
+            for found in fresh["projectItems"]["nodes"]:
+                if found["project"]["id"] == board["id"]:
+                    return found["id"], status_on(board["id"], fresh)
+        raise
     return item["addProjectV2ItemById"]["item"]["id"], None
 
 
