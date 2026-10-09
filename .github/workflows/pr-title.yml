@@ -87,6 +87,8 @@ jobs:
   author-assigned:
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      pull-requests: read
     steps:
       - name: Get the script
         uses: actions/checkout@v4
@@ -101,4 +103,6 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
           PR_ASSIGNEES: ${{ toJSON(github.event.pull_request.assignees) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/pr_author_assigned.py
