@@ -28,7 +28,9 @@ def update(issue, text):
 
 
 def open_issue(repo, label):
-    found = gh(f"repos/{repo}/issues?labels={label}&state=open&per_page=5") or []
+    # The issues endpoint also returns PRs, and Renovate's PRs share the `dependencies` label.
+    found = [i for i in gh(f"repos/{repo}/issues?labels={label}&state=open&per_page=20") or []
+             if "pull_request" not in i]
     return found[0] if found else None
 
 

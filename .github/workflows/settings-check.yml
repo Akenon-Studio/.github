@@ -1,6 +1,8 @@
 # Daily: compares live GitHub settings with rulesets/ (scripts/verify-settings.py) and keeps one
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
-# (design 6.2). Reports only: an owner fixes drift by re-running scripts/apply-rules.py.
+# (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
+# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts.
+# Reports only: an owner fixes drift by re-running scripts/apply-rules.py.
 #
 # Reads settings as the read-only "Akenon Studio Settings" app, whose key lives only in this repo's
 # `settings-check` environment (deployable from main only): variable SETTINGS_APP_ID, secret
@@ -49,6 +51,11 @@ jobs:
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat verify.txt
 
+      - name: List open Dependabot alerts
+        env:
+          GH_TOKEN: ${{ steps.settings.outputs.token }}
+        run: python3 scripts/stale_alerts.py collect alerts.json
+
       - name: Log in as the automation app
         id: automation
         uses: actions/create-github-app-token@v2
@@ -62,3 +69,16 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
         run: python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
+
+      - name: Log in as the automation app, every repo (to see Renovate's PRs)
+        id: automation-all
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Open, update or close the stale-alerts issue
+        env:
+          GH_TOKEN: ${{ steps.automation-all.outputs.token }}
+        run: python3 scripts/stale_alerts.py report alerts.json
