@@ -492,6 +492,12 @@ def parent(state="OPEN", total=3, completed=3, reopened_by="akenon-studio-automa
 
 
 class RecloseTest(unittest.TestCase):
+    def test_not_while_another_reopen_reason_holds(self):
+        undecided = dict(parent(), issueType={"name": "Process failure"},
+                         body=body(**{**PROCESS_FAILURE, PREVENTION: "Not decided yet",
+                                      CHECK: "_No response_"}))
+        self.assertFalse(reclose_due(undecided))
+
     def test_a_parent_the_automation_reopened_closes_once_its_subs_are_done(self):
         self.assertTrue(reclose_due(parent()))
 

@@ -419,7 +419,11 @@ def reclose_due(issue):
     subs = issue["subIssuesSummary"]
     last = (issue.get("reopenEvents") or {}).get("nodes") or []
     return (issue["state"] == "OPEN" and subs["total"] > 0 and subs["completed"] >= subs["total"]
-            and bool(last) and is_automation(((last[-1] or {}).get("actor")) or {}))
+            and bool(last) and is_automation(((last[-1] or {}).get("actor")) or {})
+            # and closing now passes every reopen check (a process failure's prevention, too),
+            # so it isn't reopened again straight away
+            and not reopen_reasons((issue.get("issueType") or {}).get("name"), issue.get("body") or "",
+                                   (issue.get("subIssues") or {}).get("nodes") or []))
 
 
 def is_automation(actor):
