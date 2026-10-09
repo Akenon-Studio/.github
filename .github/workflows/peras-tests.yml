@@ -1,0 +1,79 @@
+# After every change on main that peras's agent hooks depend on: run peras's tests
+# (core/workspace/tests) against this main, and keep one `peras-tests-broken` issue open while they
+# fail (scripts/peras_tests.py, handbook#119). Not a PR check on purpose: reading the private peras
+# repo needs the read-only settings app, whose key lives only in the `settings-check` environment,
+# which main alone may use; PR code could otherwise print it.
+#
+# Reads peras as the "Akenon Studio Settings" app (Contents: read); files the issue as the automation
+# app, like claude-md-check.
+name: peras-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "rulesets/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: peras-tests
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: settings-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dot-github
+          persist-credentials: false
+
+      - name: Log in as the read-only settings app
+        id: settings
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SETTINGS_APP_ID }}
+          private-key: ${{ secrets.SETTINGS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: peras
+
+      - name: Get peras
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/peras
+          token: ${{ steps.settings.outputs.token }}
+          path: peras
+          persist-credentials: false
+
+      - name: Run peras's agent-hook tests against this main
+        id: tests
+        env:
+          PERAS_DOT_GITHUB: ${{ github.workspace }}/dot-github
+        run: |
+          pip install --quiet pyyaml
+          set +e
+          (cd peras && python3 -m unittest discover -s core/workspace/tests) > tests.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat tests.txt
+
+      - name: Log in as the automation app
+        id: automation
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: .github
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ steps.automation.outputs.token }}
+        working-directory: dot-github
+        run: python3 scripts/peras_tests.py --report ../tests.txt "${{ steps.tests.outputs.code }}"

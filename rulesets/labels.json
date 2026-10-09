@@ -14,6 +14,7 @@
   ],
   ".github": [
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},
-    {"name": "claude-md-drift", "color": "b60205", "description": "A CLAUDE.md names a design section that no longer exists"}
+    {"name": "claude-md-drift", "color": "b60205", "description": "A CLAUDE.md names a design section that no longer exists"},
+    {"name": "peras-tests-broken", "color": "b60205", "description": "A change to .github's main broke peras's agent-hook tests"}
   ]
 }
