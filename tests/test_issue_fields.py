@@ -7,9 +7,10 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from issue_fields import (assignee_problems, board_values, check, link_problems,  # noqa: E402
-                          load_forms, open_sub_issues, parse_body, people_assigned, problems_text,
-                          reopen_reasons, reopen_text)
+from issue_fields import (all_problems, assignee_problems, board_values, check,  # noqa: E402
+                          confirmation_problems, confirmed_by_person, link_problems, load_forms,
+                          open_sub_issues, parse_body, people_assigned, problems_text,
+                          reopen_reasons, reopen_text, start_status)
 
 FORMS = load_forms()
 
@@ -43,6 +44,18 @@ INTENT = {
     "Feature details (required when Kind is Feature)": "For everyone with a display",
     "Discipline": "Software",
     "Priority": "Medium",
+    "Design decisions": "_No response_",
+}
+
+
+AUDIT = {
+    "Audit": "Secrets and access",
+    "Severity": "Critical",
+    "Finding": "An API key is committed",
+    "Evidence": "apps/api/.env.old line 3",
+    "Recommended fix": "Rotate the key and delete the file",
+    "Discipline": "Software",
+    "Priority": "Urgent",
     "Design decisions": "_No response_",
 }
 
@@ -265,6 +278,77 @@ class AssigneeProblemsTest(unittest.TestCase):
         issue["assignedActors"]["nodes"].pop()
         now, _ = people_assigned(issue)
         self.assertEqual(len(assignee_problems("peras", True, now, [], "Waiting for human")), 1)
+
+
+def labelled(name, actor_type, login="RuvinduH"):
+    """A LabeledEvent node as the timeline query returns it."""
+    return {"label": {"name": name}, "actor": {"__typename": actor_type, "login": login}}
+
+
+class ConfirmationTest(unittest.TestCase):
+    def test_critical_and_high_findings_start_waiting_for_a_human(self):
+        self.assertEqual(start_status("Audit finding", body(**AUDIT)), "Waiting for human")
+        self.assertEqual(start_status("Audit finding", body(**{**AUDIT, "Severity": "High"})),
+                         "Waiting for human")
+
+    def test_medium_and_low_findings_start_in_todo(self):
+        for severity in ("Medium", "Low"):
+            self.assertEqual(start_status("Audit finding", body(**{**AUDIT, "Severity": severity})),
+                             "Todo")
+
+    def test_other_types_start_as_before(self):
+        self.assertEqual(start_status("Decision", ""), "Waiting for human")
+        self.assertEqual(start_status("Task", body(**TASK)), "Todo")
+
+    def test_unconfirmed_critical_finding_fails(self):
+        problems = confirmation_problems("Audit finding", body(**AUDIT), False)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("**Critical**", problems[0])
+        self.assertIn("`confirmed`", problems[0])
+
+    def test_confirmed_finding_passes(self):
+        self.assertEqual(confirmation_problems("Audit finding", body(**AUDIT), True), [])
+
+    def test_medium_finding_needs_no_confirmation(self):
+        self.assertEqual(confirmation_problems(
+            "Audit finding", body(**{**AUDIT, "Severity": "Medium"}), False), [])
+
+    def test_other_types_need_no_confirmation(self):
+        self.assertEqual(confirmation_problems("Task", body(**{**TASK, "Severity": "Critical"}),
+                                               False), [])
+
+    def test_label_a_person_applied_counts(self):
+        self.assertTrue(confirmed_by_person({"audit", "confirmed"},
+                                            [labelled("audit", "Bot"), labelled("confirmed", "User")]))
+
+    def test_label_a_bot_or_app_applied_does_not_count(self):
+        self.assertFalse(confirmed_by_person({"confirmed"}, [labelled("confirmed", "Bot", "peras")]))
+
+    def test_the_last_application_decides(self):
+        events = [labelled("confirmed", "User"), labelled("confirmed", "Bot", "peras")]
+        self.assertFalse(confirmed_by_person({"confirmed"}, events))
+        self.assertTrue(confirmed_by_person({"confirmed"}, events[::-1]))
+
+    def test_label_removed_since_does_not_count(self):
+        self.assertFalse(confirmed_by_person({"audit"}, [labelled("confirmed", "User")]))
+
+    def test_label_with_no_event_does_not_count(self):
+        self.assertFalse(confirmed_by_person({"confirmed"}, []))
+
+    def test_whole_issue_is_checked(self):
+        issue = {"issueType": {"name": "Audit finding"}, "body": body(**AUDIT),
+                 "author": {"__typename": "User", "login": "RuvinduH"},
+                 "repository": {"nameWithOwner": "Akenon-Studio/platform"}, "number": 9,
+                 "parent": {"number": 24}, "subIssues": {"nodes": []},
+                 "blockedBy": {"totalCount": 0},
+                 "assignedActors": {"nodes": [{"__typename": "User", "login": "RuvinduH"}]},
+                 "timelineItems": {"nodes": []},
+                 "labels": {"nodes": [{"name": "audit"}]},
+                 "labelEvents": {"nodes": [labelled("audit", "User")]}}
+        self.assertEqual(len(all_problems(issue, FORMS, "Waiting for human")), 1)
+        issue["labels"]["nodes"].append({"name": "confirmed"})
+        issue["labelEvents"]["nodes"].append(labelled("confirmed", "User"))
+        self.assertEqual(all_problems(issue, FORMS, "Waiting for human"), [])
 
 
 def sub(number, state, repo="Akenon-Studio/handbook"):
