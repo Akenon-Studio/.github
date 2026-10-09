@@ -83,7 +83,7 @@ class OutOfDateTest(unittest.TestCase):
         self.assertFalse(out_of_date(issue(status="Waiting for human"), FORMS, BOARD))
 
     def test_labelled_with_the_right_comment_is_left_alone(self):
-        text = problems_text(link_problems("Task", False, 0, "Todo", 0))
+        text = problems_text(link_problems("Task", False, "Todo", 0))
         self.assertFalse(out_of_date(issue(parent=False, labels=["needs-fields"], comments=[text]),
                                      FORMS, BOARD))
 

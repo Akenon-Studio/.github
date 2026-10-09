@@ -1,0 +1,53 @@
+name: Epic
+description: A phase, release or product launch. People only; agents can't create one (design 6.6)
+type: Epic
+labels: ["epic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An epic is the top level: a big outcome with a "done when" that closes once it is reached (design 6.6). Its parts are ordinary Task issues under it, and work sits under the parts. Leave the parent empty.
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The outcome, and what it holds.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Why this is a phase, release or product of its own.
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: How anyone can tell it is reached.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+  - type: dropdown
+    id: discipline
+    attributes:
+      label: Discipline
+      options: [Software, Animation, Hardware, Brand, Marketing, Legal and admin]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [Urgent, High, Medium, Low]
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Links
+      description: Design sections and related epics. Write `none` if there are none.
+    validations:
+      required: true

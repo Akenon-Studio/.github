@@ -63,7 +63,7 @@ AUDIT = {
 
 class FormsTest(unittest.TestCase):
     def test_every_issue_type_has_a_form(self):
-        self.assertEqual(sorted(FORMS), ["Audit finding", "Bug", "Decision", "Intent",
+        self.assertEqual(sorted(FORMS), ["Audit finding", "Bug", "Decision", "Epic", "Intent",
                                         "Process failure", "Task"])
 
     def test_required_fields_come_from_the_yaml(self):
@@ -193,47 +193,44 @@ class ProcessFailureTest(unittest.TestCase):
 
 class LinkProblemsTest(unittest.TestCase):
     def test_task_with_a_parent_passes(self):
-        self.assertEqual(link_problems("Task", True, 0, "Todo", 0), [])
+        self.assertEqual(link_problems("Task", True, "Todo", 0), [])
 
     def test_task_without_a_parent_fails(self):
-        problems = link_problems("Task", False, 0, "Todo", 0)
+        problems = link_problems("Task", False, "Todo", 0)
         self.assertEqual(len(problems), 1)
         self.assertIn("no parent", problems[0])
 
-    def test_top_level_issues_need_no_parent(self):
-        self.assertEqual(link_problems("Intent", False, 0, "Todo", 0), [])
-        self.assertEqual(link_problems("Task", False, 3, "Todo", 0), [])  # a step or workstream
+    def test_epics_and_intents_need_no_parent(self):
+        self.assertEqual(link_problems("Epic", False, "Todo", 0), [])
+        self.assertEqual(link_problems("Intent", False, "Todo", 0), [])
+
+    def test_an_epic_with_a_parent_fails(self):
+        problems = link_problems("Epic", True, "Todo", 0)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("top level", problems[0])
 
     def test_blocked_without_a_blocked_by_link_fails(self):
-        problems = link_problems("Task", True, 0, "Blocked", 0)
+        problems = link_problems("Task", True, "Blocked", 0)
         self.assertEqual(len(problems), 1)
         self.assertIn("Blocked", problems[0])
 
     def test_blocked_with_a_blocked_by_link_passes(self):
-        self.assertEqual(link_problems("Task", True, 0, "Blocked", 2), [])
+        self.assertEqual(link_problems("Task", True, "Blocked", 2), [])
 
     def test_both_problems_at_once(self):
-        self.assertEqual(len(link_problems("Task", False, 0, "Blocked", 0)), 2)
-
-    def test_deferred_work_parent_is_top_level_even_when_empty(self):
-        self.assertEqual(link_problems("Task", False, 0, "Todo", 0, "handbook", 83), [])
-
-    def test_deferred_work_is_handbook_83_only(self):
-        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, "handbook", 84)), 1)
-        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, "platform", 83)), 1)
+        self.assertEqual(len(link_problems("Task", False, "Blocked", 0)), 2)
 
     def test_untriaged_bug_needs_no_parent(self):
-        self.assertEqual(link_problems("Bug", False, 0, "Todo", 0), [])
+        self.assertEqual(link_problems("Bug", False, "Todo", 0), [])
 
     def test_bug_is_still_checked_for_blocked(self):
-        self.assertEqual(len(link_problems("Bug", False, 0, "Blocked", 0)), 1)
+        self.assertEqual(len(link_problems("Bug", False, "Blocked", 0)), 1)
 
     def test_issue_opened_by_the_automation_needs_no_parent(self):
-        self.assertEqual(link_problems("Task", False, 0, "Todo", 0, ".github", 5, by_bot=True), [])
+        self.assertEqual(link_problems("Task", False, "Todo", 0, by_bot=True), [])
 
     def test_issue_opened_by_a_person_still_needs_one(self):
-        self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, ".github", 5,
-                                           by_bot=False)), 1)
+        self.assertEqual(len(link_problems("Task", False, "Todo", 0, by_bot=False)), 1)
 
 
 class FinishedParentTest(unittest.TestCase):
