@@ -20,8 +20,8 @@ BOARD = "PVT_board"
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User", assignees=("someone",), ever=("someone",), issue_type="Task", answers=None,
-          label_events=()):
-    return {"number": 1, "body": body(**(answers or TASK)), "issueType": {"name": issue_type},
+          label_events=(), subs=(0, 0)):
+    return {"number": 1, "state": "OPEN", "body": body(**(answers or TASK)), "issueType": {"name": issue_type},
             "author": {"__typename": author, "login": "someone"},
             "assignedActors": {"nodes": [{"__typename": "User", "login": a} for a in assignees]},
             "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": a}}
@@ -31,6 +31,7 @@ def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo
             "labelEvents": {"nodes": list(label_events)},
             "parent": {"number": 24} if parent else None,
             "subIssues": {"nodes": []}, "blockedBy": {"totalCount": blocked_by},
+            "subIssuesSummary": {"total": subs[0], "completed": subs[1]},
             "projectItems": {"nodes": [{"id": "item", "project": {"id": BOARD},
                                         "fieldValueByName": {"name": status}}]},
             "comments": {"nodes": [{"body": c} for c in comments]}}
@@ -57,6 +58,11 @@ class OutOfDateTest(unittest.TestCase):
                                           labels=["needs-fields", "confirmed"], comments=[text],
                                           label_events=[labelled("confirmed", "User")]),
                                     FORMS, BOARD))
+
+    def test_last_sub_issue_closed_since_the_last_run_is_synced(self):
+        # Closing a sub-issue sends its parent no event, so the sweep is what flags the parent.
+        self.assertFalse(out_of_date(issue(subs=(3, 2)), FORMS, BOARD))
+        self.assertTrue(out_of_date(issue(subs=(3, 3)), FORMS, BOARD))
 
     def test_fixed_but_still_labelled_is_synced(self):
         self.assertTrue(out_of_date(issue(labels=["needs-fields"]), FORMS, BOARD))

@@ -8,7 +8,8 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
 from issue_fields import (all_problems, assignee_problems, board_values, check,  # noqa: E402
-                          confirmation_problems, confirmed_by_person, link_problems, load_forms,
+                          confirmation_problems, confirmed_by_person, finished_parent_problems,
+                          link_problems, load_forms,
                           open_sub_issues, parse_body, people_assigned, problems_text,
                           reopen_reasons, reopen_text, start_status)
 
@@ -235,6 +236,38 @@ class LinkProblemsTest(unittest.TestCase):
                                            by_bot=False)), 1)
 
 
+class FinishedParentTest(unittest.TestCase):
+    def test_open_parent_with_every_sub_issue_closed_fails(self):
+        problems = finished_parent_problems("OPEN", 3, 3)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("All its sub-issues are closed", problems[0])
+        self.assertIn("add a sub-issue for the work left", problems[0])
+
+    def test_open_parent_with_a_sub_issue_still_open_passes(self):
+        self.assertEqual(finished_parent_problems("OPEN", 3, 2), [])
+
+    def test_issue_without_sub_issues_passes(self):
+        self.assertEqual(finished_parent_problems("OPEN", 0, 0), [])
+
+    def test_closed_parent_passes(self):
+        self.assertEqual(finished_parent_problems("CLOSED", 3, 3), [])
+
+    def test_whole_issue_is_checked(self):
+        issue = {"issueType": {"name": "Task"}, "body": body(**TASK), "state": "OPEN",
+                 "author": {"__typename": "User", "login": "RuvinduH"},
+                 "repository": {"nameWithOwner": "Akenon-Studio/platform"}, "number": 48,
+                 "parent": {"number": 24}, "subIssues": {"nodes": [sub(1, "CLOSED")]},
+                 "subIssuesSummary": {"total": 1, "completed": 1},
+                 "blockedBy": {"totalCount": 0},
+                 "assignedActors": {"nodes": [{"__typename": "User", "login": "RuvinduH"}]},
+                 "timelineItems": {"nodes": []}, "labels": {"nodes": []},
+                 "labelEvents": {"nodes": []}}
+        self.assertEqual(all_problems(issue, FORMS, "Todo"),
+                         [finished_parent_problems("OPEN", 1, 1)[0]])
+        issue["subIssuesSummary"] = {"total": 2, "completed": 1}
+        self.assertEqual(all_problems(issue, FORMS, "Todo"), [])
+
+
 class AssigneeProblemsTest(unittest.TestCase):
     def test_author_assigned_passes(self):
         self.assertEqual(assignee_problems("RuvinduH", False, ["RuvinduH"], ["RuvinduH"], "Todo"), [])
@@ -339,7 +372,8 @@ class ConfirmationTest(unittest.TestCase):
         issue = {"issueType": {"name": "Audit finding"}, "body": body(**AUDIT),
                  "author": {"__typename": "User", "login": "RuvinduH"},
                  "repository": {"nameWithOwner": "Akenon-Studio/platform"}, "number": 9,
-                 "parent": {"number": 24}, "subIssues": {"nodes": []},
+                 "state": "OPEN", "parent": {"number": 24}, "subIssues": {"nodes": []},
+                 "subIssuesSummary": {"total": 0, "completed": 0},
                  "blockedBy": {"totalCount": 0},
                  "assignedActors": {"nodes": [{"__typename": "User", "login": "RuvinduH"}]},
                  "timelineItems": {"nodes": []},
