@@ -272,12 +272,59 @@ def board_values(issue_type, text, forms, field_names):
     return values
 
 
+# --- The Epic board field (design 6.6) ---------------------------------------------------------
+
+EPIC_FIELD = "Epic"
+EPIC_DEPTH = 6  # parents followed up to an epic: epic > part > work leaves plenty of room
+
+
+def ancestors(depth=EPIC_DEPTH):
+    """The GraphQL for an issue's parent chain, `depth` levels up."""
+    node = "number title issueType { name } repository { nameWithOwner }"
+    for _ in range(depth - 1):
+        node = f"number title issueType {{ name }} repository {{ nameWithOwner }} parent {{ {node} }}"
+    return node
+
+
+def epic_of(issue):
+    """(ref, title) of the topmost Epic at or above the issue, or None if there is none."""
+    found, node = None, issue
+    while node:
+        if (node.get("issueType") or {}).get("name") == "Epic":
+            found = (f"{node['repository']['nameWithOwner'].split('/')[1]}#{node['number']}",
+                     node["title"])
+        node = node.get("parent")
+    return found
+
+
+def epic_options(live_options, ref, title):
+    """The Epic field's options with this epic's option present and named `title`, found by its
+    description (the epic's repo#n, so a renamed epic keeps its option), or None if nothing
+    changes. Existing options keep their IDs, so values already set survive the update."""
+    keep = [{"id": o["id"], "name": o["name"], "color": o.get("color", "GRAY"),
+             "description": o.get("description", "")} for o in live_options]
+    mine = next((o for o in keep if o["description"] == ref), None)
+    if mine and mine["name"] == title:
+        return None
+    if mine:
+        mine["name"] = title
+    else:
+        keep.append({"name": title, "color": "GRAY", "description": ref})
+    return keep
+
+
+def epic_stale(board_id, issue):
+    """True if the board's Epic value for the issue differs from the epic its parents lead to."""
+    want = epic_of(issue)
+    return (want[1] if want else None) != epic_on(board_id, issue)
+
+
 # --- GitHub side -------------------------------------------------------------------------------
 
 # What the checks read about an issue; issue_sweep.py reads the same for many issues at once.
-ISSUE_FIELDS = """id number state body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
+ISSUE_FIELDS = """id number title state body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
   repository { nameWithOwner }
-  parent { number }
+  parent { ANCESTORS }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
   subIssuesSummary { total completed }
   blockedBy(first: 1) { totalCount }
@@ -287,7 +334,9 @@ ISSUE_FIELDS = """id number state body author { __typename login } issueType { n
   labelEvents: timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes {
     ... on LabeledEvent { label { name } actor { __typename login } } } }
   projectItems(first: 20) { nodes { id project { id }
-    fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
+    fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    epic: fieldValueByName(name: "Epic") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
+ISSUE_FIELDS = ISSUE_FIELDS.replace("ANCESTORS", ancestors())
 
 
 def load_issue(repo, number):
@@ -346,6 +395,38 @@ def reopen_if_early(repo, number, issue):
     gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": reopen_text(reasons)})
     issue["state"] = "OPEN"
     return True
+
+
+def epic_on(board_id, issue):
+    """The issue's Epic value on the board, or None."""
+    for item in issue["projectItems"]["nodes"]:
+        if item["project"]["id"] == board_id:
+            return (item.get("epic") or {}).get("name")
+    return None
+
+
+def sync_epic(board, item_id, issue):
+    """Set the board's Epic field to the epic the issue's parents lead to, adding or renaming that
+    epic's option first. The options are re-read just before a change: a stale list would drop
+    an option added since, and with it every value set to it."""
+    if not any(f.get("name") == EPIC_FIELD for f in board["fields"]["nodes"]) \
+            or not epic_stale(board["id"], issue):
+        return
+    board = find_board_fields(spec()["title"])
+    field = next(f for f in board["fields"]["nodes"] if f.get("name") == EPIC_FIELD)
+    want = epic_of(issue)
+    if want is None:
+        graphql("""mutation($p: ID!, $i: ID!, $f: ID!) { clearProjectV2ItemFieldValue(
+            input: {projectId: $p, itemId: $i, fieldId: $f}) { clientMutationId } }""",
+                p=board["id"], i=item_id, f=field["id"])
+        return
+    options = epic_options(field["options"], *want)
+    if options is not None:
+        graphql("""mutation($input: UpdateProjectV2FieldInput!) {
+            updateProjectV2Field(input: $input) { clientMutationId } }""",
+                input={"fieldId": field["id"], "singleSelectOptions": options})
+        board = find_board_fields(spec()["title"])
+    set_field(board, item_id, EPIC_FIELD, want[1])
 
 
 def board_item(board, issue):
@@ -418,9 +499,12 @@ def sync(repo, number, forms, board):
         values["Status"] = start_status(issue_type, issue["body"])
     for name, option in values.items():
         set_field(board, item_id, name, option)
+    sync_epic(board, item_id, issue)
     problems = all_problems(issue, forms, values.get("Status", status))
     report(repo, number, issue, problems)
+    want = epic_of(issue)
     return {"issue": f"{repo}#{number}", "type": issue_type, "set": values,
+            "epic": want[1] if want else None,
             "reopened": reopened, "problems": problems}
 
 
