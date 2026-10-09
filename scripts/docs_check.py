@@ -31,6 +31,7 @@ import yaml
 
 RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "docs.json"
 HISTORY = re.compile(r"(^|/)decisions/|(^|/)legal/audits/|(^|/)CHANGELOG\.md$")
+UNCLOSED = "\0unclosed fence"  # body_lines() yields this when a code fence never closes
 HEADER_END = re.compile(r"\n---[ \t]*(?:\n|$)")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CODE = re.compile(r"`([^`\n]+)`")
@@ -130,6 +131,8 @@ def body_lines(text):
             continue
         if fence is None:
             yield n, line
+    if fence is not None:
+        yield 0, UNCLOSED
 
 
 def looks_like_path(token):
@@ -153,8 +156,9 @@ def path_exists(root, doc_dir, token, files, dirs):
     if first not in dirs and first not in files and not (pathlib.PurePosixPath(doc_dir) / first).as_posix() in dirs:
         return True  # not this repo's tree (another repo, a planned folder, the Linux kernel...)
     for base in ("", doc_dir):
-        cand = str(pathlib.PurePosixPath(base) / t) if base else t
-        cand = str(pathlib.PurePosixPath(cand))
+        cand = posixpath.normpath(posixpath.join(base, t) if base else t)
+        if cand.startswith(".."):
+            continue  # outside the repo
         if "*" in cand:
             rx = glob_re(cand)
             if any(rx.match(f) for f in files) or any(rx.match(d) for d in dirs):
@@ -170,8 +174,8 @@ def ignored(root, token, doc_dir=""):
     t = re.sub(r":\d+(-\d+)?$", "", token.strip())
     bases = [t] + ([posixpath.join(doc_dir, t)] if doc_dir and doc_dir != "." else [])
     tries = [c for b in bases for c in (b.rstrip("/"), b.rstrip("/") + "/")]  # `models/` rules
-    return any(subprocess.run(["git", "check-ignore", "-q", "--no-index", c], cwd=root).returncode == 0
-               for c in tries)
+    return any(subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", c],
+                              cwd=root).returncode == 0 for c in tries)
 
 
 def code_problems(path, text, root, files, dirs, words, known=()):
@@ -241,6 +245,8 @@ def check(root, repo, rules):
         if (matches(path, r["docs"]) or exception) and not matches(path, r["no_header"]) and not (
                 exception and exception.get("no_header")):
             found += header_problems(path, text, rules["owners"], files, repo != "handbook")
+        if any(line == UNCLOSED for _, line in body_lines(text)):
+            found.append(f"{path}: a code fence never closes, so the rest of the doc goes unchecked")
         # The handbook speaks for every repo and for planned layout, so its paths can't resolve
         # here; decision records and dated audits are history (6.5 item 5).
         if repo != "handbook" and not HISTORY.search(path):
