@@ -1,4 +1,5 @@
-"""Tests for scripts/issue_sweep.py: which issues the scheduled sweep re-syncs.
+"""Tests for scripts/issue_sweep.py: which issues the scheduled sweep re-syncs, and the comment it
+keeps on a PR that conflicts with its base branch.
 Run: python3 -m unittest discover tests"""
 
 import pathlib
@@ -8,7 +9,9 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
 from issue_fields import all_problems, link_problems, load_forms, problems_text  # noqa: E402
-from issue_sweep import in_managed_repo, out_of_date  # noqa: E402
+from issue_sweep import (PR_MARKER, both_sides, conflict_text, in_managed_repo,  # noqa: E402
+                         out_of_date, pr_action, resolved_text, who_to_tell)
+from rules import automation_owners  # noqa: E402
 from test_issue_fields import AUDIT, TASK, body, labelled  # noqa: E402
 
 FORMS = load_forms()
@@ -90,6 +93,84 @@ class ManagedRepoTest(unittest.TestCase):
         self.assertTrue(in_managed_repo(issue(), managed))
         self.assertFalse(in_managed_repo(issue(repo="Akenon-Studio/old-thing"), managed))
         self.assertFalse(in_managed_repo(issue(repo="someone/handbook"), managed))
+
+
+def pr(mergeable="CONFLICTING", assignees=("alice",), author="User", comments=()):
+    return {"number": 7, "mergeable": mergeable, "baseRefName": "main", "headRefOid": "h",
+            "author": {"__typename": author, "login": "bob"},
+            "repository": {"nameWithOwner": "Akenon-Studio/animations"},
+            "assignees": {"nodes": [{"login": a} for a in assignees]},
+            "comments": {"nodes": [{"databaseId": i, "body": c} for i, c in enumerate(comments, 1)]}}
+
+
+class ConflictNoticeTest(unittest.TestCase):
+    def test_new_conflict_posts_a_notice_naming_the_files(self):
+        action = pr_action(pr(), ["scripts/a.py"])
+        self.assertEqual(action[0], "post")
+        self.assertTrue(action[1].startswith(f"{PR_MARKER}\n@alice This PR conflicts with `main`"))
+        self.assertIn("- `scripts/a.py`", action[1])
+        self.assertIn("git merge origin/main", action[1])
+        self.assertIn("don't rebase and force-push", action[1])
+
+    def test_without_the_base_files_it_names_only_the_base(self):
+        text = pr_action(pr(), None)[1]
+        self.assertIn("conflicts with `main`", text)
+        self.assertNotIn("These files", text)
+
+    def test_unchanged_notice_is_left_alone(self):
+        text = conflict_text(pr(), ["scripts/a.py"])
+        self.assertIsNone(pr_action(pr(comments=["hi", text]), ["scripts/a.py"]))
+
+    def test_notice_is_edited_when_the_files_change(self):
+        old = conflict_text(pr(), ["scripts/a.py"])
+        action = pr_action(pr(comments=["hi", old]), ["README.md", "scripts/a.py"])
+        self.assertEqual(action, ("edit", 2, conflict_text(pr(), ["README.md", "scripts/a.py"])))
+
+    def test_resolved_conflict_edits_the_notice_and_keeps_it(self):
+        old = conflict_text(pr(), ["scripts/a.py"])
+        action = pr_action(pr(mergeable="MERGEABLE", comments=[old]))
+        self.assertEqual(action, ("edit", 1, resolved_text(pr(), old)))
+        self.assertIn("**Resolved:** this PR no longer conflicts with `main`", action[2])
+        self.assertIn("- `scripts/a.py`", action[2])
+
+    def test_resolved_notice_is_left_alone(self):
+        done = resolved_text(pr(), conflict_text(pr(), []))
+        self.assertIsNone(pr_action(pr(mergeable="MERGEABLE", comments=[done])))
+
+    def test_conflicting_again_after_resolved_posts_a_new_notice(self):
+        done = resolved_text(pr(), conflict_text(pr(), []))
+        self.assertEqual(pr_action(pr(comments=[done]), [])[0], "post")
+
+    def test_unknown_is_skipped_until_github_has_computed_it(self):
+        self.assertIsNone(pr_action(pr(mergeable="UNKNOWN"), []))
+        old = conflict_text(pr(), [])
+        self.assertIsNone(pr_action(pr(mergeable="UNKNOWN", comments=[old]), []))
+
+    def test_mergeable_pr_never_flagged_is_left_alone(self):
+        self.assertIsNone(pr_action(pr(mergeable="MERGEABLE")))
+
+    def test_someone_elses_comment_is_not_ours(self):
+        self.assertEqual(pr_action(pr(comments=["conflicts with main, fix please"]), [])[0], "post")
+
+
+class WhoToTellTest(unittest.TestCase):
+    def test_assignees(self):
+        self.assertEqual(who_to_tell(pr(assignees=("alice", "carol"))), ["alice", "carol"])
+
+    def test_bot_pr_without_assignee_goes_to_the_automation_owners(self):
+        self.assertEqual(who_to_tell(pr(assignees=(), author="Bot")), automation_owners())
+
+    def test_persons_pr_without_assignee_goes_to_the_author(self):
+        self.assertEqual(who_to_tell(pr(assignees=())), ["bob"])
+
+    def test_mentions_appear_in_the_notice(self):
+        owners = " ".join("@" + o for o in automation_owners())
+        self.assertIn(owners, conflict_text(pr(assignees=(), author="Bot"), []))
+
+
+class BothSidesTest(unittest.TestCase):
+    def test_sorted_intersection(self):
+        self.assertEqual(both_sides(["b", "a", "c"], ["c", "a", "z"]), ["a", "c"])
 
 
 if __name__ == "__main__":
