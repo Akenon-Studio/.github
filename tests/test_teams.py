@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from rules import (AUTOMATION_OWNERS, ROOT, automation_owners, codeowners_team_differences,  # noqa: E402
                    codeowners_teams, load, managed_repos, team, team_differences,
-                   team_repo_permission, team_repos)
+                   org_role_differences, team_repo_permission, team_repos)
 
 OWNERS = team(AUTOMATION_OWNERS)
 LIVE = {"name": OWNERS["name"], "slug": OWNERS["slug"], "description": OWNERS["description"],
@@ -137,3 +137,23 @@ class LimitedTeamTest(unittest.TestCase):
         found = codeowners_team_differences(text, teams, "platform")
         self.assertEqual(len(found), 1)
         self.assertIn("no access to platform", found[0])
+
+
+class OrgRoleTest(unittest.TestCase):
+    """handbook#107: org roles given to teams match teams.json."""
+    TEAMS = [{"slug": "engineers"}, {"slug": "design", "org_role": "all_repo_read"}]
+
+    def test_matching_roles_pass(self):
+        self.assertEqual(org_role_differences(self.TEAMS, {"design": {"all_repo_read"}}), [])
+
+    def test_extra_role_is_a_difference(self):
+        found = org_role_differences(self.TEAMS, {"engineers": {"all_repo_admin"},
+                                                  "design": {"all_repo_read"}})
+        self.assertEqual(found, ["team 'engineers': expected org role none, got ['all_repo_admin']"])
+
+    def test_missing_role_is_a_difference(self):
+        self.assertEqual(len(org_role_differences(self.TEAMS, {})), 1)
+
+    def test_teams_json_gives_design_read_and_engineers_none(self):
+        self.assertEqual(team("design").get("org_role"), "all_repo_read")
+        self.assertIsNone(team("engineers").get("org_role"))

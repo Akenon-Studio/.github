@@ -10,7 +10,7 @@ import sys
 import urllib.parse
 
 from rules import (ISSUE_TYPE_KEYS, ORG, TEAM_KEYS, desired_labels, desired_rulesets, gh, load,
-                   managed_repos, repo_rulesets, team_repos, try_gh)
+                   managed_repos, org_roles, repo_rulesets, team_org_roles, team_repos, try_gh)
 
 
 def apply_org():
@@ -52,6 +52,20 @@ def apply_teams():
             else:  # a team limited to some repos has no access to the others
                 try_gh(f"orgs/{ORG}/teams/{t['slug']}/repos/{ORG}/{repo}", "-X", "DELETE")
         print(f"org {ORG}: team '{t['slug']}' applied")
+    roles = org_roles()
+    if roles is None:
+        print(f"note: can't read the org's roles; team org roles not applied")
+        return
+    have = team_org_roles(roles)
+    for t in load("teams.json")["teams"]:
+        want = {t["org_role"]} if t.get("org_role") else set()
+        live = have.get(t["slug"].lower(), set())
+        for name in want - live:
+            gh(f"orgs/{ORG}/organization-roles/teams/{t['slug']}/{roles[name]}", "-X", "PUT")
+            print(f"org {ORG}: team '{t['slug']}' given org role {name}")
+        for name in live - want:
+            gh(f"orgs/{ORG}/organization-roles/teams/{t['slug']}/{roles[name]}", "-X", "DELETE")
+            print(f"org {ORG}: org role {name} removed from team '{t['slug']}'")
 
 
 def apply_labels(repo):

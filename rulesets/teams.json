@@ -1,5 +1,5 @@
 {
-  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo, or only on the repos in its optional 'repos' list (and no access to the others) (a team needs access to a repo before it can be asked to review there; a team named in CODEOWNERS needs write, 'push', or GitHub ignores it); verify-settings.py checks all of it, and that every team a managed repo's CODEOWNERS names is listed here with write access.",
+  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo, or only on the repos in its optional 'repos' list (and no access to the others) (a team needs access to a repo before it can be asked to review there; a team named in CODEOWNERS needs write, 'push', or GitHub ignores it); verify-settings.py checks all of it, and that every team a managed repo's CODEOWNERS names is listed here with write access. A team's optional 'org_role' (an organisation role such as all_repo_read) is given to it and any other org role removed; without one, the team has none.",
   "teams": [
     {
       "name": "Automation owners",
@@ -35,7 +35,8 @@
       "repos": [
         "handbook",
         "hardware"
-      ]
+      ],
+      "org_role": "all_repo_read"
     }
   ]
 }

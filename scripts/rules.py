@@ -178,6 +178,33 @@ def automation_owners():
     return list(team(AUTOMATION_OWNERS)["members"])
 
 
+def org_roles():
+    """{role name: role id} for the org's organisation roles, or None if they can't be read."""
+    data = try_gh(f"orgs/{ORG}/organization-roles")
+    return None if data is None else {r["name"]: r["id"] for r in data["roles"]}
+
+
+def team_org_roles(roles):
+    """{team slug: set of org role names} as live, from {role name: id}."""
+    have = {}
+    for name, role_id in roles.items():
+        for t in try_gh(f"orgs/{ORG}/organization-roles/{role_id}/teams?per_page=100") or []:
+            have.setdefault(t["slug"].lower(), set()).add(name)
+    return have
+
+
+def org_role_differences(teams, have):
+    """How the org roles given to teams differ from teams.json (`org_role`, or none)."""
+    diffs = []
+    for t in teams:
+        want = {t["org_role"]} if t.get("org_role") else set()
+        live = have.get(t["slug"].lower(), set())
+        if live != want:
+            diffs.append(f"team '{t['slug']}': expected org role {sorted(want) or 'none'}, "
+                         f"got {sorted(live) or 'none'}")
+    return diffs
+
+
 def team_repos(t):
     """The managed repos a team has access to: its `repos` list, or every managed repo."""
     return list(t.get("repos") or managed_repos())
