@@ -81,6 +81,17 @@ class OutOfDateTest(unittest.TestCase):
         self.assertFalse(out_of_date(issue(subs=(3, 2)), FORMS, BOARD))
         self.assertTrue(out_of_date(issue(subs=(3, 3)), FORMS, BOARD))
 
+    def test_the_sweep_query_reads_what_reclose_due_needs(self):
+        from issue_sweep import ISSUE_SEARCH
+        self.assertIn("reopenEvents", ISSUE_SEARCH)
+        self.assertIn("subIssuesSummary", ISSUE_SEARCH)
+
+    def test_parent_the_automation_reopened_is_synced_to_close_it(self):
+        done = dict(issue(subs=(2, 2), labels=["needs-fields"]),
+                    reopenEvents={"nodes": [{"actor": {"__typename": "Bot",
+                                                     "login": "akenon-studio-automation"}}]})
+        self.assertTrue(out_of_date(done, FORMS, BOARD))
+
     def test_fixed_but_still_labelled_is_synced(self):
         self.assertTrue(out_of_date(issue(labels=["needs-fields"]), FORMS, BOARD))
 

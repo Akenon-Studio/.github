@@ -49,12 +49,14 @@ import time
 import yaml
 
 from board import find_board_fields, graphql, spec
-from rules import ROOT, ensure_label, gh, source_labels
+from rules import ROOT, bot_login, ensure_label, gh, source_labels
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
 MARKER = "<!-- issue-fields -->"
 REOPEN_MARKER = "<!-- issue-fields: reopened -->"
+RECLOSE_MARKER = "<!-- issue-fields: closed again -->"
+AUTOMATION_APP = "akenon-studio-automation"  # the org app this workflow signs in as
 EMPTY = {"", "_No response_"}
 REQUIRED_WHEN = re.compile(r"\(required when (.+?) is (.+?)\)")
 START_STATUS = {"Decision": "Waiting for human"}  # everything else starts in Todo
@@ -330,6 +332,8 @@ ISSUE_FIELDS = """id number title state body author { __typename login } issueTy
   assignedActors(first: 20) { nodes { __typename ... on User { login } ... on Bot { login } } }
   timelineItems(itemTypes: [ASSIGNED_EVENT], first: 100) { nodes {
     ... on AssignedEvent { assignee { __typename ... on User { login } } } } }
+  reopenEvents: timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes {
+    ... on ReopenedEvent { actor { __typename login } } } }
   labelEvents: timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes {
     ... on LabeledEvent { label { name } actor { __typename login } } } }
   projectItems(first: 20) { nodes { id project { id }
@@ -404,6 +408,43 @@ def reopen_if_early(repo, number, issue):
     gh(f"repos/{repo}/issues/{number}", "-X", "PATCH", body={"state": "open"})
     gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": reopen_text(reasons)})
     issue["state"] = "OPEN"
+    return True
+
+
+def reclose_due(issue):
+    """True for an open parent the automation reopened (its last reopen was by AUTOMATION_APP, as
+    reopen_if_early does when a PR closes it too early) whose sub-issues are now all closed: its
+    PR already finished its own work, so it closes again (design 6.8, check 2). A parent a person
+    or another bot reopened stays open."""
+    subs = issue["subIssuesSummary"]
+    last = (issue.get("reopenEvents") or {}).get("nodes") or []
+    return (issue["state"] == "OPEN" and subs["total"] > 0 and subs["completed"] >= subs["total"]
+            and bool(last) and is_automation(((last[-1] or {}).get("actor")) or {})
+            # and closing now passes every reopen check (a process failure's prevention, too),
+            # so it isn't reopened again straight away
+            and not reopen_reasons((issue.get("issueType") or {}).get("name"), issue.get("body") or "",
+                                   (issue.get("subIssues") or {}).get("nodes") or []))
+
+
+def is_automation(actor):
+    """The automation app itself (a reopen by a deleted account has no actor and is not)."""
+    return actor.get("__typename") == "Bot" and bot_login(actor.get("login")) == AUTOMATION_APP
+
+
+RECLOSE_TEXT = (f"{RECLOSE_MARKER}\nClosed again (design 6.8): this was reopened because it closed "
+                "while sub-issues were open, and every sub-issue is now closed.")
+
+
+def reclose_if_done(repo, number, issue):
+    """Close a parent reclose_due() picks, as completed, with a comment. True if it did."""
+    if not reclose_due(issue):
+        return False
+    # Close, then comment: a closed parent is never due again, so a retry can't repeat anything,
+    # and each reopen-and-close cycle gets its own comment.
+    gh(f"repos/{repo}/issues/{number}", "-X", "PATCH",
+       body={"state": "closed", "state_reason": "completed"})
+    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": RECLOSE_TEXT})
+    issue["state"] = "CLOSED"
     return True
 
 
@@ -502,6 +543,7 @@ def sync(repo, number, forms, board):
     """Run every check on one issue and update the board, label and comment. Returns a summary."""
     issue = load_issue(repo, number)
     reopened = reopen_if_early(repo, number, issue)
+    reclosed = not reopened and reclose_if_done(repo, number, issue)
     issue_type = (issue["issueType"] or {}).get("name")
     item_id, status = board_item(board, issue)
     names = {f.get("name") for f in board["fields"]["nodes"]}
@@ -516,7 +558,7 @@ def sync(repo, number, forms, board):
     want = epic_of(issue)
     return {"issue": f"{repo}#{number}", "type": issue_type, "set": values,
             "epic": want[1] if want else None,
-            "reopened": reopened, "problems": problems}
+            "reopened": reopened, "reclosed": reclosed, "problems": problems}
 
 
 def main():

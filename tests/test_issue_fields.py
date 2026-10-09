@@ -9,7 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from issue_fields import (all_problems, assignee_problems, board_values, check,  # noqa: E402
                           confirmation_problems, confirmed_by_person, finished_parent_problems,
-                          link_problems, load_forms, source_problems,
+                          link_problems, load_forms, reclose_due, source_problems,
                           open_sub_issues, parse_body, people_assigned, problems_text,
                           reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options)
 
@@ -483,3 +483,33 @@ class SourceLabelTest(unittest.TestCase):
 
     def test_a_persons_issue_needs_none(self):
         self.assertEqual(source_problems("RuvinduH", False, set(), self.SOURCES), [])
+
+
+def parent(state="OPEN", total=3, completed=3, reopened_by="akenon-studio-automation"):
+    nodes = [{"actor": {"__typename": "Bot", "login": reopened_by}}] if reopened_by else []
+    return {"state": state, "subIssuesSummary": {"total": total, "completed": completed},
+            "reopenEvents": {"nodes": nodes}}
+
+
+class RecloseTest(unittest.TestCase):
+    def test_not_while_another_reopen_reason_holds(self):
+        undecided = dict(parent(), issueType={"name": "Process failure"},
+                         body=body(**{**PROCESS_FAILURE, PREVENTION: "Not decided yet",
+                                      CHECK: "_No response_"}))
+        self.assertFalse(reclose_due(undecided))
+
+    def test_a_parent_the_automation_reopened_closes_once_its_subs_are_done(self):
+        self.assertTrue(reclose_due(parent()))
+
+    def test_not_while_a_sub_issue_is_open(self):
+        self.assertFalse(reclose_due(parent(completed=2)))
+
+    def test_a_parent_a_person_or_another_bot_reopened_stays_open(self):
+        self.assertFalse(reclose_due(parent(reopened_by="RuvinduH")))
+        self.assertFalse(reclose_due(parent(reopened_by="dependabot")))
+
+    def test_never_reopened_or_no_subs_or_closed_is_left_alone(self):
+        self.assertFalse(reclose_due(parent(reopened_by=None)))
+        self.assertFalse(reclose_due(dict(parent(), reopenEvents={"nodes": [{"actor": None}]})))
+        self.assertFalse(reclose_due(parent(total=0, completed=0)))
+        self.assertFalse(reclose_due(parent(state="CLOSED")))
