@@ -44,7 +44,7 @@ Look for, most serious first:
 5. Docs: a paragraph the change makes wrong, duplicated text, a doc that isn't needed.
 
 Comment only on lines the PR adds (the `+` lines; give the line number in the new file). Say what
-goes wrong and the fix, briefly. No praise, no style nits a linter catches. If there is nothing
+goes wrong and the fix in under 80 words. At most 10 comments, the most important. No praise, no style nits a linter catches. If there is nothing
 worth saying, return no comments and a one-line summary saying so."""
 
 REVIEW_SCHEMA = {
@@ -174,13 +174,18 @@ def client():
 
 def ask_claude(claude_md, title, description, diff_text):
     message = client().messages.create(
-        model=MODEL, max_tokens=8000, system=INSTRUCTIONS,
+        model=MODEL, max_tokens=16000, system=INSTRUCTIONS,
         output_config={"format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
         messages=[{"role": "user", "content":
                    f"<claude_md>\n{claude_md}\n</claude_md>\n\n<pr_title>{title}</pr_title>\n"
                    f"<pr_description>\n{description}\n</pr_description>\n\n<diff>\n{diff_text}\n</diff>"}])
-    print(f"Model {message.model}: {message.usage.input_tokens} in, {message.usage.output_tokens} out")
-    return json.loads(next(b.text for b in message.content if b.type == "text"))
+    print(f"Model {message.model}: {message.usage.input_tokens} in, {message.usage.output_tokens} out, "
+          f"stop {message.stop_reason}")
+    try:
+        return json.loads(next(b.text for b in message.content if b.type == "text"))
+    except (StopIteration, json.JSONDecodeError):
+        return {"summary": f"The review was cut off ({message.stop_reason}) before it finished; "
+                           "nothing to report from this run.", "comments": []}
 
 
 def main(argv):
