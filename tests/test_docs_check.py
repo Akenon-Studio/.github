@@ -85,6 +85,11 @@ class CheckTest(unittest.TestCase):
         self.assertIn("src/gone2.ts", found)
         self.assertNotIn("gone.md", found)
 
+    def test_crlf_bom_and_non_ascii_names(self):
+        root = repo({"src/a.ts": "", "docs/architecture/\u00e9t\u00e9.md":
+                     "\ufeff" + HEADER.replace("\n", "\r\n") + "x\r\n"})
+        self.assertEqual(check(root, "code", RULE_SET), [])
+
     def test_front_matter(self):
         self.assertEqual(front_matter(HEADER)[0]["owner"], "Software")
         self.assertEqual(front_matter("# title\n"), (None, None))

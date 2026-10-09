@@ -213,8 +213,9 @@ def link_problems(path, text, files, dirs, root=None):
 
 def check(root, repo, rules):
     r = rules_for(repo, rules)
-    files = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True,
-                           check=True).stdout.splitlines()  # skipped files still count as existing
+    files = [f for f in subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True,
+                                       text=True, check=True).stdout.split("\0") if f]
+    # (-z: unquoted names, so non-ASCII paths match; skipped files still count as existing)
     dirs = {str(pathlib.PurePosixPath(f).parent) for f in files} | {
         "/".join(f.split("/")[:i]) for f in files for i in range(1, f.count("/") + 1)}
     words = set()  # every identifier in the repo's text files outside the docs, read once
@@ -235,7 +236,8 @@ def check(root, repo, rules):
             continue
         if not (root / path).is_file():
             continue  # a dangling symlink or a submodule entry: nothing to read
-        text = (root / path).read_text(errors="ignore")
+        # A BOM or Windows line endings must not hide the header.
+        text = (root / path).read_text(errors="ignore").lstrip("\ufeff").replace("\r\n", "\n")
         if (matches(path, r["docs"]) or exception) and not matches(path, r["no_header"]) and not (
                 exception and exception.get("no_header")):
             found += header_problems(path, text, rules["owners"], files, repo != "handbook")
