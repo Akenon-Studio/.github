@@ -58,7 +58,7 @@ def find_board_fields(title):
     data = graphql("""query($org: String!, $title: String!) { organization(login: $org) {
         projectsV2(first: 20, query: $title) { nodes { id title closed fields(first: 50) { nodes {
           ... on ProjectV2FieldCommon { id name }
-          ... on ProjectV2SingleSelectField { options { id name } } } } } } } }""",
+          ... on ProjectV2SingleSelectField { options { id name color description } } } } } } } }""",
                    org=ORG, title=title)
     boards = [p for p in data["organization"]["projectsV2"]["nodes"]
               if p["title"] == title and not p["closed"]]

@@ -301,8 +301,7 @@ def epic_options(live_options, ref, title):
     """The Epic field's options with this epic's option present and named `title`, found by its
     description (the epic's repo#n, so a renamed epic keeps its option), or None if nothing
     changes. Existing options keep their IDs, so values already set survive the update."""
-    keep = [{"id": o["id"], "name": o["name"], "color": o.get("color", "GRAY"),
-             "description": o.get("description", "")} for o in live_options]
+    keep = [{k: o[k] for k in ("id", "name", "color", "description")} for o in live_options]
     mine = next((o for o in keep if o["description"] == ref), None)
     if mine and mine["name"] == title:
         return None
@@ -407,25 +406,26 @@ def epic_on(board_id, issue):
 
 def sync_epic(board, item_id, issue):
     """Set the board's Epic field to the epic the issue's parents lead to, adding or renaming that
-    epic's option first. The options are re-read just before a change: a stale list would drop
+    epic's option first. Before changing the options they are re-read: a stale list would drop
     an option added since, and with it every value set to it."""
-    if not any(f.get("name") == EPIC_FIELD for f in board["fields"]["nodes"]) \
-            or not epic_stale(board["id"], issue):
+    field = next((f for f in board["fields"]["nodes"] if f.get("name") == EPIC_FIELD), None)
+    if field is None or not epic_stale(board["id"], issue):
         return
-    board = find_board_fields(spec()["title"])
-    field = next(f for f in board["fields"]["nodes"] if f.get("name") == EPIC_FIELD)
     want = epic_of(issue)
     if want is None:
         graphql("""mutation($p: ID!, $i: ID!, $f: ID!) { clearProjectV2ItemFieldValue(
             input: {projectId: $p, itemId: $i, fieldId: $f}) { clientMutationId } }""",
                 p=board["id"], i=item_id, f=field["id"])
         return
-    options = epic_options(field["options"], *want)
-    if options is not None:
-        graphql("""mutation($input: UpdateProjectV2FieldInput!) {
-            updateProjectV2Field(input: $input) { clientMutationId } }""",
-                input={"fieldId": field["id"], "singleSelectOptions": options})
+    if epic_options(field["options"], *want) is not None:
         board = find_board_fields(spec()["title"])
+        field = next(f for f in board["fields"]["nodes"] if f.get("name") == EPIC_FIELD)
+        options = epic_options(field["options"], *want)
+        if options is not None:
+            graphql("""mutation($input: UpdateProjectV2FieldInput!) {
+                updateProjectV2Field(input: $input) { clientMutationId } }""",
+                    input={"fieldId": field["id"], "singleSelectOptions": options})
+            board = find_board_fields(spec()["title"])
     set_field(board, item_id, EPIC_FIELD, want[1])
 
 

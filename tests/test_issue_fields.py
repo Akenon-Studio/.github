@@ -454,6 +454,12 @@ LIVE = [{"id": "a", "name": "Phase 2", "color": "GRAY", "description": "handbook
 
 
 class EpicOptionsTest(unittest.TestCase):
+    def test_the_board_query_reads_what_finds_and_keeps_an_option(self):
+        # Without descriptions no option is ever found, so each sync adds another (.github#50).
+        import inspect
+        import board
+        self.assertIn("options { id name color description }", inspect.getsource(board.find_board_fields))
+
     def test_up_to_date_changes_nothing(self):
         self.assertIsNone(epic_options(LIVE, "handbook#136", "Phase 2"))
 
