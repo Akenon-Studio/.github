@@ -1,0 +1,67 @@
+# Daily: checks the design sections every managed repo's CLAUDE.md files name against the current
+# handbook/design.md (scripts/design_refs.py, design 6.8) and keeps one open `claude-md-drift` Task
+# issue listing any that no longer exist; closes it once they all do. A repo's own PR check can't
+# read the private handbook, and a renumbered design never runs other repos' CI, so this is where
+# those references are checked.
+#
+# Reads every repo as the read-only "Akenon Studio Settings" app, like settings-check (its key lives
+# only in this repo's `settings-check` environment: variable SETTINGS_APP_ID, secret
+# SETTINGS_APP_PRIVATE_KEY; the app needs Contents: read). Files the issue as the automation app
+# (org AKENON_APP_ID / AKENON_APP_PRIVATE_KEY), so the issue-fields workflow puts it on the board,
+# assigned to the automation owners (rulesets/teams.json).
+name: claude-md-check
+
+on:
+  schedule:
+    - cron: "30 20 * * *"  # 20:30 UTC, after settings-check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-md-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: settings-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in as the read-only settings app
+        id: settings
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SETTINGS_APP_ID }}
+          private-key: ${{ secrets.SETTINGS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Check design sections in every CLAUDE.md
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.settings.outputs.token }}
+        run: |
+          pip install --quiet pyyaml
+          set +e
+          python3 scripts/design_refs.py > refs.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat refs.txt
+
+      - name: Log in as the automation app
+        id: automation
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: .github
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ steps.automation.outputs.token }}
+        run: python3 scripts/design_refs.py --report refs.txt "${{ steps.check.outputs.code }}"

@@ -1,0 +1,56 @@
+# Reusable: the security scans every repo runs (design 6.1, 6.4). Every repo (this one included, see
+# security-scan-caller.yml) calls it with:
+#
+#   on: { pull_request: {}, push: { branches: [main] } }
+#   jobs: { security-scan: { uses: akenon-studio/.github/.github/workflows/security-scan.yml@main } }
+#
+# Its jobs are the status checks "security-scan / secrets" (gitleaks over the full history, so a
+# key committed and then deleted still fails) and "security-scan / dependencies" (`pnpm audit` for
+# high and critical advisories in a repo with a pnpm-lock.yaml; Node from its .nvmrc). In a repo
+# without a lockfile the dependencies job passes with nothing to audit; it always runs, so it can
+# be required everywhere and starts auditing the day a lockfile is committed. A gitleaks false
+# positive is allowed in that repo's .gitleaks.toml or with a `gitleaks:allow` comment.
+name: security-scan
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Secret scan (full history)
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .
+
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Nothing to audit without a pnpm-lock.yaml
+        if: hashFiles('pnpm-lock.yaml') == ''
+        run: echo "No pnpm-lock.yaml in this repo; no dependencies to audit."
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('pnpm-lock.yaml') != ''
+      - uses: actions/setup-node@v4
+        if: hashFiles('pnpm-lock.yaml') != ''
+        with:
+          node-version-file: .nvmrc
+          # No cache: this job doesn't install packages, so there would be nothing to save.
+      - name: Dependency scan (high and critical)
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm audit --audit-level high
