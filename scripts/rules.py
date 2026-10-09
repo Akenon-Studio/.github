@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -203,3 +204,35 @@ def team_repo_permission(permissions):
         if permissions.get(name):
             return name
     return None
+
+
+# GitHub reads a repo's CODEOWNERS from the first of these that exists.
+CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
+WRITE_PERMISSIONS = ("push", "maintain", "admin")
+CODEOWNERS_TEAM = re.compile(r"(?<![\w.-])@([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)")
+
+
+def codeowners_teams(text):
+    """Slugs of this org's teams that a CODEOWNERS file names (comments ignored), in order."""
+    slugs = []
+    for line in text.splitlines():
+        for org, slug in CODEOWNERS_TEAM.findall(line.split("#", 1)[0]):
+            if org.lower() == ORG and slug.lower() not in slugs:
+                slugs.append(slug.lower())
+    return slugs
+
+
+def codeowners_team_differences(text, teams):
+    """Teams a CODEOWNERS file names that teams.json doesn't define, or defines without write
+    access. GitHub silently ignores a CODEOWNERS team that can't write, so its reviews never get
+    requested (handbook#102). The live team is checked against teams.json by team_differences."""
+    defined = {t["slug"].lower(): t for t in teams}
+    diffs = []
+    for slug in codeowners_teams(text):
+        t = defined.get(slug)
+        if t is None:
+            diffs.append(f"CODEOWNERS names team '{slug}', which is not in rulesets/teams.json")
+        elif t["repo_permission"] not in WRITE_PERMISSIONS:
+            diffs.append(f"CODEOWNERS names team '{slug}', which teams.json gives "
+                         f"{t['repo_permission']!r}; a code owner needs write ('push')")
+    return diffs
