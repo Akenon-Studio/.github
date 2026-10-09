@@ -211,7 +211,7 @@ jobs:
       - name: Docs covering the changed code are updated or still accurate
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           pip install --quiet pyyaml==6.0.2
-          python3 akenon-github/scripts/docs_covered.py repo --repo "${GITHUB_REPOSITORY#*/}" --base "$BASE_SHA"
+          # The checkout is the merge commit: its first parent is the base it was merged onto.
+          python3 akenon-github/scripts/docs_covered.py repo --repo "${GITHUB_REPOSITORY#*/}" --base HEAD^1

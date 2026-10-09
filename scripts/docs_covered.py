@@ -9,7 +9,9 @@ still accurate, with a ticked line in its body the reviewer sees:
 
 Decision records, dated audits and the handbook's docs (which cover other repos) are left out.
 
-Usage: scripts/docs_covered.py <root> --repo <name> --base <sha>   (reads PR_BODY)
+Usage: scripts/docs_covered.py <root> --repo <name> --base <commit>   (reads PR_BODY; in Actions the
+base is HEAD^1, the merge commit's base parent, which is current even when the event's base.sha is
+stale)
 In Actions it runs as the `docs-covered` job of the reusable pr-title workflow.
 """
 
@@ -21,14 +23,17 @@ import re
 import subprocess
 import sys
 
-from docs_check import HISTORY, RULES, front_matter, glob_re, matches, rules_for, split_globs
+from docs_check import (HISTORY, RULES, expand_braces, front_matter, glob_re, matches, rules_for,
+                        split_globs)
 
 TICK = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*Still accurate:\s*`?([^`\s]+)`?\s*$", re.M)
 
 
 def changed_files(root, base):
-    out = subprocess.run(["git", "diff", "--name-only", "-z", f"{base}...HEAD"], cwd=root,
-                         capture_output=True, text=True, check=True).stdout
+    """Files the PR changes. --no-renames lists a moved file at both paths, so leaving a covered
+    path counts too."""
+    out = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...HEAD"],
+                         cwd=root, capture_output=True, text=True, check=True).stdout
     return [f for f in out.split("\0") if f]
 
 
@@ -56,8 +61,8 @@ def stale_docs(changed, docs):
         if doc in changed_set:
             continue
         hits = [f for f in changed if not f.endswith(".md") and any(
-            glob_re(re.sub(r"\{[^}]*\}", "*", g)).match(f) or f.startswith(g.rstrip("/") + "/")
-            for g in globs)]
+            glob_re(e).match(f) or f.startswith(e.rstrip("/") + "/")
+            for g in globs for e in expand_braces(g))]
         if hits:
             found[doc] = hits
     return found

@@ -23,6 +23,7 @@ class StaleTest(unittest.TestCase):
     def test_brace_globs_and_unrelated_files(self):
         self.assertIn("docs/architecture/api.md", stale_docs(["apps/api/src/b.ts"], DOCS))
         self.assertEqual(stale_docs(["apps/web/x.ts"], DOCS), {})
+        self.assertEqual(stale_docs(["apps/api/src/c.ts"], DOCS), {})  # not in {a,b}
 
 
 class TickTest(unittest.TestCase):
