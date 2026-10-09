@@ -12,9 +12,8 @@ them; once fixed, the label goes and the comment says so. The issue body is the 
 board follows.
 
 Links between issues are checked too (design 6.8): every issue has a parent unless it is top level
-(an Intent; a parent of other issues, which is what phase steps and partner workstreams are; or the
-"Deferred work" parent, handbook#83, top level even while empty), a Bug report not yet triaged,
-or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report); an issue whose
+(an Epic, which only a person creates, design 6.6; or an Intent), a Bug report not yet triaged,
+or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report), and an epic has none; an issue whose
 board Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
 flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
 and a closed issue with open sub-issues is reopened with a comment naming them.
@@ -169,28 +168,25 @@ def confirmation_problems(issue_type, text, confirmed):
             "agent's batch."]
 
 
-# "Deferred work" (deferred findings and later-phase tasks): top level. Matched by number, so a
-# rename doesn't break it.
-DEFERRED = ("handbook", 83)
-NO_PARENT_TYPES = {"Intent", "Bug"}  # Bug: a report needs no parent until it is triaged
+# The top level (design 6.6): epics, which only a person creates, and intents.
+NO_PARENT_TYPES = {"Epic", "Intent", "Bug"}  # Bug: a report needs no parent until it is triaged
 
 
-def needs_parent(issue_type, sub_issues, repo="", number=0, by_bot=False):
-    """False for issues design 6.8 lets stand alone; `repo` is the repo name without the owner."""
-    return not (issue_type in NO_PARENT_TYPES or sub_issues or by_bot
-                or (repo.lower(), int(number)) == DEFERRED)
+def needs_parent(issue_type, by_bot=False):
+    """False for issues design 6.8 lets stand alone."""
+    return not (issue_type in NO_PARENT_TYPES or by_bot)
 
 
-def link_problems(issue_type, has_parent, sub_issues, status, blocked_by, repo="", number=0,
-                  by_bot=False):
-    """Problems with an issue's links (design 6.8, checks 3 and 4). `sub_issues` and `blocked_by`
-    are counts."""
+def link_problems(issue_type, has_parent, status, blocked_by, by_bot=False):
+    """Problems with an issue's links (design 6.8, checks 3 and 4). `blocked_by` is a count."""
     problems = []
-    if not has_parent and needs_parent(issue_type, sub_issues, repo, number, by_bot):
-        problems.append("The issue has no parent. Add it as a sub-issue of the phase step, partner "
-                        "workstream or feature it belongs to (deferred findings and later-phase "
-                        "work go under handbook#83, Deferred work). Only intents, untriaged bugs and parents of other "
-                        "issues stand alone.")
+    if not has_parent and needs_parent(issue_type, by_bot):
+        problems.append("The issue has no parent. Add it as a sub-issue of the epic, step or part "
+                        "it belongs to (deferred findings and later-phase work go under handbook#83, "
+                        "Deferred work). Only epics, intents and untriaged bugs stand alone.")
+    if has_parent and issue_type == "Epic":
+        problems.append("An epic is top level (design 6.6): remove its parent, or make it a Task "
+                        "if it is a part of another epic.")
     if status == "Blocked" and not blocked_by:
         problems.append("Status is **Blocked** but nothing is linked as blocking it. Add a "
                         "\"blocked by\" link (Relationships, in the sidebar) to the issue it waits on.")
@@ -317,9 +313,8 @@ def all_problems(issue, forms, status):
                                     issue["labelEvents"]["nodes"])
     subs = issue["subIssuesSummary"]
     return check(issue_type, issue["body"], forms) + link_problems(
-        issue_type, issue["parent"] is not None, len(issue["subIssues"]["nodes"]), status,
-        issue["blockedBy"]["totalCount"], issue["repository"]["nameWithOwner"].split("/")[1],
-        issue["number"], by_bot) + finished_parent_problems(
+        issue_type, issue["parent"] is not None, status, issue["blockedBy"]["totalCount"],
+        by_bot) + finished_parent_problems(
         issue["state"], subs["total"], subs["completed"]) + assignee_problems(
         author.get("login"), by_bot, *people_assigned(issue), status) + confirmation_problems(
         issue_type, issue["body"], confirmed)

@@ -1,6 +1,7 @@
 {
   "_comment": "The org's issue types (design 6.6), one per issue form; the form's `type:` must name one of these. apply-rules.py creates or updates them, verify-settings.py checks them. Colours are GitHub's: gray, blue, green, yellow, orange, red, pink, purple.",
   "types": [
+    {"name": "Epic", "description": "A phase, release or product launch; only a person creates one", "color": "green", "is_enabled": true},
     {"name": "Task", "description": "Work a person does, in any discipline", "color": "blue", "is_enabled": true},
     {"name": "Bug", "description": "An unexpected problem or behavior", "color": "red", "is_enabled": true},
     {"name": "Feature", "description": "Not used: features go through an Intent", "color": "gray", "is_enabled": false},

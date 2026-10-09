@@ -1,6 +1,7 @@
 {
   "_comment": "Labels every managed repo has ('all'), plus a repo's own. The issue forms add their label; the automation adds needs-fields, settings-drift and claude-md-drift; a person adds confirmed (design 6.1). apply-rules.py creates or updates them, verify-settings.py checks name, colour and description. Labels not listed (GitHub's defaults) are left alone.",
   "all": [
+    {"name": "epic", "color": "0e8a16", "description": "Epic form"},
     {"name": "task", "color": "ededed", "description": "Task form"},
     {"name": "bug", "color": "d73a4a", "description": "Bug report form"},
     {"name": "triage", "color": "fbca04", "description": "Bug not yet triaged into an intent or a task"},
