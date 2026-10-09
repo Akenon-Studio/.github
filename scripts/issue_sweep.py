@@ -25,7 +25,7 @@ import sys
 
 from board import find_board_fields, graphql, spec
 from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early,
-                          epic_stale, load_forms, problems_text, status_on, sync)
+                          epic_stale, load_forms, problems_text, reclose_due, status_on, sync)
 from rules import ORG, automation_owners, gh, managed_repos, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
@@ -60,7 +60,10 @@ def search(query, fields=ISSUE_SEARCH):
 def out_of_date(issue, forms, board_id, epic_field=False):
     """True if the issue's label or comment doesn't match what the checks find now, or (when the
     board has an Epic field) its Epic value doesn't match its parents, e.g. after a part moved to
-    another epic, which sends the work under it no event."""
+    another epic, which sends the work under it no event, or it is a parent to close again
+    (reclose_due)."""
+    if reclose_due(issue):
+        return True
     if epic_field and epic_stale(board_id, issue):
         return True
     problems = all_problems(issue, forms, status_on(board_id, issue))
