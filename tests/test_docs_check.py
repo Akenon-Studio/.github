@@ -76,8 +76,18 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(check(root, "code", RULE_SET), [])
 
     def test_front_matter(self):
-        self.assertEqual(front_matter(HEADER)["owner"], "Software")
-        self.assertIsNone(front_matter("# title\n"))
+        self.assertEqual(front_matter(HEADER)[0]["owner"], "Software")
+        self.assertEqual(front_matter("# title\n"), (None, None))
+        self.assertIn("not valid YAML", front_matter("---\ncovers: **/*.md\n---\n")[1])
+
+    def test_exceptions_get_the_header_check_and_braces_and_code_span_links(self):
+        root = repo({"src/a.ts": "", "src/b.ts": "", "odd/NOTE.md": "# no header\n",
+                     "docs/architecture/a.md": HEADER + "`src/{a,b}.ts`, `src/{a,c}.ts` and "
+                     "`[x](nowhere.md)` in code\n"})
+        found = " ".join(check(root, "code", RULE_SET))
+        self.assertIn("odd/NOTE.md: no owner/covers header", found)
+        self.assertNotIn("src/{a,b}.ts", found)
+        self.assertNotIn("nowhere.md", found)
 
 
 class RulesFileTest(unittest.TestCase):

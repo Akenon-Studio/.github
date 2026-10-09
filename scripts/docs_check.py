@@ -18,24 +18,31 @@ In Actions it runs as the `docs` job of the reusable pr-title workflow.
 """
 
 import argparse
+import functools
 import json
 import pathlib
 import posixpath
 import re
 import subprocess
 import sys
+import urllib.parse
 
 import yaml
 
 RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "docs.json"
 HISTORY = re.compile(r"(^|/)decisions/|(^|/)legal/audits/")
+HEADER_END = re.compile(r"\n---[ \t]*(?:\n|$)")
 FENCE = re.compile(r"^\s*(```|~~~)")
 CODE = re.compile(r"`([^`\n]+)`")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+BINARY = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2", ".ttf", ".otf", ".onnx",
+          ".bin", ".glb", ".gltf", ".ply", ".pdf", ".zip", ".mp3", ".wav", ".mp4", ".ico", ".exr",
+          ".hdr", ".ktx2", ".step", ".stl")
 ENV_VAR = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 FUNCTION = re.compile(r"^(?:[A-Za-z_$][\w$]*\.)*([A-Za-z_$][\w$]*)\(\)$")
 
 
+@functools.lru_cache(maxsize=None)
 def glob_re(pattern):
     """A glob as a regex: * within a folder, ** across folders."""
     out, i = "", 0
@@ -65,47 +72,53 @@ def rules_for(repo, rules):
 
 
 def front_matter(text):
-    """The YAML header as a dict, or None if the file doesn't start with one."""
+    """(header dict or None, error or None). None, None means the file has no header."""
     if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---", 4)
-    if end < 0:
-        return None
+        return None, None
+    end = HEADER_END.search(text, 3)
+    if end is None:
+        return None, "the header has no closing `---`"
     try:
-        data = yaml.safe_load(text[4:end])
-    except yaml.YAMLError:
-        return None
-    return data if isinstance(data, dict) else None
+        data = yaml.safe_load(text[4:end.start()]) or {}
+    except yaml.YAMLError as e:
+        return None, f"the header is not valid YAML ({str(e).splitlines()[0]}); quote globs, e.g. covers: \"**/*.md\""
+    return (data, None) if isinstance(data, dict) else (None, "the header is not a set of fields")
+
+
+def split_globs(value):
+    """`covers` as a list of globs: a YAML list, or one string split on commas outside {braces}."""
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [g.strip() for g in re.split(r",(?![^{]*\})", str(value or "")) if g.strip()]
 
 
 def header_problems(path, text, owners, files, check_covers):
-    fm = front_matter(text)
+    fm, error = front_matter(text)
+    if error:
+        return [f"{path}: {error}"]
     if fm is None:
         return [f"{path}: no owner/covers header (front matter with `owner:` and `covers:`)"]
     found = []
     if fm.get("owner") not in owners:
         found.append(f"{path}: `owner` is {fm.get('owner')!r}; use one of {', '.join(owners)}")
-    covers = fm.get("covers")
-    globs = covers if isinstance(covers, list) else [g.strip() for g in str(covers or "").split(",")]
-    globs = [g for g in globs if g]
+    globs = split_globs(fm.get("covers"))
     if not globs:
         found.append(f"{path}: `covers` is empty")
     elif check_covers:
         for g in globs:
-            if not any(glob_re(g).match(f) or f.startswith(g.rstrip("/") + "/") for f in files):
+            rx = glob_re(re.sub(r"\{[^}]*\}", "*", g))
+            if not any(rx.match(f) or f.startswith(g.rstrip("/") + "/") for f in files):
                 found.append(f"{path}: `covers` glob {g!r} matches no file")
     return found
 
 
 def body_lines(text):
     """(line number, text) outside front matter and fenced code blocks."""
-    lines = text.split("\n")
     start = 0
-    if text.startswith("---\n"):
-        end = next((i for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), 0)
-        start = end + 1
+    if text.startswith("---\n") and (end := HEADER_END.search(text, 3)):
+        start = text[:end.end()].count("\n")
     fenced = False
-    for n, line in enumerate(lines[start:], start + 1):
+    for n, line in enumerate(text.split("\n")[start:], start + 1):
         if FENCE.match(line):
             fenced = not fenced
             continue
@@ -119,10 +132,12 @@ def looks_like_path(token):
         return False
     t = re.sub(r":\d+(-\d+)?$", "", t)
     # Only tokens with a folder: a bare name (`CLAUDE.md`) names a kind of file, not one path.
-    return "/" in t and re.fullmatch(r"[\w.@*{}/-]+", t) is not None
+    return "/" in t and re.fullmatch(r"[\w.@*{},/-]+", t) is not None
 
 
 def path_exists(root, doc_dir, token, files, dirs):
+    """`files` and `dirs` are sets. A path under a top-level folder that no longer exists is not
+    reported: it can't be told from another repo's or a planned folder's path."""
     t = re.sub(r":\d+(-\d+)?$", "", token.strip()).rstrip("/")
     t = re.sub(r"\{[^}]*\}", "*", t)  # docs write `src/{a,b}.ts` for several files
     first = t.split("/")[0]
@@ -146,18 +161,18 @@ def ignored(root, token):
     return subprocess.run(["git", "check-ignore", "-q", "--no-index", t], cwd=root).returncode == 0
 
 
-def code_problems(path, text, root, files, dirs, code_text):
+def code_problems(path, text, root, files, dirs, words):
     found = []
     doc_dir = str(pathlib.PurePosixPath(path).parent)
     for n, line in body_lines(text):
         for token in CODE.findall(line):
             token = token.strip()
             if ENV_VAR.match(token):
-                if not re.search(rf"\b{re.escape(token)}\b", code_text):
+                if token not in words:
                     found.append(f"{path}:{n}: env var `{token}` appears nowhere in the code")
             elif (m := FUNCTION.match(token)):
                 # A warning, not a failure: docs also name library functions (three.js's wgslFn()).
-                if not re.search(rf"\b{re.escape(m.group(1))}\b", code_text):
+                if m.group(1) not in words:
                     print(f"::warning::{path}:{n}: `{token}` appears nowhere in this repo's code")
             elif (looks_like_path(token) and not path_exists(root, doc_dir, token, files, dirs)
                   and not ignored(root, token)):
@@ -169,10 +184,10 @@ def link_problems(path, text, files, dirs):
     found = []
     doc_dir = pathlib.PurePosixPath(path).parent
     for n, line in body_lines(text):
-        for target in LINK.findall(line):
+        for target in LINK.findall(CODE.sub("", line)):
             if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
                 continue
-            rel = target.split("#")[0].split("?")[0]
+            rel = urllib.parse.unquote(target.split("#")[0].split("?")[0])
             if not rel:
                 continue
             resolved = posixpath.normpath(rel[1:] if rel.startswith("/") else str(doc_dir / rel))
@@ -188,9 +203,13 @@ def check(root, repo, rules):
              if not matches(f, r["skip"])]
     dirs = {str(pathlib.PurePosixPath(f).parent) for f in files} | {
         "/".join(f.split("/")[:i]) for f in files for i in range(1, f.count("/") + 1)}
-    code_text = "\n".join((root / f).read_text(errors="ignore") for f in files
-                          if not f.endswith(".md") and (root / f).is_file()
-                          and (root / f).stat().st_size < 2_000_000)
+    words = set()  # every identifier in the repo's text files outside the docs, read once
+    for f in files:
+        p = root / f
+        if f.endswith(".md") or f.lower().endswith(BINARY) or not p.is_file() or p.stat().st_size > 2_000_000:
+            continue
+        words |= set(re.findall(r"[A-Za-z_$][\w$]*", p.read_text(errors="ignore")))
+    files = set(files)
     found = []
     for path in (f for f in files if f.endswith(".md")):
         exception = r["exceptions"].get(path)
@@ -201,13 +220,13 @@ def check(root, repo, rules):
                          "to rulesets/docs.json in the .github repo")
             continue
         text = (root / path).read_text(errors="ignore")
-        if matches(path, r["docs"]) and not matches(path, r["no_header"]) and not (
+        if (matches(path, r["docs"]) or exception) and not matches(path, r["no_header"]) and not (
                 exception and exception.get("no_header")):
             found += header_problems(path, text, rules["owners"], files, repo != "handbook")
         # The handbook speaks for every repo and for planned layout, so its paths can't resolve
         # here; decision records and dated audits are history (6.5 item 5).
         if repo != "handbook" and not HISTORY.search(path):
-            found += code_problems(path, text, root, files, dirs, code_text)
+            found += code_problems(path, text, root, files, dirs, words)
         found += link_problems(path, text, files, dirs)
     return found
 
