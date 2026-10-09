@@ -29,6 +29,7 @@ def current_assignees(repo, number, token):
     request = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{number}",
                                      headers={"Authorization": f"Bearer {token}",
                                               "Accept": "application/vnd.github+json"})
+    # nosemgrep: dynamic-urllib-use-detected -- always https://api.github.com/ plus a fixed path
     with urllib.request.urlopen(request, timeout=10) as response:
         return [a["login"] for a in json.load(response)["assignees"]]
 
