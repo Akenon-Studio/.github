@@ -1,0 +1,107 @@
+{
+  "_comment": "The fixed map of docs (design 6.5 item 1), read by scripts/docs_check.py ('pr-title / docs'). 'all' applies to every managed repo; a repo's own entry adds to it. 'docs' are globs where documents may live, and each needs an owner/covers header. 'no_header' are allowed files that need none (a repo's root README.md and CLAUDE.md, templates). 'skip' are paths the check ignores entirely (frozen archives, generated files). An 'exceptions' entry allows one more file outside the map: it says why, and the PR adding it is the docs owner's approval. Globs: * within a folder, ** across folders.",
+  "owners": [
+    "Software",
+    "Animation",
+    "Hardware",
+    "Brand",
+    "Marketing",
+    "Legal and admin"
+  ],
+  "all": {
+    "docs": [
+      "docs/architecture/**/*.md",
+      "docs/decisions/**/*.md",
+      "docs/runbooks/**/*.md"
+    ],
+    "no_header": [
+      "README.md",
+      "CLAUDE.md",
+      "CHANGELOG.md",
+      ".github/PULL_REQUEST_TEMPLATE.md",
+      ".github/ISSUE_TEMPLATE/**"
+    ],
+    "skip": [
+      "**/node_modules/**",
+      ".claude/**"
+    ]
+  },
+  "platform": {
+    "docs": [
+      "apps/*/README.md",
+      "packages/*/README.md"
+    ],
+    "exceptions": [
+      {
+        "path": "apps/web/src/fonts/README.md",
+        "why": "Says where the self-hosted font files come from and how they were subset; it sits with the files it explains (platform#39)"
+      }
+    ]
+  },
+  "animations": {
+    "docs": [
+      "animations/*/README.md",
+      "templates/*/README.md",
+      "animations/*/tools/*/README.md"
+    ]
+  },
+  "peras": {
+    "docs": [
+      "core/*/README.md",
+      "roles/*/README.md",
+      "profiles/*/README.md"
+    ],
+    "exceptions": [
+      {
+        "path": "core/workspace/CLAUDE.md",
+        "why": "The workspace-level CLAUDE.md that new-workspace setup links into ~/Akenon-Studio (design 6.8); agent rules, not a doc",
+        "no_header": true
+      }
+    ]
+  },
+  "hardware": {
+    "docs": [
+      "*/README.md",
+      "*/docs/architecture/**/*.md",
+      "*/docs/decisions/**/*.md",
+      "*/docs/runbooks/**/*.md"
+    ],
+    "skip": [
+      "archive/**"
+    ]
+  },
+  "firmware": {
+    "docs": [
+      "*/README.md",
+      "*/docs/architecture/**/*.md",
+      "*/docs/decisions/**/*.md",
+      "*/docs/runbooks/**/*.md"
+    ]
+  },
+  "handbook": {
+    "docs": [
+      "design.md",
+      "company/**/*.md",
+      "product/**/*.md",
+      "engineering/**/*.md",
+      "decisions/**/*.md",
+      "onboarding/**/*.md",
+      "legal/**/*.md"
+    ],
+    "no_header": [
+      "design.md"
+    ]
+  },
+  ".github": {
+    "no_header": [
+      "profile/README.md",
+      "SECURITY.md",
+      "CONTRIBUTING.md"
+    ]
+  },
+  ".github-private": {
+    "no_header": [
+      "profile/README.md"
+    ]
+  }
+}
