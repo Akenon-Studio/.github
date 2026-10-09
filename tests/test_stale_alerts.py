@@ -38,20 +38,25 @@ class FixPrTest(unittest.TestCase):
         stale_alerts.try_gh = self.real
 
     def fake(self, result):
-        def try_gh(path):
-            self.calls.append(path)
+        def try_gh(*args):
+            self.calls.append(args)
             return result
         stale_alerts.try_gh = try_gh
 
-    def test_one_search_per_package_and_titles_only(self):
-        self.fake({"total_count": 1})
+    def test_one_read_per_repo_and_whole_word_titles(self):
+        self.fake([{"title": "fix(deps): update dependency braces to v3.0.4",
+                    "user": {"login": "renovate[bot]"}},
+                   {"title": "fix: braces by hand", "user": {"login": "someone"}}])
         cache = {}
         self.assertTrue(fix_pr(alert("2026-10-01T00:00:00Z"), cache))
-        self.assertTrue(fix_pr(alert("2026-10-02T00:00:00Z"), cache))
+        self.assertFalse(fix_pr(dict(alert("2026-10-01T00:00:00Z"), package="brace"), cache))
         self.assertEqual(len(self.calls), 1)
-        self.assertIn("in%3Atitle", self.calls[0])
 
-    def test_a_failed_search_is_unknown_not_no_pr(self):
+    def test_a_persons_pr_does_not_count(self):
+        self.fake([{"title": "fix: update braces", "user": {"login": "someone"}}])
+        self.assertFalse(fix_pr(alert("2026-10-01T00:00:00Z"), {}))
+
+    def test_unreadable_prs_are_unknown_not_no_pr(self):
         self.fake(None)
         self.assertIsNone(fix_pr(alert("2026-10-01T00:00:00Z"), {}))
 

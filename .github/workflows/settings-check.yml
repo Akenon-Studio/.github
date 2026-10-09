@@ -78,6 +78,8 @@ jobs:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          permission-issues: write
+          permission-pull-requests: read
 
       - name: Open, update or close the stale-alerts issue
         env:

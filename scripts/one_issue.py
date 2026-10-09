@@ -27,17 +27,19 @@ def update(issue, text):
     return change or None
 
 
-def open_issue(repo, label):
+def open_issue(repo, label, title=None):
     # The issues endpoint lists PRs too, and Renovate's PRs share the `dependencies` label: skip them.
     found = [i for i in gh(f"repos/{repo}/issues?labels={label}&state=open&per_page=100") or []
-             if "pull_request" not in i]
+             if "pull_request" not in i and (title is None or i["title"] == title)]
     return found[0] if found else None
 
 
-def keep(repo, label, title, text, passed="The daily check passes again. Closing."):
+def keep(repo, label, title, text, passed="The daily check passes again. Closing.",
+         title_match=False):
     """Open or update the issue with `text`, or close it when `text` is None. Returns what it did,
-    as a line to print."""
-    issue = open_issue(repo, label)
+    as a line to print. With title_match, the issue must also have `title` (for a label other
+    issues share, like `dependencies`)."""
+    issue = open_issue(repo, label, title if title_match else None)
     if text is None:
         if not issue:
             return "nothing to report"

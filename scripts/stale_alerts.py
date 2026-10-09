@@ -16,8 +16,8 @@ In Actions both run in the daily settings-check workflow.
 
 import datetime
 import json
+import re
 import sys
-import urllib.parse
 
 from one_issue import keep
 from rules import ORG, managed_repos, try_gh
@@ -31,22 +31,19 @@ STALE_DAYS = 3
 def collect(path):
     alerts, skipped = [], []
     for repo in managed_repos():
-        page = 1
-        while True:
-            batch = try_gh(f"repos/{ORG}/{repo}/dependabot/alerts?state=open&per_page=100&page={page}")
-            if batch is None:
-                skipped.append(repo)
-                break
-            for a in batch:
-                fixed = (a.get("security_vulnerability") or {}).get("first_patched_version") or {}
-                alerts.append({"repo": repo, "package": a["dependency"]["package"]["name"],
-                               "severity": a["security_advisory"]["severity"],
-                               "summary": a["security_advisory"]["summary"],
-                               "created_at": a["created_at"], "url": a["html_url"],
-                               "fixed_in": fixed.get("identifier")})
-            if len(batch) < 100:
-                break
-            page += 1
+        # This endpoint pages by cursor (Link header), which `gh --paginate` follows.
+        pages = try_gh("--paginate", "--slurp",
+                       f"repos/{ORG}/{repo}/dependabot/alerts?state=open&per_page=100")
+        if pages is None:
+            skipped.append(repo)
+            continue
+        for a in (a for page in pages for a in page):
+            fixed = (a.get("security_vulnerability") or {}).get("first_patched_version") or {}
+            alerts.append({"repo": repo, "package": a["dependency"]["package"]["name"],
+                           "severity": a["security_advisory"]["severity"],
+                           "summary": a["security_advisory"]["summary"],
+                           "created_at": a["created_at"], "url": a["html_url"],
+                           "fixed_in": fixed.get("identifier")})
     with open(path, "w") as f:
         json.dump(alerts, f, indent=2)
     print(f"{len(alerts)} open alert(s)")
@@ -63,16 +60,24 @@ def stale(alerts, now, days=STALE_DAYS):
             if datetime.datetime.fromisoformat(a["created_at"].replace("Z", "+00:00")) < cutoff]
 
 
+def renovate_titles(repo, cache):
+    """Titles of Renovate's open PRs in a repo (at most 5 are open at once, design 6.4), read once
+    per repo; None if they can't be read."""
+    if repo not in cache:
+        prs = try_gh(f"repos/{ORG}/{repo}/pulls?state=open&per_page=100")
+        cache[repo] = None if prs is None else [
+            p["title"] for p in prs if (p.get("user") or {}).get("login") == "renovate[bot]"]
+    return cache[repo]
+
+
 def fix_pr(alert, cache):
-    """True if Renovate has an open PR in the alert's repo with the package in its title, None if
-    the search failed (shown as unknown, never as "no PR"). One search per (repo, package)."""
-    key = (alert["repo"], alert["package"])
-    if key not in cache:
-        q = (f'repo:{ORG}/{alert["repo"]} is:pr is:open author:app/renovate '
-             f'in:title "{alert["package"]}"')
-        found = try_gh(f"search/issues?q={urllib.parse.quote(q)}&per_page=1")
-        cache[key] = None if found is None else found.get("total_count", 0) > 0
-    return cache[key]
+    """True if a Renovate PR in the alert's repo names the package as a whole word in its title,
+    None if the PRs couldn't be read (shown as unknown, never as "no PR")."""
+    titles = renovate_titles(alert["repo"], cache)
+    if titles is None:
+        return None
+    word = re.compile(rf"(?<![\w@/.-]){re.escape(alert['package'])}(?![\w/.-])")
+    return any(word.search(t) for t in titles)
 
 
 def plain(text):
@@ -126,7 +131,7 @@ def report(path, now=None):
         pr = fix_pr(a, cache)
         if pr is not True:
             waiting.append({**a, "pr_unknown": pr is None})
-    print(keep(REPO, LABEL, TITLE, body(waiting) if waiting else None,
+    print(keep(REPO, LABEL, TITLE, body(waiting) if waiting else None, title_match=True,
                passed="No alert is waiting without a fix PR any more. Closing."))
 
 
