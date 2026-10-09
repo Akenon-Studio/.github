@@ -32,6 +32,16 @@ class DiffTest(unittest.TestCase):
     def test_added_lines_are_numbered_in_the_new_file(self):
         self.assertEqual(added_lines(split_diff(DIFF)["src/a.ts"]), {2, 3})
 
+    def test_an_added_line_starting_with_plus_plus_counts(self):
+        diff = ("diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1,1 +1,3 @@\n x\n"
+                "+++i;\n+y\n")
+        self.assertEqual(added_lines(diff), {2, 3})
+
+    def test_no_newline_marker_is_not_a_line(self):
+        diff = ("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,2 +1,3 @@\n x\n-y\n"
+                "\\ No newline at end of file\n+y\n+z\n")
+        self.assertEqual(added_lines(diff), {2, 3})
+
     def test_a_large_diff_is_cut_by_whole_files(self):
         files = {"a": "x" * 150_000, "b": "y" * 100_000}
         text, left_out = review_input(files)
@@ -52,6 +62,13 @@ class PayloadTest(unittest.TestCase):
         self.assertIn("`nope.ts:1`", out["body"])
         self.assertIn("Not reviewed (diff too large): `big.ts`", out["body"])
         self.assertTrue(out["body"].startswith("**AI review (advisory)**"))
+
+    def test_a_line_already_commented_on_is_not_repeated(self):
+        files = split_diff(DIFF)
+        review = {"summary": "s", "comments": [{"path": "src/a.ts", "line": 2, "body": "again"}]}
+        out = to_github(review, files, [], already={("src/a.ts", 2)})
+        self.assertEqual(out["comments"], [])
+        self.assertNotIn("again", out["body"])
 
     def test_it_never_approves(self):
         self.assertEqual(to_github({"summary": "fine", "comments": []}, {}, [])["event"], "COMMENT")

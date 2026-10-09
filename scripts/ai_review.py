@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -84,13 +85,16 @@ def split_diff(diff):
 
 
 def added_lines(file_diff):
-    """Line numbers (in the new file) that a file's diff adds."""
-    added, n = set(), 0
+    """Line numbers (in the new file) that a file's diff adds. Lines before the first hunk are the
+    file header (`+++ b/...`); inside a hunk every `+` line is content, even `+++i;`."""
+    added, n, in_hunk = set(), 0, False
     for line in file_diff.splitlines():
         if line.startswith("@@"):
             m = re.search(r"\+(\d+)", line)
-            n = int(m.group(1)) if m else 0
-        elif line.startswith("+") and not line.startswith("+++"):
+            n, in_hunk = (int(m.group(1)) if m else 0), True
+        elif not in_hunk or line.startswith("\\"):  # header, or "\ No newline at end of file"
+            continue
+        elif line.startswith("+"):
             added.add(n)
             n += 1
         elif not line.startswith("-"):
@@ -109,11 +113,14 @@ def review_input(files):
     return text, left_out
 
 
-def to_github(review, files, left_out):
-    """The GitHub review payload: inline comments that land on added lines; the rest go in the body."""
-    inline, stray = [], []
+def to_github(review, files, left_out, already=frozenset()):
+    """The GitHub review payload: inline comments that land on added lines; the rest go in the body.
+    A (path, line) in `already` (commented on by an earlier review of this PR) is not repeated."""
+    inline, stray, added = [], [], {p: added_lines(t) for p, t in files.items()}
     for c in review.get("comments", []):
-        if c.get("path") in files and c.get("line") in added_lines(files[c["path"]]):
+        if (c.get("path"), c.get("line")) in already:
+            continue
+        if c.get("line") in added.get(c.get("path"), ()):
             inline.append({"path": c["path"], "line": c["line"], "side": "RIGHT", "body": c["body"]})
         else:
             stray.append(f"- `{c.get('path')}:{c.get('line')}`: {c.get('body')}")
@@ -133,6 +140,14 @@ def github(path, token, method="GET", body=None, accept="application/vnd.github+
     with urllib.request.urlopen(req, timeout=60) as res:
         raw = res.read().decode()
     return raw if accept.endswith("diff") else (json.loads(raw) if raw else None)
+
+
+def earlier_comments(repo, number, token):
+    """(path, line) of inline comments this workflow already made on the PR, so a new push does not
+    repeat them."""
+    comments = github(f"repos/{repo}/pulls/{number}/comments?per_page=100", token) or []
+    return {(c["path"], c.get("line")) for c in comments
+            if c["user"]["login"] == "github-actions[bot]"}
 
 
 def github_oidc_token():
@@ -177,17 +192,27 @@ def main(argv):
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
-    files = split_diff(github(f"repos/{repo}/pulls/{number}", token,
-                              accept="application/vnd.github.diff"))
-    if not files:
+    try:
+        diff = github(f"repos/{repo}/pulls/{number}", token, accept="application/vnd.github.diff")
+    except urllib.error.HTTPError as e:
+        if e.code != 406:
+            raise
+        diff = None  # GitHub refuses diffs over its size limits
+    files = split_diff(diff) if diff is not None else {}
+    if diff is not None and not files:
         print("Nothing to review: the PR changes only generated or lock files.")
         return 0
-    try:
-        claude_md = open("CLAUDE.md").read()
-    except OSError:
-        claude_md = ""
     text, left_out = review_input(files)
-    review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files, left_out)
+    if not text:
+        review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
+                  "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
+    else:
+        try:
+            claude_md = open("CLAUDE.md").read()
+        except OSError:
+            claude_md = ""
+        review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
+                           left_out, earlier_comments(repo, number, token))
     github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST",
            body={**review, "commit_id": pr["head"]["sha"]})
     print(f"Posted a review with {len(review['comments'])} inline comment(s).")
