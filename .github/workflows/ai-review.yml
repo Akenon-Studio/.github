@@ -5,12 +5,13 @@
 #   permissions: { contents: read, pull-requests: write, id-token: write }
 #   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main } }
 #
-# No API key: the action swaps the run's GitHub OIDC token for a short-lived Anthropic token
+# scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
+# cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
 # (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request runs
 # of those four repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
-# org variables ANTHROPIC_*, which are identifiers, not secrets. Comments come from the workflow's
-# own token (github-actions[bot]). Skipped: drafts, fork PRs (GitHub gives them no OIDC token) and
-# Renovate's dependency PRs.
+# org variables ANTHROPIC_*, which are identifiers, not secrets. The review is posted with the
+# workflow's own token (github-actions[bot]) as one review with event COMMENT. Skipped: drafts,
+# fork PRs (GitHub gives them no OIDC token) and Renovate's dependency PRs.
 name: ai-review
 
 on:
@@ -39,88 +40,37 @@ jobs:
         if: env.WANTED != 'true'
         run: echo "Skipped, a draft, fork PR or Renovate update."
 
-      - uses: actions/checkout@v4
+      - name: Get the repo (for its CLAUDE.md)
         if: env.WANTED == 'true'
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check the federated sign-in
-        # Exchanges a GitHub OIDC token for an Anthropic token and prints only the outcome, so a
-        # refused exchange shows its reason here (the review step hides its output).
+      - name: Get the script
         if: env.WANTED == 'true'
-        env:
-          RULE: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
-          ORG: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
-          SVAC: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
-          WS: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-        run: |
-          jwt=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value)
-          echo "::add-mask::$jwt"
-          jq -n --arg a "$jwt" --arg r "$RULE" --arg o "$ORG" --arg s "$SVAC" --arg w "$WS" \
-            '{grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: $a,
-              federation_rule_id: $r, organization_id: $o, service_account_id: $s, workspace_id: $w}' \
-            | curl -sS https://api.anthropic.com/v1/oauth/token -H "content-type: application/json" -d @- \
-            > "$RUNNER_TEMP/exchange.json"
-          jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)' "$RUNNER_TEMP/exchange.json"
-          token=$(jq -r '.access_token // empty' "$RUNNER_TEMP/exchange.json")
-          rm "$RUNNER_TEMP/exchange.json"
-          [ -n "$token" ] || exit 1
-          echo "::add-mask::$token"
-          curl -sS https://api.anthropic.com/v1/messages -H "authorization: Bearer $token" \
-            -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
-            -d '{"model": "claude-sonnet-5-5", "max_tokens": 5, "messages": [{"role": "user", "content": "Say ok"}]}' \
-            | jq '{type, model, stop_reason, error}'
-          echo "Large max_tokens:"
-          curl -sS https://api.anthropic.com/v1/messages -H "authorization: Bearer $token" \
-            -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
-            -d '{"model": "claude-sonnet-5-5", "max_tokens": 64000, "messages": [{"role": "user", "content": "Say ok"}]}' \
-            | jq '{type, stop_reason, error}'
-          echo "As Claude Code:"
-          curl -sS https://api.anthropic.com/v1/messages -H "authorization: Bearer $token" \
-            -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
-            -H "user-agent: claude-cli/2.0.0 (external, sdk-ts)" -H "x-app: cli" \
-            -d '{"model": "claude-sonnet-5-5", "max_tokens": 5, "messages": [{"role": "user", "content": "Say ok"}]}' \
-            | jq '{type, stop_reason, error}'
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the script; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: .akenon-github
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: env.WANTED == 'true'
+        with:
+          python-version: "3.12"
 
       - name: Review
         if: env.WANTED == 'true'
-        uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
-          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
-          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
-          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-          github_token: ${{ github.token }}
-          track_progress: false
-          show_full_output: true
-          claude_args: |
-            --model claude-sonnet-5-5
-            --max-turns 30
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-
-            You are the first-pass reviewer for Akenon Studio (design 6.4). A person approves every
-            PR; you only comment and you never approve. Read the repo's CLAUDE.md first; the design
-            it points to is handbook/design.md in the Akenon-Studio/handbook repo.
-
-            Read the diff (`gh pr diff`) and the files around it, then look for:
-            1. Bugs: wrong logic, unhandled errors and edge cases, race conditions.
-            2. Security: injection, secrets, unsafe input, auth mistakes, anything that sends user
-               data or audio off the device (design 3.11).
-            3. Architecture fit: code in the wrong layer or package, a new dependency between
-               packages or apps, a provider SDK outside its adapter.
-            4. Wasted performance: allocations in render or audio loops, listeners or GPU resources
-               never released, blocking calls on Electron's main process, a query per item,
-               repeated work that could be cached.
-            5. Docs: a paragraph the change makes wrong, duplicated text, a doc that isn't needed.
-
-            Post each specific problem as an inline comment on its line, saying what goes wrong
-            and the fix. Then post one top-level comment (`gh pr comment`) that starts with
-            "AI review (advisory)" and lists what you checked and what you found, most serious
-            first. If you find nothing, say so in one line. No praise, no style nits a linter
-            would catch, and no comments on lines the PR doesn't change unless the change breaks
-            them.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          pip install --quiet "anthropic==1.13.0"
+          python3 .akenon-github/scripts/ai_review.py
