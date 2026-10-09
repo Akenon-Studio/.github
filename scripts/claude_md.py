@@ -12,7 +12,8 @@ and fenced code blocks are not rules. Dead references:
   in this repo's or the .github repo's workflows);
 - "design 6.8" or "section 6.8" with no such heading in handbook/design.md. Checked only where the
   design can be read (the handbook repo, and local runs such as the workspace CLAUDE.md); elsewhere
-  the script says it skipped them.
+  the script says it skipped them, and the daily claude-md-check workflow checks every repo's
+  CLAUDE.md against the current design instead (scripts/design_refs.py).
 
 Usage: scripts/claude_md.py <CLAUDE.md> [--root DIR] [--repo NAME] [--design design.md]
 --root is where root-relative paths start (default: the file's folder); --repo picks that repo's
@@ -89,7 +90,24 @@ def known_checks(repo, workflow_dirs):
 
 
 def design_sections(design):
-    return set(SECTION_HEADING.findall(design.read_text())) if design else None
+    return sections_in(design.read_text()) if design else None
+
+
+def sections_in(design_text):
+    """The section numbers design.md has headings for, e.g. {'6', '6.8'}."""
+    return set(SECTION_HEADING.findall(design_text))
+
+
+def dead_sections(rule, sections):
+    """Design sections a rule names that `sections` doesn't have, in order."""
+    return [ref for group in SECTION_REF.findall(rule) for ref in re.split(r",\s*|\s+and\s+", group)
+            if ref not in sections]
+
+
+def section_problems(text, sections):
+    """Only the design-section part of problems(): 'line N: ...' for each dead reference."""
+    return list(dict.fromkeys(f"line {number}: design section {ref} does not exist."
+                              for number, rule in rules(text) for ref in dead_sections(rule, sections)))
 
 
 def problems(text, here, root, checks, sections, in_ci=False):
@@ -117,10 +135,8 @@ def problems(text, here, root, checks, sections, in_ci=False):
                     and not (tag and token in checks):
                 found.append(f"line {number}: `{token}` does not exist.")
         if sections is not None:
-            for group in SECTION_REF.findall(rule):
-                for ref in re.split(r",\s*|\s+and\s+", group):
-                    if ref not in sections:
-                        found.append(f"line {number}: design section {ref} does not exist.")
+            for ref in dead_sections(rule, sections):
+                found.append(f"line {number}: design section {ref} does not exist.")
     return list(dict.fromkeys(found))
 
 

@@ -7,7 +7,8 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
 from issue_fields import check, load_forms  # noqa: E402
-from report_drift import body, new_issue, notes, problems, update  # noqa: E402
+from one_issue import new_issue, update  # noqa: E402
+from report_drift import LABEL, TITLE, body, notes, problems  # noqa: E402
 
 OUTPUT = """note: planning is not managed by rulesets/repos.txt and not archived
 
@@ -35,7 +36,10 @@ class ReportDriftTest(unittest.TestCase):
 
 
     def test_new_issue_is_assigned_to_the_automation_owners(self):
-        self.assertEqual(new_issue(body(OUTPUT))["assignees"], ["RuvinduH"])
+        made = new_issue(TITLE, LABEL, body(OUTPUT))
+        self.assertEqual(made["assignees"], ["RuvinduH"])
+        self.assertEqual(made["labels"], ["settings-drift"])
+        self.assertEqual(made["type"], "Task")
 
     def test_update_reassigns_an_unassigned_issue(self):
         text = body(OUTPUT)

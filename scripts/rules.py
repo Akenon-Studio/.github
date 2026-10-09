@@ -1,5 +1,6 @@
 """Shared code for apply-rules.py and verify-settings.py. Talks to GitHub through the gh CLI."""
 
+import base64
 import json
 import os
 import pathlib
@@ -30,6 +31,25 @@ def try_gh(*args):
     """Like gh() for reads, but None instead of exiting when this token can't read it."""
     res = subprocess.run([os.environ.get("GH", "gh"), "api", *args], capture_output=True, text=True)
     return json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else None
+
+
+def read_file(repo, path):
+    """A file's text from a repo's default branch, or None if this token can't read it (without
+    contents access, callers skip what needs it)."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/contents/{path}"],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    return base64.b64decode(json.loads(res.stdout)["content"]).decode()
+
+
+def repo_files(repo):
+    """Every file path on a repo's default branch, or None if this token can't read it."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    return {t["path"] for t in json.loads(res.stdout)["tree"]}
 
 
 def load(name):

@@ -10,19 +10,15 @@ with write access, that every repo's caller workflows listen to the same events 
 repo's, and any repo in the org that is neither managed nor archived.
 """
 
-import base64
-import json
-import os
 import re
-import subprocess
 import sys
 
 from board import board_differences, find_board, spec
 from rules import (CODEOWNERS_PATHS, ORG, ROOT, codeowners_team_differences, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
                    desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
-                   managed_repos, repo_rulesets, repo_settings, team_differences, team_repo_permission,
-                   try_gh)
+                   managed_repos, read_file, repo_files, repo_rulesets, repo_settings, team_differences,
+                   team_repo_permission, try_gh)
 
 
 def missing_from(text, repos, pattern, skip=()):
@@ -39,25 +35,6 @@ def triggers(text):
     """The event types a caller workflow listens to, as a set (empty if it names none)."""
     found = TRIGGERS.search(text or "")
     return {t.strip() for t in found.group(1).split(",")} if found else set()
-
-
-def read_file(repo, path):
-    """A file's text from a repo's default branch, or None if this token can't read it (the daily
-    run's read-only app has no contents access, so that run skips these checks)."""
-    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/contents/{path}"],
-                         capture_output=True, text=True)
-    if res.returncode != 0:
-        return None
-    return base64.b64decode(json.loads(res.stdout)["content"]).decode()
-
-
-def repo_files(repo):
-    """Every file path on a repo's default branch, or None if this token can't read it."""
-    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],
-                         capture_output=True, text=True)
-    if res.returncode != 0:
-        return None
-    return {t["path"] for t in json.loads(res.stdout)["tree"]}
 
 
 def main():

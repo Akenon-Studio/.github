@@ -5,13 +5,14 @@ Usage: scripts/report_drift.py <verify output file> <verify exit code>
 Exit code 1 (drift): open the `settings-drift` issue, or update it if the problems changed.
 Exit code 0: close any open one with a comment. Anything else: fail, since the check itself broke.
 The issue body is a filled-in Task form, so the issue-fields automation puts it on the board. It is
-assigned to the automation owners (rulesets/teams.json, design 6.8), so the drift reaches a person;
-an update re-adds them if nobody is assigned.
+assigned to the automation owners (rulesets/teams.json, design 6.8; scripts/one_issue.py), so the
+drift reaches a person; an update re-adds them if nobody is assigned.
 """
 
 import sys
 
-from rules import ORG, automation_owners, ensure_label, gh
+from one_issue import keep
+from rules import ORG
 
 REPO = f"{ORG}/.github"
 LABEL = "settings-drift"
@@ -65,53 +66,14 @@ Design 6.2; `.github/workflows/settings-check.yml`
 _No response_"""
 
 
-def new_issue(text):
-    """The REST payload that opens the drift issue."""
-    return {"title": TITLE, "body": text, "type": "Task", "labels": [LABEL],
-            "assignees": automation_owners()}
-
-
-def update(issue, text):
-    """The REST PATCH payload for an open drift issue, or None if nothing changes."""
-    change = {}
-    if (issue["body"] or "").replace("\r\n", "\n") != text:
-        change["body"] = text
-    if not issue.get("assignees"):
-        change["assignees"] = automation_owners()
-    return change or None
-
-
-def open_issue():
-    found = gh(f"repos/{REPO}/issues?labels={LABEL}&state=open&per_page=5") or []
-    return found[0] if found else None
-
-
 def main():
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     output = open(sys.argv[1]).read()
     code = int(sys.argv[2])
-    issue = open_issue()
-    if code == 0:
-        if issue:
-            gh(f"repos/{REPO}/issues/{issue['number']}/comments", "-X", "POST",
-               body={"body": "The daily check passes again. Closing."})
-            gh(f"repos/{REPO}/issues/{issue['number']}", "-X", "PATCH",
-               body={"state": "closed", "state_reason": "completed"})
-            print(f"closed #{issue['number']}")
-        return
-    if code != 1:
+    if code not in (0, 1):
         sys.exit(f"verify-settings.py itself failed (exit {code}); see the log above")
-    text = body(output)
-    if issue is None:
-        ensure_label(REPO, LABEL)
-        made = gh(f"repos/{REPO}/issues", "-X", "POST", body=new_issue(text))
-        print(f"opened #{made['number']}")
-    elif update(issue, text):
-        gh(f"repos/{REPO}/issues/{issue['number']}", "-X", "PATCH", body=update(issue, text))
-        print(f"updated #{issue['number']}")
-    else:
-        print(f"#{issue['number']} already lists these problems")
+    print(keep(REPO, LABEL, TITLE, body(output) if code == 1 else None))
 
 
 if __name__ == "__main__":
