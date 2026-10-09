@@ -12,7 +12,7 @@ never code, secrets or product plans.
 | `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps, missing links and missing assignees with `needs-fields` |
 | `scripts/issue_fields.py` | What that workflow runs; the forms are its only definition of what is required |
 | `tests/` | Unit tests (`python3 -m unittest discover tests`), run by `.github/workflows/tests.yml` |
-| `rulesets/` | Branch and tag rules, repo merge settings, labels, issue types, teams (`teams.json`: the automation owners), and which repos they apply to |
+| `rulesets/` | Branch and tag rules, repo merge settings, labels, issue types, teams (`teams.json`: the automation owners and engineers), and which repos they apply to |
 | `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only) |
 | `rulesets/board.json` | The org project board: fields, linked repos and the nine views |
 | `scripts/apply-board.py` | Creates or updates the board from `rulesets/board.json` |

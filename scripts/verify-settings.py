@@ -5,7 +5,8 @@ Usage: scripts/verify-settings.py
 Reports: org settings, issue types and teams (rulesets/teams.json), each managed repo's merge
 settings, rulesets and labels, the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
-(rulesets/repo-lists.json), that every repo's caller workflows listen to the same events as this
+(rulesets/repo-lists.json), that every team a repo's CODEOWNERS names is in rulesets/teams.json
+with write access, that every repo's caller workflows listen to the same events as this
 repo's, and any repo in the org that is neither managed nor archived.
 """
 
@@ -17,9 +18,10 @@ import subprocess
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (ORG, ROOT, desired_labels, desired_rulesets, differences, gh, issue_type_differences,
-                   label_differences, load, managed_repos, repo_rulesets, repo_settings,
-                   team_differences, team_repo_permission, try_gh)
+from rules import (CODEOWNERS_PATHS, ORG, ROOT, codeowners_team_differences, desired_labels,
+                   desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
+                   managed_repos, repo_rulesets, repo_settings, team_differences, team_repo_permission,
+                   try_gh)
 
 
 def missing_from(text, repos, pattern, skip=()):
@@ -121,6 +123,11 @@ def main():
             print(f"note: can't read {repo}'s files; required files not checked")
             continue
         problems += [f"{repo}: missing {f}" for f in load("repo-lists.json")["required_files"] if f not in files]
+        owners = next((p for p in CODEOWNERS_PATHS if p in files), None)
+        text = read_file(repo, owners) if owners else None
+        if text is not None:
+            problems += [f"{repo}/{owners}: {d}"
+                         for d in codeowners_team_differences(text, load("teams.json")["teams"])]
 
     for path in CALLERS:
         want = triggers((ROOT / path).read_text())

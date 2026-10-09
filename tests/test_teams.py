@@ -8,8 +8,9 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from rules import (AUTOMATION_OWNERS, automation_owners, load, managed_repos,  # noqa: E402
-                   team, team_differences, team_repo_permission)
+from rules import (AUTOMATION_OWNERS, ROOT, automation_owners, codeowners_team_differences,  # noqa: E402
+                   codeowners_teams, load, managed_repos, team, team_differences,
+                   team_repo_permission)
 
 OWNERS = team(AUTOMATION_OWNERS)
 LIVE = {"name": OWNERS["name"], "slug": OWNERS["slug"], "description": OWNERS["description"],
@@ -24,6 +25,15 @@ class TeamsFileTest(unittest.TestCase):
     def test_each_slug_is_what_github_makes_from_the_name(self):
         for t in load("teams.json")["teams"]:
             self.assertEqual(re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-"), t["slug"])
+
+    def test_engineers_can_write_everywhere(self):
+        engineers = team("engineers")
+        self.assertEqual(engineers["members"], ["Thytus777", "RuvinduH"])
+        self.assertEqual(engineers["repo_permission"], "push")
+
+    def test_this_repos_codeowners_teams_are_defined_with_write(self):
+        text = (ROOT / ".github" / "CODEOWNERS").read_text()
+        self.assertEqual(codeowners_team_differences(text, load("teams.json")["teams"]), [])
 
     def test_each_team_names_a_real_permission(self):
         for t in load("teams.json")["teams"]:
@@ -54,6 +64,39 @@ class TeamDifferencesTest(unittest.TestCase):
         repos.pop("platform")
         found = team_differences(OWNERS, LIVE, ["RuvinduH"], repos)
         self.assertEqual(found, ["team 'automation-owners': expected 'pull' on platform, got None"])
+
+
+class CodeownersTeamsTest(unittest.TestCase):
+    TEAMS = [{"slug": "engineers", "repo_permission": "push"},
+             {"slug": "automation-owners", "repo_permission": "pull"}]
+
+    def test_reads_this_orgs_teams_only(self):
+        text = ("# a comment naming @akenon-studio/ghosts\n"
+                "* @Akenon-Studio/Engineers @someone\n"
+                "/docs/ @akenon-studio/engineers @other-org/team  # trailing @akenon-studio/x\n"
+                "/ci/ @akenon-studio/design dev@example.com\n")
+        self.assertEqual(codeowners_teams(text), ["engineers", "design"])
+
+    def test_defined_team_with_write_passes(self):
+        self.assertEqual(codeowners_team_differences("* @akenon-studio/engineers\n", self.TEAMS), [])
+
+    def test_team_not_in_teams_json(self):
+        self.assertEqual(codeowners_team_differences("* @akenon-studio/design\n", self.TEAMS),
+                         ["CODEOWNERS names team 'design', which is not in rulesets/teams.json"])
+
+    def test_team_without_write(self):
+        found = codeowners_team_differences("* @akenon-studio/automation-owners\n", self.TEAMS)
+        self.assertEqual(len(found), 1)
+        self.assertIn("'pull'; a code owner needs write", found[0])
+
+    def test_live_team_without_write_is_a_difference(self):
+        engineers = team("engineers")
+        live = {k: engineers[k] for k in ("name", "slug", "description", "privacy")}
+        repos = {r: "push" for r in managed_repos()}
+        self.assertEqual(team_differences(engineers, live, ["thytus777", "ruvinduh"], repos), [])
+        repos["peras"] = "pull"
+        self.assertEqual(team_differences(engineers, live, ["Thytus777", "RuvinduH"], repos),
+                         ["team 'engineers': expected 'push' on peras, got 'pull'"])
 
 
 class PermissionTest(unittest.TestCase):

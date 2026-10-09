@@ -1,5 +1,5 @@
 {
-  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo (a team needs access to a repo before it can be asked to review there); verify-settings.py checks all of it. Teams not listed here (engineers, design) are left alone.",
+  "_comment": "Org teams kept as code (design 6.8). apply-rules.py creates or updates each team, sets its members to exactly this list and gives it 'repo_permission' on every managed repo (a team needs access to a repo before it can be asked to review there; a team named in CODEOWNERS needs write, 'push', or GitHub ignores it); verify-settings.py checks all of it, and that every team a managed repo's CODEOWNERS names is listed here with write access. Teams not listed here (design) are left alone.",
   "teams": [
     {
       "name": "Automation owners",
@@ -8,6 +8,14 @@
       "privacy": "closed",
       "members": ["RuvinduH"],
       "repo_permission": "pull"
+    },
+    {
+      "name": "Engineers",
+      "slug": "engineers",
+      "description": "Core development team",
+      "privacy": "closed",
+      "members": ["Thytus777", "RuvinduH"],
+      "repo_permission": "push"
     }
   ]
 }
