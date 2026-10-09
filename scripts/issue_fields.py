@@ -6,9 +6,9 @@ answers must be one of the options, and a question labelled "(required when Kind
 required when that answer is given.
 
 Dropdowns whose label is also a board field (Discipline, Phase, Priority, Audit, Severity) are
-copied to the board. New items start in Todo, Decisions in Waiting for human. An issue with
-problems gets the `needs-fields` label and one comment listing them; once fixed, the label goes
-and the comment says so. The issue body is the source of truth: edit the answer there and the
+copied to the board. New items start in Todo; Decisions and critical or high Audit findings in
+Waiting for human. An issue with problems gets the `needs-fields` label and one comment listing
+them; once fixed, the label goes and the comment says so. The issue body is the source of truth: edit the answer there and the
 board follows.
 
 Links between issues are checked too (design 6.8): every issue has a parent unless it is top level
@@ -24,7 +24,15 @@ must have a person (not a bot or app) assigned. "The author is an assignee at cr
 in the simplest form that holds up: the author counts as assigned if they are an assignee now or
 were ever assigned (an `assigned` event in the issue's timeline). So the problem is fixed by
 assigning the author, who may then hand the issue to someone else. Issues a bot or app opens are
-exempt from the author rule. A Process failure closed while its answer to "What now
+exempt from the author rule.
+
+A critical or high Audit finding needs a person to confirm it before work starts (design 6.1): it
+starts in Waiting for human, assigned to its author, and is flagged until a person (not a bot or
+app) applies the `confirmed` label. Who applied it is read from the issue's timeline, so a label a
+bot added doesn't count. Labelling sends no event the callers listen to, so issue_sweep.py picks
+the confirmation up on its next run.
+
+A Process failure closed while its answer to "What now
 prevents this, by code?" is "Not decided yet" is reopened too. Board changes, links and closing send no event every repo's
 caller listens to, so scripts/issue_sweep.py re-checks on a schedule.
 
@@ -49,6 +57,8 @@ REOPEN_MARKER = "<!-- issue-fields: reopened -->"
 EMPTY = {"", "_No response_"}
 REQUIRED_WHEN = re.compile(r"\(required when (.+?) is (.+?)\)")
 START_STATUS = {"Decision": "Waiting for human"}  # everything else starts in Todo
+CONFIRMED = "confirmed"
+NEEDS_CONFIRMING = {"Critical", "High"}  # Audit finding severities a person confirms (design 6.1)
 
 
 def load_forms(directory=FORMS_DIR):
@@ -120,6 +130,41 @@ def check(issue_type, text, forms):
                 problems.append(f"**{q['label']}** has `{a}`, which is not one of the options: "
                                 + ", ".join(q["options"]) + ".")
     return problems
+
+
+def needs_confirming(issue_type, text):
+    """True for an Audit finding whose Severity is one a person must confirm (design 6.1)."""
+    return issue_type == "Audit finding" and parse_body(text).get("Severity") in NEEDS_CONFIRMING
+
+
+def start_status(issue_type, text):
+    """The board Status a new item starts in: Waiting for human for a Decision and for a critical
+    or high Audit finding (a person confirms it first), Todo for everything else."""
+    if needs_confirming(issue_type, text):
+        return "Waiting for human"
+    return START_STATUS.get(issue_type, "Todo")
+
+
+def confirmed_by_person(labels, label_events):
+    """True if the `confirmed` label is on the issue and the last time it was applied, a person
+    (not a bot or app) applied it. `labels` are the label names now; `label_events` the timeline's
+    LabeledEvent nodes, oldest first."""
+    if CONFIRMED not in labels:
+        return False
+    applied = [e for e in label_events if (e.get("label") or {}).get("name") == CONFIRMED]
+    return bool(applied) and ((applied[-1].get("actor") or {}).get("__typename") == "User")
+
+
+def confirmation_problems(issue_type, text, confirmed):
+    """Problems with an Audit finding's confirmation (design 6.1). `confirmed` is
+    confirmed_by_person()'s answer."""
+    if not needs_confirming(issue_type, text) or confirmed:
+        return []
+    severity = parse_body(text)["Severity"]
+    return [f"A **{severity}** audit finding needs a person to confirm it before work starts: "
+            f"check the evidence and apply the `{CONFIRMED}` label (design 6.1). A label a bot or "
+            "app applied doesn't count. If the finding is false, close it and re-check that "
+            "agent's batch."]
 
 
 # "Deferred work" (deferred findings and later-phase tasks): top level. Matched by number, so a
@@ -226,6 +271,8 @@ ISSUE_FIELDS = """id number state body author { __typename login } issueType { n
   assignedActors(first: 20) { nodes { __typename ... on User { login } ... on Bot { login } } }
   timelineItems(itemTypes: [ASSIGNED_EVENT], first: 100) { nodes {
     ... on AssignedEvent { assignee { __typename ... on User { login } } } } }
+  labelEvents: timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes {
+    ... on LabeledEvent { label { name } actor { __typename login } } } }
   projectItems(first: 20) { nodes { id project { id }
     fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
 
@@ -249,11 +296,14 @@ def all_problems(issue, forms, status):
     issue_type = (issue["issueType"] or {}).get("name")
     author = issue["author"] or {}
     by_bot = author.get("__typename") == "Bot"
+    confirmed = confirmed_by_person({l["name"] for l in issue["labels"]["nodes"]},
+                                    issue["labelEvents"]["nodes"])
     return check(issue_type, issue["body"], forms) + link_problems(
         issue_type, issue["parent"] is not None, len(issue["subIssues"]["nodes"]), status,
         issue["blockedBy"]["totalCount"], issue["repository"]["nameWithOwner"].split("/")[1],
         issue["number"], by_bot) + assignee_problems(
-        author.get("login"), by_bot, *people_assigned(issue), status)
+        author.get("login"), by_bot, *people_assigned(issue), status) + confirmation_problems(
+        issue_type, issue["body"], confirmed)
 
 
 def problems_text(problems):
@@ -337,7 +387,7 @@ def sync(repo, number, forms, board):
     names = {f.get("name") for f in board["fields"]["nodes"]}
     values = board_values(issue_type, issue["body"], forms, names)
     if status is None:
-        values["Status"] = START_STATUS.get(issue_type, "Todo")
+        values["Status"] = start_status(issue_type, issue["body"])
     for name, option in values.items():
         set_field(board, item_id, name, option)
     problems = all_problems(issue, forms, values.get("Status", status))
