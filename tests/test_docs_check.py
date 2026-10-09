@@ -75,6 +75,16 @@ class CheckTest(unittest.TestCase):
                      "`drivers/gpu/x.c` and `platform/apps/x.ts`\n```\nsrc/gone.ts OLD_NAME\n```\n"})
         self.assertEqual(check(root, "code", RULE_SET), [])
 
+    def test_nested_fences_and_history_links(self):
+        root = repo({"src/a.ts": "",
+                     "docs/architecture/a.md": HEADER + "````\n```\nsrc/gone.ts\n```\n````\n`src/gone2.ts`\n",
+                     "docs/decisions/d.md": HEADER + "[old](gone.md)\n"})
+        found = " ".join(check(root, "code", dict(RULE_SET, all=dict(
+            RULE_SET["all"], docs=["docs/architecture/**/*.md", "docs/decisions/**/*.md"])))))
+        self.assertNotIn("src/gone.ts`", found)
+        self.assertIn("src/gone2.ts", found)
+        self.assertNotIn("gone.md", found)
+
     def test_front_matter(self):
         self.assertEqual(front_matter(HEADER)[0]["owner"], "Software")
         self.assertEqual(front_matter("# title\n"), (None, None))

@@ -32,7 +32,7 @@ import yaml
 RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "docs.json"
 HISTORY = re.compile(r"(^|/)decisions/|(^|/)legal/audits/")
 HEADER_END = re.compile(r"\n---[ \t]*(?:\n|$)")
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CODE = re.compile(r"`([^`\n]+)`")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 BINARY = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2", ".ttf", ".otf", ".onnx",
@@ -118,12 +118,17 @@ def body_lines(text):
     start = 0
     if text.startswith("---\n") and (end := HEADER_END.search(text, 3)):
         start = text[:end.end()].count("\n")
-    fenced = False
+    fence = None  # the opening marker; only the same character, at least as long, closes it
     for n, line in enumerate(text.split("\n")[start:], start + 1):
-        if FENCE.match(line):
-            fenced = not fenced
+        m = FENCE.match(line)
+        if m and fence is None:
+            fence = m.group(1)
             continue
-        if not fenced:
+        if m and fence and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                and not line.strip()[len(m.group(1)):].strip():
+            fence = None
+            continue
+        if fence is None:
             yield n, line
 
 
@@ -159,10 +164,13 @@ def path_exists(root, doc_dir, token, files, dirs):
     return False
 
 
-def ignored(root, token):
-    """True for a path git ignores: generated or downloaded at install (`apps/desktop/models/`)."""
+def ignored(root, token, doc_dir=""):
+    """True for a path git ignores, from the repo root or the doc's folder: made at install
+    (`apps/desktop/models/`)."""
     t = re.sub(r":\d+(-\d+)?$", "", token.strip())
-    return subprocess.run(["git", "check-ignore", "-q", "--no-index", t], cwd=root).returncode == 0
+    tries = [t] + ([posixpath.join(doc_dir, t)] if doc_dir and doc_dir != "." else [])
+    return any(subprocess.run(["git", "check-ignore", "-q", "--no-index", c], cwd=root).returncode == 0
+               for c in tries)
 
 
 def code_problems(path, text, root, files, dirs, words, known=()):
@@ -181,7 +189,7 @@ def code_problems(path, text, root, files, dirs, words, known=()):
                 if m.group(1) not in words:
                     print(f"::warning::{path}:{n}: `{token}` appears nowhere in this repo's code")
             elif (looks_like_path(token) and not path_exists(root, doc_dir, token, files, dirs)
-                  and not ignored(root, token)):
+                  and not ignored(root, token, doc_dir)):
                 found.append(f"{path}:{n}: path `{token}` doesn't exist")
     return found
 
@@ -232,7 +240,13 @@ def check(root, repo, rules):
         # here; decision records and dated audits are history (6.5 item 5).
         if repo != "handbook" and not HISTORY.search(path):
             found += code_problems(path, text, root, files, dirs, words, set(r["known_names"]))
-        found += link_problems(path, text, files, dirs)
+        links = link_problems(path, text, files, dirs)
+        if HISTORY.search(path):
+            # History is never edited, so a link that a later rename breaks is only a warning.
+            for p in links:
+                print(f"::warning::{p}")
+        else:
+            found += links
     return found
 
 
