@@ -96,7 +96,12 @@ REPO_SETTINGS_GRAPHQL = {
     "squash_merge_commit_title": "squashMergeCommitTitle",
     "squash_merge_commit_message": "squashMergeCommitMessage",
     "has_wiki": "hasWikiEnabled",
+    "vulnerability_alerts": "hasVulnerabilityAlertsEnabled",
 }
+
+# Settings in repo-settings.json that the repo PATCH doesn't take; each has its own endpoint, turned
+# on with PUT and off with DELETE (design 6.4: Dependabot alerts on every repo).
+REPO_SETTING_ENDPOINTS = {"vulnerability_alerts": "vulnerability-alerts"}
 
 
 def repo_settings(repo):

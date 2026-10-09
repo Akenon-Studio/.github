@@ -7,7 +7,10 @@
 #
 #   on: { issues: { types: [opened, edited, reopened, typed, untyped] } }
 #   jobs: { issue-fields: { uses: akenon-studio/.github/.github/workflows/issue-fields.yml@main,
-#                           secrets: inherit } }
+#                           secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
+#
+# It passes only that secret, not `secrets: inherit`, which would hand it every org secret
+# (Semgrep's secrets-inherit rule, security-scan / code).
 #
 # GITHUB_TOKEN cannot write to an org board, so this logs in as the org's GitHub App: org
 # variable AKENON_APP_ID and org secret AKENON_APP_PRIVATE_KEY.
@@ -15,6 +18,9 @@ name: issue-fields
 
 on:
   workflow_call:
+    secrets:
+      AKENON_APP_PRIVATE_KEY:
+        required: true
 
 permissions:
   contents: read

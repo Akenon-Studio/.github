@@ -10,4 +10,5 @@ permissions:
 jobs:
   issue-fields:
     uses: ./.github/workflows/issue-fields.yml
-    secrets: inherit
+    secrets:
+      AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }}

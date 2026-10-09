@@ -38,7 +38,7 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_security_scan_checks(self):
         caller = load("security-scan-caller.yml")
         self.assertEqual(list(caller["jobs"]), ["security-scan"])
-        self.assertEqual(sorted(REUSABLE["security-scan.yml"]["jobs"]), ["dependencies", "secrets"])
+        self.assertEqual(sorted(REUSABLE["security-scan.yml"]["jobs"]), ["code", "dependencies", "secrets"])
         self.assertEqual(set(caller["on"]), {"pull_request", "push"})
 
 
