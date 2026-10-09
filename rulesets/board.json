@@ -248,7 +248,8 @@
         "Discipline",
         "Priority",
         "Assignees",
-        "Repository"
+        "Repository",
+        "Labels"
       ],
       "group_by": "Discipline",
       "sort": [
@@ -266,7 +267,8 @@
         "Assignees",
         "Status",
         "Priority",
-        "Iteration"
+        "Iteration",
+        "Labels"
       ],
       "column": "Discipline",
       "sort": [
@@ -277,7 +279,7 @@
     {
       "name": "Roadmap",
       "layout": "ROADMAP_LAYOUT",
-      "filter": "-label:needs-fields -type:Bug",
+      "filter": "is:open -label:needs-fields -type:Bug",
       "fields": [],
       "group_by": "Parent issue",
       "sort": [
@@ -356,6 +358,19 @@
         "ASC"
       ],
       "_comment": "Open process failures (design 6.6, 6.8): mistakes no check prevents yet, for the partners and the scheduled architecture review."
+    },
+    {
+      "name": "Overview",
+      "layout": "BOARD_LAYOUT",
+      "filter": "is:issue",
+      "fields": [
+        "Title",
+        "Assignees",
+        "Priority",
+        "Labels"
+      ],
+      "column": "Status",
+      "group_by": "Discipline"
     }
   ]
 }
