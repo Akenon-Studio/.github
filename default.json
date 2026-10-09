@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own.",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "Australia/Melbourne",
+  "schedule": ["before 9am on monday"],
+  "dependencyDashboard": false,
+  "labels": ["dependencies"],
+  "automerge": false,
+  "platformAutomerge": false,
+  "prConcurrentLimit": 5,
+  "rebaseWhen": "conflicted",
+  "minimumReleaseAge": "3 days",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "description": "Security fixes open at once, whatever the schedule.",
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 9am on the first day of the month"]
+  },
+  "packageRules": [
+    {
+      "description": "Minor and patch updates in one weekly PR per repo, to keep CI minutes down.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "non-major dependencies",
+      "groupSlug": "non-major"
+    },
+    {
+      "description": "three.js is part of the animation contract shared by platform and animations: both move together, by hand (platform#53).",
+      "matchPackageNames": ["three", "@types/three"],
+      "enabled": false
+    },
+    {
+      "description": "dependency-cruiser 16 supports TypeScript <6; stay on 5 until it is upgraded (platform#53).",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<6"
+    }
+  ]
+}
