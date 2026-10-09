@@ -435,8 +435,10 @@ def reclose_if_done(repo, number, issue):
     """Close a parent reclose_due() picks, as completed, with a comment. True if it did."""
     if not reclose_due(issue):
         return False
-    # The comment first: if it fails, the issue stays open and the next sweep tries again.
-    gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": RECLOSE_TEXT})
+    # The comment first, once: if the close then fails, the next sweep retries the close only.
+    comments = gh(f"repos/{repo}/issues/{number}/comments?per_page=100") or []
+    if not any(c["body"].startswith(RECLOSE_MARKER) for c in comments):
+        gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": RECLOSE_TEXT})
     gh(f"repos/{repo}/issues/{number}", "-X", "PATCH",
        body={"state": "closed", "state_reason": "completed"})
     issue["state"] = "CLOSED"
