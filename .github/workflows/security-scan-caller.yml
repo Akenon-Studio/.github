@@ -1,0 +1,17 @@
+name: security-scan-caller
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    uses: ./.github/workflows/security-scan.yml
