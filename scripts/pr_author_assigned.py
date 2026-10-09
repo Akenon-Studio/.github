@@ -8,11 +8,41 @@ Usage: scripts/pr_author_assigned.py   (reads PR_AUTHOR, PR_AUTHOR_TYPE and PR_A
 list of the PR's assignees as the event gives them, from the environment)
 In Actions it runs as the `author-assigned` job of the reusable pr-title workflow, which callers
 also run on `assigned` and `unassigned`, so assigning the author runs it again.
+
+The event's assignees are a snapshot from when the run started, and `gh pr create --assignee`
+assigns a moment after the PR opens (handbook#104). So when the snapshot lacks the author, the
+script asks GitHub for the PR's current assignees (GITHUB_REPOSITORY, PR_NUMBER, GITHUB_TOKEN),
+a few times over some seconds, before failing.
 """
 
 import json
 import os
 import sys
+import time
+import urllib.request
+
+RETRIES, WAIT_SECONDS = 4, 5
+
+
+def current_assignees(repo, number, token):
+    """The PR's assignees now, from the API."""
+    request = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{number}",
+                                     headers={"Authorization": f"Bearer {token}",
+                                              "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return [a["login"] for a in json.load(response)["assignees"]]
+
+
+def check(author, author_type, assignees, fetch=None, retries=RETRIES, wait=WAIT_SECONDS,
+          sleep=time.sleep):
+    """problems(), re-reading the assignees with `fetch` while the snapshot lacks the author."""
+    found = problems(author, author_type, assignees)
+    for _ in range(retries if fetch else 0):
+        if not found:
+            break
+        sleep(wait)
+        found = problems(author, author_type, fetch())
+    return found
 
 
 def problems(author, author_type, assignees):
@@ -29,12 +59,14 @@ def problems(author, author_type, assignees):
 def main():
     assignees = [a["login"] for a in json.loads(os.environ.get("PR_ASSIGNEES") or "[]")]
     author, author_type = os.environ.get("PR_AUTHOR", ""), os.environ.get("PR_AUTHOR_TYPE", "")
-    found = problems(author, author_type, assignees)
+    repo, number, token = (os.environ.get(k) for k in ("GITHUB_REPOSITORY", "PR_NUMBER",
+                                                       "GITHUB_TOKEN"))
+    fetch = (lambda: current_assignees(repo, number, token)) if repo and number and token else None
+    found = check(author, author_type, assignees, fetch)
     for p in found:
         print(f"::error::{p}")
     if found:
-        print("Assigning the author runs this check again. Re-running the job does not help: it "
-              "reads the assignees the PR had when the run started.")
+        print("Assigning the author runs this check again.")
         sys.exit(1)
     if author_type == "Bot":
         print(f"OK: opened by {author}, a bot; its reviewer comes from the automation owners")
