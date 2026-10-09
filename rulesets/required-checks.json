@@ -7,6 +7,7 @@
     "pr-title / author-assigned",
     "pr-title / stacked",
     "pr-title / gaming",
+    "pr-title / docs",
     "security-scan / secrets",
     "security-scan / dependencies",
     "security-scan / code",
