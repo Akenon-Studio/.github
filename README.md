@@ -18,6 +18,7 @@ never code, secrets or product plans.
 | `scripts/apply-board.py` | Creates or updates the board from `rulesets/board.json` |
 | `.github/workflows/settings-check.yml` | Daily: runs `verify-settings.py` as a read-only app and keeps one `settings-drift` issue open while anything differs |
 | `scripts/verify-settings.py` | Checks live GitHub settings match `rulesets/`, the org settings and the board |
+| `scripts/issue_sweep.py` | Every 15 minutes: re-checks issues, and posts one comment on each open PR that conflicts with its base branch |
 | `scripts/bot_pr_review.py` | Run by the issue sweep: asks the automation owners to review each bot's open PR |
 | `profile/README.md` | The public org profile |
 | `SECURITY.md`, `CONTRIBUTING.md` | Org-wide security policy and contribution rules |
