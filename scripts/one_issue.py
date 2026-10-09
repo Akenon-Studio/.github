@@ -32,7 +32,7 @@ def open_issue(repo, label):
     return found[0] if found else None
 
 
-def keep(repo, label, title, text):
+def keep(repo, label, title, text, passed="The daily check passes again. Closing."):
     """Open or update the issue with `text`, or close it when `text` is None. Returns what it did,
     as a line to print."""
     issue = open_issue(repo, label)
@@ -40,7 +40,7 @@ def keep(repo, label, title, text):
         if not issue:
             return "nothing to report"
         gh(f"repos/{repo}/issues/{issue['number']}/comments", "-X", "POST",
-           body={"body": "The daily check passes again. Closing."})
+           body={"body": passed})
         gh(f"repos/{repo}/issues/{issue['number']}", "-X", "PATCH",
            body={"state": "closed", "state_reason": "completed"})
         return f"closed #{issue['number']}"
