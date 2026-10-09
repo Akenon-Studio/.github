@@ -18,7 +18,8 @@ import subprocess
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (CODEOWNERS_PATHS, ORG, ROOT, codeowners_team_differences, desired_labels,
+from rules import (CODEOWNERS_PATHS, ORG, ROOT, codeowners_team_differences, org_role_differences,
+                   org_roles, team_org_roles, desired_labels,
                    desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, repo_rulesets, repo_settings, team_differences, team_repo_permission,
                    try_gh)
@@ -86,6 +87,13 @@ def main():
                  for r in gh(f"orgs/{ORG}/teams/{t['slug']}/repos?per_page=100") or []}
         problems += [f"org: {d}" for d in team_differences(
             t, gh(f"orgs/{ORG}/teams/{t['slug']}"), [m["login"] for m in members], repos)]
+
+    roles = org_roles() if teams_readable else None
+    if roles is None:
+        print("note: can't read the org's roles; team org roles not checked")
+    else:
+        problems += [f"org: {d}" for d in org_role_differences(load("teams.json")["teams"],
+                                                                team_org_roles(roles))]
 
     managed = managed_repos()
     for repo in managed:
