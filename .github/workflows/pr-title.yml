@@ -12,7 +12,9 @@
 # from the event, so callers also listen to `assigned` and `unassigned`) and "pr-title / stacked" (no
 # commit on the branch is on another open PR's branch, handbook#120; scripts/pr_not_stacked.py) and
 # "pr-title / gaming" (the PR doesn't pass by weakening checks: skipped or focused tests, deleted
-# test files, @ts-ignore, eslint-disable, `any`; design 7.13 stage 6; scripts/gaming_check.py).
+# test files, @ts-ignore, eslint-disable, `any`; design 7.13 stage 6; scripts/gaming_check.py) and
+# "pr-title / docs" (every doc is in the fixed map with its owner/covers header, and names only
+# paths, env vars and links that exist; design 6.5; scripts/docs_check.py, rulesets/docs.json).
 # Every job runs on every event: a job skipped on some events would report "skipped", which passes
 # a required check. A new job here runs in every repo without changing the callers.
 name: pr-title
@@ -80,7 +82,7 @@ jobs:
 
       - name: Every CLAUDE.md is capped and every rule has a reason
         run: |
-          pip install --quiet pyyaml
+          pip install --quiet pyyaml==6.0.2
           status=0
           files=$(find repo -name CLAUDE.md -not -path '*/node_modules/*' -not -path '*/.git/*')
           [ -n "$files" ] || echo "No CLAUDE.md in this repo."
@@ -159,3 +161,27 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 akenon-github/scripts/gaming_check.py "$BASE_SHA" repo
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get the repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Get the script
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the script; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: akenon-github
+          persist-credentials: false
+
+      - name: Docs are in the map, headed, and name only what exists
+        run: |
+          pip install --quiet pyyaml==6.0.2
+          python3 akenon-github/scripts/docs_check.py repo --repo "${GITHUB_REPOSITORY#*/}"
