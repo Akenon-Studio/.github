@@ -485,8 +485,8 @@ class SourceLabelTest(unittest.TestCase):
         self.assertEqual(source_problems("RuvinduH", False, set(), self.SOURCES), [])
 
 
-def parent(state="OPEN", total=3, completed=3, reopened_by="Bot"):
-    nodes = [{"actor": {"__typename": reopened_by, "login": "x"}}] if reopened_by else []
+def parent(state="OPEN", total=3, completed=3, reopened_by="akenon-studio-automation"):
+    nodes = [{"actor": {"__typename": "Bot", "login": reopened_by}}] if reopened_by else []
     return {"state": state, "subIssuesSummary": {"total": total, "completed": completed},
             "reopenEvents": {"nodes": nodes}}
 
@@ -498,8 +498,9 @@ class RecloseTest(unittest.TestCase):
     def test_not_while_a_sub_issue_is_open(self):
         self.assertFalse(reclose_due(parent(completed=2)))
 
-    def test_a_parent_a_person_reopened_stays_open(self):
-        self.assertFalse(reclose_due(parent(reopened_by="User")))
+    def test_a_parent_a_person_or_another_bot_reopened_stays_open(self):
+        self.assertFalse(reclose_due(parent(reopened_by="RuvinduH")))
+        self.assertFalse(reclose_due(parent(reopened_by="dependabot")))
 
     def test_never_reopened_or_no_subs_or_closed_is_left_alone(self):
         self.assertFalse(reclose_due(parent(reopened_by=None)))

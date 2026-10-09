@@ -49,12 +49,14 @@ import time
 import yaml
 
 from board import find_board_fields, graphql, spec
-from rules import ROOT, ensure_label, gh, source_labels
+from rules import ROOT, bot_login, ensure_label, gh, source_labels
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
 MARKER = "<!-- issue-fields -->"
 REOPEN_MARKER = "<!-- issue-fields: reopened -->"
+RECLOSE_MARKER = "<!-- issue-fields: closed again -->"
+AUTOMATION_APP = "akenon-studio-automation"  # the org app this workflow signs in as
 EMPTY = {"", "_No response_"}
 REQUIRED_WHEN = re.compile(r"\(required when (.+?) is (.+?)\)")
 START_STATUS = {"Decision": "Waiting for human"}  # everything else starts in Todo
@@ -410,17 +412,18 @@ def reopen_if_early(repo, number, issue):
 
 
 def reclose_due(issue):
-    """True for an open parent the automation reopened (its last reopen was by a bot, as
+    """True for an open parent the automation reopened (its last reopen was by AUTOMATION_APP, as
     reopen_if_early does when a PR closes it too early) whose sub-issues are now all closed: its
     PR already finished its own work, so it closes again (design 6.8, check 2). A parent a person
-    reopened stays open."""
+    or another bot reopened stays open."""
     subs = issue["subIssuesSummary"]
     last = (issue.get("reopenEvents") or {}).get("nodes") or []
     return (issue["state"] == "OPEN" and subs["total"] > 0 and subs["completed"] >= subs["total"]
-            and bool(last) and ((last[-1] or {}).get("actor") or {}).get("__typename") == "Bot")
+            and bool(last) and bot_login(((last[-1] or {}).get("actor") or {}).get("login"))
+            == AUTOMATION_APP)
 
 
-RECLOSE_TEXT = (f"{REOPEN_MARKER}\nClosed again (design 6.8): this was reopened because it closed "
+RECLOSE_TEXT = (f"{RECLOSE_MARKER}\nClosed again (design 6.8): this was reopened because it closed "
                 "while sub-issues were open, and every sub-issue is now closed.")
 
 

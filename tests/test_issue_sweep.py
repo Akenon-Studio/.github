@@ -83,7 +83,8 @@ class OutOfDateTest(unittest.TestCase):
 
     def test_parent_the_automation_reopened_is_synced_to_close_it(self):
         done = dict(issue(subs=(2, 2), labels=["needs-fields"]),
-                    reopenEvents={"nodes": [{"actor": {"__typename": "Bot", "login": "app"}}]})
+                    reopenEvents={"nodes": [{"actor": {"__typename": "Bot",
+                                                     "login": "akenon-studio-automation"}}]})
         self.assertTrue(out_of_date(done, FORMS, BOARD))
 
     def test_fixed_but_still_labelled_is_synced(self):
