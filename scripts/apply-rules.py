@@ -9,8 +9,9 @@ Needs an org owner logged in to gh with the admin:org scope.
 import sys
 import urllib.parse
 
-from rules import (ISSUE_TYPE_KEYS, ORG, TEAM_KEYS, desired_labels, desired_rulesets, gh, load,
-                   managed_repos, org_roles, repo_rulesets, team_org_roles, team_repos, try_gh)
+from rules import (ISSUE_TYPE_KEYS, ORG, REPO_SETTING_ENDPOINTS, TEAM_KEYS, desired_labels,
+                   desired_rulesets, gh, load, managed_repos, org_roles, repo_rulesets,
+                   team_org_roles, team_repos, try_gh)
 
 
 def apply_org():
@@ -82,7 +83,11 @@ def apply_labels(repo):
 
 
 def apply_repo(repo):
-    gh(f"repos/{ORG}/{repo}", "-X", "PATCH", body=load("repo-settings.json"))
+    settings = load("repo-settings.json")
+    gh(f"repos/{ORG}/{repo}", "-X", "PATCH",
+       body={k: v for k, v in settings.items() if k not in REPO_SETTING_ENDPOINTS})
+    for key, endpoint in REPO_SETTING_ENDPOINTS.items():
+        gh(f"repos/{ORG}/{repo}/{endpoint}", "-X", "PUT" if settings[key] else "DELETE")
     existing = repo_rulesets(repo)
     for ruleset in desired_rulesets(repo):
         if ruleset["name"] in existing:

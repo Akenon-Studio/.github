@@ -10,6 +10,9 @@
 # without a lockfile the dependencies job passes with nothing to audit; it always runs, so it can
 # be required everywhere and starts auditing the day a lockfile is committed. A gitleaks false
 # positive is allowed in that repo's .gitleaks.toml or with a `gitleaks:allow` comment.
+# "security-scan / code" is Semgrep community edition with its default rules (design 6.4). It fails
+# on ERROR findings; every finding, warnings included, is listed in the job summary. A false
+# positive is allowed with a `nosemgrep: <rule id>` comment on the line, saying why.
 name: security-scan
 
 on:
@@ -54,3 +57,38 @@ jobs:
       - name: Dependency scan (high and critical)
         if: hashFiles('pnpm-lock.yaml') != ''
         run: pnpm audit --audit-level high
+
+  code:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Semgrep
+        env:
+          SEMGREP_VERSION: 1.180.0
+        run: pip install --quiet "semgrep==${SEMGREP_VERSION}"
+      - name: Insecure code (Semgrep)
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep scan --config p/default --metrics off --quiet --json --output "$RUNNER_TEMP/semgrep.json"
+          python3 - "$RUNNER_TEMP/semgrep.json" <<'PY'
+          import json, os, sys
+          results = json.load(open(sys.argv[1]))["results"]
+          results.sort(key=lambda r: (r["extra"]["severity"] != "ERROR", r["path"], r["start"]["line"]))
+          errors = [r for r in results if r["extra"]["severity"] == "ERROR"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write(f"### Semgrep: {len(results)} finding(s), {len(errors)} blocking\n\n")
+              for r in results:
+                  rule = r["check_id"].rsplit(".", 1)[-1]
+                  out.write(f"- **{r['extra']['severity']}** `{rule}` {r['path']}:{r['start']['line']}\n")
+          for r in errors:
+              msg = " ".join(r["extra"]["message"].split())
+              print(f"::error file={r['path']},line={r['start']['line']}::{r['check_id']}: {msg}")
+          sys.exit(1 if errors else 0)
+          PY
