@@ -17,6 +17,7 @@ AI_REVIEW_MODEL)
 ANTHROPIC_* sign-in, or an ANTHROPIC_API_KEY for a local try)
 """
 
+import base64
 import json
 import os
 import re
@@ -26,6 +27,7 @@ import urllib.parse
 import urllib.request
 
 MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-sonnet-5-5")
+MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
 MAX_DIFF_CHARS = 200_000
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
@@ -121,7 +123,8 @@ def to_github(review, files, left_out, already=frozenset()):
         if (c.get("path"), c.get("line")) in already:
             continue
         if c.get("line") in added.get(c.get("path"), ()):
-            inline.append({"path": c["path"], "line": c["line"], "side": "RIGHT", "body": c["body"]})
+            inline.append({"path": c["path"], "line": c["line"], "side": "RIGHT",
+                           "body": f"{c['body']}\n\n{MARKER}"})
         else:
             stray.append(f"- `{c.get('path')}:{c.get('line')}`: {c.get('body')}")
     body = "**AI review (advisory)**\n\n" + review.get("summary", "").strip()
@@ -143,11 +146,15 @@ def github(path, token, method="GET", body=None, accept="application/vnd.github+
 
 
 def earlier_comments(repo, number, token):
-    """(path, line) of inline comments this workflow already made on the PR, so a new push does not
-    repeat them."""
-    comments = github(f"repos/{repo}/pulls/{number}/comments?per_page=100", token) or []
-    return {(c["path"], c.get("line")) for c in comments
-            if c["user"]["login"] == "github-actions[bot]"}
+    """(path, line) of inline comments this script already posted on the PR (found by MARKER), so a
+    new push does not repeat them. Outdated comments have no line and match nothing."""
+    found, page = set(), 1
+    while True:
+        batch = github(f"repos/{repo}/pulls/{number}/comments?per_page=100&page={page}", token) or []
+        found |= {(c["path"], c.get("line")) for c in batch if MARKER in (c.get("body") or "")}
+        if len(batch) < 100:
+            return found
+        page += 1
 
 
 def github_oidc_token():
@@ -157,7 +164,13 @@ def github_oidc_token():
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"})
     with urllib.request.urlopen(req, timeout=30) as res:
-        return json.load(res)["value"]
+        token = json.load(res)["value"]
+    # The identity claims, not the token: what the federation rule matches on, for debugging it.
+    payload = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    print("Signing in as:", {k: claims.get(k) for k in
+                             ("sub", "repository", "event_name", "job_workflow_ref")})
+    return token
 
 
 def client():
@@ -218,8 +231,17 @@ def main(argv):
             claude_md = ""
         review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
                            left_out, earlier_comments(repo, number, token))
-    github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST",
-           body={**review, "commit_id": pr["head"]["sha"]})
+    post = {**review, "commit_id": pr["head"]["sha"]}
+    try:
+        github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body=post)
+    except urllib.error.HTTPError as e:
+        if e.code != 422 or not review["comments"]:
+            raise
+        # GitHub refuses the whole review if one inline comment can't be placed: post them in the body
+        lines = [f"- `{c['path']}:{c['line']}`: {c['body'].replace(MARKER, '').strip()}"
+                 for c in review["comments"]]
+        github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST",
+               body={**post, "comments": [], "body": review["body"] + "\n\n" + "\n".join(lines)})
     print(f"Posted a review with {len(review['comments'])} inline comment(s).")
     return 0
 

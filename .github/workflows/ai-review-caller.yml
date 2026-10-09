@@ -11,4 +11,5 @@ permissions:
 
 jobs:
   ai-review:
-    uses: ./.github/workflows/ai-review.yml
+    # The main copy, not ./: the sign-in trusts only ai-review.yml on main (see ai-review.yml).
+    uses: akenon-studio/.github/.github/workflows/ai-review.yml@main

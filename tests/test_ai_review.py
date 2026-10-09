@@ -57,7 +57,8 @@ class PayloadTest(unittest.TestCase):
             {"path": "nope.ts", "line": 1, "body": "no file"}]}
         out = to_github(review, files, ["big.ts"])
         self.assertEqual(out["event"], "COMMENT")
-        self.assertEqual(out["comments"], [{"path": "src/a.ts", "line": 2, "side": "RIGHT", "body": "b changed"}])
+        self.assertEqual(out["comments"], [{"path": "src/a.ts", "line": 2, "side": "RIGHT",
+                                            "body": "b changed\n\n<!-- ai-review -->"}])
         self.assertIn("`src/a.ts:1`: not added", out["body"])
         self.assertIn("`nope.ts:1`", out["body"])
         self.assertIn("Not reviewed (diff too large): `big.ts`", out["body"])

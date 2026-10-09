@@ -29,11 +29,16 @@ class ReusableWorkflowsTest(unittest.TestCase):
             for job_id, job in workflow["jobs"].items():
                 self.assertNotIn("if", job, f"{name}: job {job_id}")
 
+    # ai-review is called from main even here: its sign-in trusts only the main copy (ai-review.yml).
+    FROM_MAIN = {"ai-review.yml"}
+
     def test_this_repo_calls_each_one_from_its_own_copy(self):
         for name in REUSABLE:
             caller = load(name.replace(".yml", "-caller.yml"))
             uses = [j.get("uses") for j in caller["jobs"].values()]
-            self.assertEqual(uses, [f"./.github/workflows/{name}"], name)
+            want = (f"akenon-studio/.github/.github/workflows/{name}@main" if name in self.FROM_MAIN
+                    else f"./.github/workflows/{name}")
+            self.assertEqual(uses, [want], name)
 
     def test_security_scan_checks(self):
         caller = load("security-scan-caller.yml")

@@ -9,7 +9,9 @@
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
 # (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request runs
 # of those four repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
-# org variables ANTHROPIC_*, which are identifiers, not secrets. The review is posted with the
+# org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
+# job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
+# every caller, this repo's included, uses the main copy. The review is posted with the
 # workflow's own token (github-actions[bot]) as one review with event COMMENT. Skipped: drafts,
 # fork PRs (GitHub gives them no OIDC token) and Renovate's dependency PRs.
 name: ai-review
@@ -52,8 +54,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: akenon-studio/.github
-          # this repo's own PRs test their own version of the script; every other repo uses main
-          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          # Always main, even for this repo's own PRs: the sign-in trusts only this workflow on main
+          # (see the top), so a PR can't change what runs with the token.
+          ref: main
           path: .akenon-github
           persist-credentials: false
 
