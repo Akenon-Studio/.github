@@ -55,6 +55,8 @@ jobs:
       - name: Body closes at least one whole issue
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
         run: python3 scripts/pr_closes_issue.py
 
   claude-md:

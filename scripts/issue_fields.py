@@ -49,7 +49,7 @@ import time
 import yaml
 
 from board import find_board_fields, graphql, spec
-from rules import ROOT, ensure_label, gh
+from rules import ROOT, ensure_label, gh, source_labels
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
@@ -353,7 +353,16 @@ def status_on(board_id, issue):
     return None
 
 
-def all_problems(issue, forms, status):
+def source_problems(author, by_bot, labels, sources):
+    """An issue a bot or app opened must carry its source label (design 6.8)."""
+    if not by_bot or labels & sources:
+        return []
+    return [f"Opened by @{author}, a bot or app, with no source label. Add the label for where it "
+            f"came from ({', '.join(f'`{l}`' for l in sorted(sources))}), or list the bot in "
+            "rulesets/bots.json in the .github repo (design 6.8)."]
+
+
+def all_problems(issue, forms, status, sources=None):
     issue_type = (issue["issueType"] or {}).get("name")
     author = issue["author"] or {}
     by_bot = author.get("__typename") == "Bot"
@@ -365,7 +374,9 @@ def all_problems(issue, forms, status):
         by_bot) + finished_parent_problems(
         issue["state"], subs["total"], subs["completed"]) + assignee_problems(
         author.get("login"), by_bot, *people_assigned(issue), status) + confirmation_problems(
-        issue_type, issue["body"], confirmed)
+        issue_type, issue["body"], confirmed) + source_problems(
+        author.get("login"), by_bot, {l["name"] for l in issue["labels"]["nodes"]},
+        source_labels() if sources is None else sources)
 
 
 def problems_text(problems):

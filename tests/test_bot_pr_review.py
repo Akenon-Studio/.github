@@ -7,14 +7,14 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from bot_pr_review import needs_review  # noqa: E402
+from bot_pr_review import missing_source_label, needs_review  # noqa: E402
 
 MANAGED = {"platform", "handbook"}
 
 
-def pr(author="Bot", asked=(), repo="Akenon-Studio/platform"):
-    return {"number": 1, "author": {"__typename": author, "login": "renovate"},
-            "repository": {"nameWithOwner": repo},
+def pr(author="Bot", asked=(), repo="Akenon-Studio/platform", labels=(), login="renovate"):
+    return {"number": 1, "author": {"__typename": author, "login": login},
+            "repository": {"nameWithOwner": repo}, "labels": {"nodes": [{"name": l} for l in labels]},
             "timelineItems": {"nodes": [{"requestedReviewer": {"__typename": "Team", "slug": s}}
                                         for s in asked]}}
 
@@ -41,6 +41,21 @@ class NeedsReviewTest(unittest.TestCase):
         p["timelineItems"]["nodes"].append({"requestedReviewer": {"__typename": "User"}})
         p["timelineItems"]["nodes"].append({"requestedReviewer": None})
         self.assertTrue(needs_review(p, MANAGED))
+
+
+SOURCES = {"renovate": {"labels": ["dependencies"], "no_issue": True}}
+
+
+class SourceLabelTest(unittest.TestCase):
+    def test_unlabelled_renovate_pr_gets_its_label(self):
+        self.assertEqual(missing_source_label(pr(), MANAGED, SOURCES), "dependencies")
+
+    def test_labelled_pr_is_left_alone(self):
+        self.assertIsNone(missing_source_label(pr(labels=["dependencies"]), MANAGED, SOURCES))
+
+    def test_unlisted_bots_and_people_are_left_alone(self):
+        self.assertIsNone(missing_source_label(pr(login="someapp"), MANAGED, SOURCES))
+        self.assertIsNone(missing_source_label(pr(author="User"), MANAGED, SOURCES))
 
 
 if __name__ == "__main__":

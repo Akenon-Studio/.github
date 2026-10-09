@@ -85,7 +85,11 @@ class OutOfDateTest(unittest.TestCase):
         self.assertTrue(out_of_date(issue(labels=["needs-fields"]), FORMS, BOARD))
 
     def test_bot_opened_issue_without_a_parent_is_left_alone(self):
-        self.assertFalse(out_of_date(issue(parent=False, author="Bot"), FORMS, BOARD))
+        self.assertFalse(out_of_date(issue(parent=False, author="Bot", labels=["settings-drift"]),
+                                     FORMS, BOARD))
+
+    def test_bot_opened_issue_without_a_source_label_is_synced(self):
+        self.assertTrue(out_of_date(issue(parent=False, author="Bot"), FORMS, BOARD))
 
     def test_author_never_assigned_is_synced(self):
         self.assertTrue(out_of_date(issue(assignees=(), ever=()), FORMS, BOARD))

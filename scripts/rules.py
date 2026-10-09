@@ -189,6 +189,21 @@ def issue_type_differences(want, have):
 
 
 AUTOMATION_OWNERS = "automation-owners"
+
+
+def bot_login(login):
+    """A bot's login as rulesets/bots.json lists it: REST says `renovate[bot]`, GraphQL `renovate`."""
+    return (login or "").removesuffix("[bot]").lower()
+
+
+def bot_sources():
+    """{login: {"labels": [...], "no_issue": bool}} from rulesets/bots.json (design 6.8)."""
+    return load("bots.json")["sources"]
+
+
+def source_labels():
+    """Every source label any bot's work carries."""
+    return {label for s in bot_sources().values() for label in s["labels"]}
 TEAM_KEYS = ("name", "description", "privacy")
 
 
