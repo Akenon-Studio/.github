@@ -140,6 +140,7 @@ def github(path, token, method="GET", body=None, accept="application/vnd.github+
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"Bearer {token}", "Accept": accept,
                                           "Content-Type": "application/json"})
+    # nosemgrep: dynamic-urllib-use-detected -- always https://api.github.com/ plus a fixed path
     with urllib.request.urlopen(req, timeout=60) as res:
         raw = res.read().decode()
     return raw if accept.endswith("diff") else (json.loads(raw) if raw else None)
@@ -163,6 +164,7 @@ def github_oidc_token():
         "https://api.anthropic.com", safe="")
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"})
+    # nosemgrep: dynamic-urllib-use-detected -- GitHub's own OIDC endpoint, from the runner
     with urllib.request.urlopen(req, timeout=30) as res:
         token = json.load(res)["value"]
     # The identity claims, not the token: what the federation rule matches on, for debugging it.
