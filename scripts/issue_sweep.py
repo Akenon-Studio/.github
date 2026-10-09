@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Re-check issues on a schedule, for changes that send no event every repo's caller listens to
-(design 6.8): a board Status set to Blocked, a parent or "blocked by" link added or removed, a
+(design 6.8): a board Status set to Blocked or Waiting for human, an assignee added or removed, a parent or "blocked by" link added or removed, a
 parent closed while its sub-issues are open. Runs the issue_fields.py checks on every open issue in
 the managed repos and syncs only those whose `needs-fields` label or comment is out of date, then
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,

@@ -2,10 +2,11 @@
 """Check that live GitHub settings match rulesets/ (design 6.7). Exits 1 if anything differs.
 
 Usage: scripts/verify-settings.py
-Reports: org settings, issue types and teams (rulesets/teams.json), each managed repo's merge settings, rulesets and labels,
-the project board's fields
+Reports: org settings, issue types and teams (rulesets/teams.json), each managed repo's merge
+settings, rulesets and labels, the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
-(rulesets/repo-lists.json), and any repo in the org that is neither managed nor archived.
+(rulesets/repo-lists.json), that every repo's caller workflows listen to the same events as this
+repo's, and any repo in the org that is neither managed nor archived.
 """
 
 import base64
@@ -16,7 +17,7 @@ import subprocess
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (ORG, desired_labels, desired_rulesets, differences, gh, issue_type_differences,
+from rules import (ORG, ROOT, desired_labels, desired_rulesets, differences, gh, issue_type_differences,
                    label_differences, load, managed_repos, repo_rulesets, repo_settings,
                    team_differences, team_repo_permission, try_gh)
 
@@ -25,6 +26,16 @@ def missing_from(text, repos, pattern, skip=()):
     """Managed repos a repo-list file doesn't name."""
     return [r for r in repos if r not in skip
             and not re.search(pattern.replace("{repo}", re.escape(r)), text, re.MULTILINE)]
+
+
+CALLERS = (".github/workflows/pr-title-caller.yml", ".github/workflows/issue-fields-caller.yml")
+TRIGGERS = re.compile(r"^\s*types:\s*\[(.*?)\]", re.MULTILINE)
+
+
+def triggers(text):
+    """The event types a caller workflow listens to, as a set (empty if it names none)."""
+    found = TRIGGERS.search(text or "")
+    return {t.strip() for t in found.group(1).split(",")} if found else set()
 
 
 def read_file(repo, path):
@@ -110,6 +121,16 @@ def main():
             print(f"note: can't read {repo}'s files; required files not checked")
             continue
         problems += [f"{repo}: missing {f}" for f in load("repo-lists.json")["required_files"] if f not in files]
+
+    for path in CALLERS:
+        want = triggers((ROOT / path).read_text())
+        for repo in managed:
+            text = read_file(repo, path)
+            if text is None:
+                print(f"note: can't read {repo}/{path}; its triggers not checked")
+            elif triggers(text) != want:
+                problems.append(f"{repo}/{path}: listens to {sorted(triggers(text))}, expected "
+                                f"{sorted(want)} (copy this repo's)")
 
     for r in gh(f"orgs/{ORG}/repos?per_page=100") or []:
         if r["name"] not in managed and not r["archived"]:

@@ -8,8 +8,8 @@ never code, secrets or product plans.
 |---|---|
 | `.github/ISSUE_TEMPLATE/` | The issue forms every repo uses (blank issues are off) |
 | `.github/PULL_REQUEST_TEMPLATE.md` | The PR template every repo uses |
-| `.github/workflows/pr-title.yml` | Reusable check: PR titles must be conventional commits |
-| `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps with `needs-fields` |
+| `.github/workflows/pr-title.yml` | Reusable PR checks: conventional-commit title, the body closes whole issues, every `CLAUDE.md` passes, and a PR a person opens has its author assigned |
+| `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps, missing links and missing assignees with `needs-fields` |
 | `scripts/issue_fields.py` | What that workflow runs; the forms are its only definition of what is required |
 | `tests/` | Unit tests (`python3 -m unittest discover tests`), run by `.github/workflows/tests.yml` |
 | `rulesets/` | Branch and tag rules, repo merge settings, labels, issue types, teams (`teams.json`: the automation owners), and which repos they apply to |
@@ -37,5 +37,6 @@ same rules, applied by the script. The verify script catches any repo that drift
 
 Every repo carries two small caller workflows, copied from this repo: `pr-title-caller.yml` and
 `issue-fields-caller.yml` (in the copy, `uses:` points at
-`akenon-studio/.github/.github/workflows/<name>.yml@main`). The issue automation logs in as the
+`akenon-studio/.github/.github/workflows/<name>.yml@main`, and the triggers stay the same as
+here: the PR checks also run on `assigned` and `unassigned`). The issue automation logs in as the
 org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.

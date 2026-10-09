@@ -3,7 +3,8 @@
   "all": [
     "pr-title / check",
     "pr-title / closes-issue",
-    "pr-title / claude-md"
+    "pr-title / claude-md",
+    "pr-title / author-assigned"
   ],
   "platform": [
     "checks",

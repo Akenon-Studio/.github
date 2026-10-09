@@ -7,8 +7,9 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from issue_fields import (board_values, check, link_problems, load_forms, open_sub_issues,  # noqa: E402
-                          parse_body, problems_text, reopen_reasons, reopen_text)
+from issue_fields import (assignee_problems, board_values, check, link_problems,  # noqa: E402
+                          load_forms, open_sub_issues, parse_body, people_assigned, problems_text,
+                          reopen_reasons, reopen_text)
 
 FORMS = load_forms()
 
@@ -219,6 +220,51 @@ class LinkProblemsTest(unittest.TestCase):
     def test_issue_opened_by_a_person_still_needs_one(self):
         self.assertEqual(len(link_problems("Task", False, 0, "Todo", 0, ".github", 5,
                                            by_bot=False)), 1)
+
+
+class AssigneeProblemsTest(unittest.TestCase):
+    def test_author_assigned_passes(self):
+        self.assertEqual(assignee_problems("RuvinduH", False, ["RuvinduH"], ["RuvinduH"], "Todo"), [])
+
+    def test_author_never_assigned_fails(self):
+        problems = assignee_problems("RuvinduH", False, [], [], "Todo")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("@RuvinduH, is not assigned", problems[0])
+
+    def test_author_assigned_then_handed_to_someone_else_passes(self):
+        self.assertEqual(assignee_problems("RuvinduH", False, ["Thytus777"],
+                                           ["RuvinduH", "Thytus777"], "Todo"), [])
+
+    def test_only_someone_else_ever_assigned_fails(self):
+        self.assertEqual(len(assignee_problems("RuvinduH", False, ["Thytus777"], ["Thytus777"],
+                                               "Todo")), 1)
+
+    def test_logins_compare_without_case(self):
+        self.assertEqual(assignee_problems("ruvinduh", False, ["RuvinduH"], [], "Todo"), [])
+
+    def test_issue_a_bot_opened_needs_no_author_assignee(self):
+        self.assertEqual(assignee_problems("akenon-studio-automation", True, [], [], "Todo"), [])
+
+    def test_waiting_for_human_with_nobody_assigned_fails(self):
+        problems = assignee_problems("RuvinduH", False, [], ["RuvinduH"], "Waiting for human")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Waiting for human", problems[0])
+
+    def test_waiting_for_human_applies_to_a_bots_issue_too(self):
+        self.assertEqual(len(assignee_problems("peras", True, [], [], "Waiting for human")), 1)
+
+    def test_waiting_for_human_with_a_person_passes(self):
+        self.assertEqual(assignee_problems("peras", True, ["RuvinduH"], [], "Waiting for human"), [])
+
+    def test_bots_assigned_are_not_people(self):
+        issue = {"assignedActors": {"nodes": [{"__typename": "Bot", "login": "Copilot"},
+                                              {"__typename": "User", "login": "RuvinduH"}]},
+                 "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": "Thytus777"}},
+                                             {"assignee": None}, {}]}}
+        self.assertEqual(people_assigned(issue), (["RuvinduH"], ["Thytus777"]))
+        issue["assignedActors"]["nodes"].pop()
+        now, _ = people_assigned(issue)
+        self.assertEqual(len(assignee_problems("peras", True, now, [], "Waiting for human")), 1)
 
 
 def sub(number, state, repo="Akenon-Studio/handbook"):
