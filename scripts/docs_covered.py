@@ -71,7 +71,8 @@ def stale_docs(changed, docs):
 
 def problems(stale, body):
     # Only ticks the reviewer can see: not inside HTML comments or fenced code.
-    visible = re.sub(r"<!--.*?-->|```.*?```|~~~.*?~~~", "", body or "", flags=re.S)
+    # (An unclosed comment or fence hides the rest of the body on GitHub, so it is dropped too.)
+    visible = re.sub(r"<!--.*?(?:-->|\Z)|```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)", "", body or "", flags=re.S)
     ticked = set(TICK.findall(visible))
     return {doc: files for doc, files in stale.items() if doc not in ticked}
 

@@ -41,6 +41,10 @@ class TickTest(unittest.TestCase):
         body = "<!-- - [x] Still accurate: docs/architecture/signals.md -->\n```\n- [x] Still accurate: packages/sdk/README.md\n```"
         self.assertEqual(sorted(problems(self.STALE, body)), sorted(self.STALE))
 
+    def test_a_tick_after_an_unclosed_comment_doesnt_count(self):
+        body = "- [x] Still accurate: packages/sdk/README.md\n<!-- note\n- [x] Still accurate: docs/architecture/signals.md"
+        self.assertEqual(list(problems(self.STALE, body)), ["docs/architecture/signals.md"])
+
     def test_backticks_and_capital_x(self):
         body = "* [X] Still accurate: `packages/sdk/README.md`\n- [x] Still accurate: docs/architecture/signals.md"
         self.assertEqual(problems(self.STALE, body), {})
