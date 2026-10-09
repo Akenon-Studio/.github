@@ -37,7 +37,24 @@ def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo
             "comments": {"nodes": [{"body": c} for c in comments]}}
 
 
+def with_epic(item, on_board):
+    item["parent"] = {"number": 136, "title": "Phase 2", "issueType": {"name": "Epic"},
+                      "repository": {"nameWithOwner": "Akenon-Studio/handbook"}, "parent": None}
+    item["projectItems"]["nodes"][0]["epic"] = {"name": on_board} if on_board else None
+    return item
+
+
 class OutOfDateTest(unittest.TestCase):
+    def test_epic_value_behind_the_parents_is_synced(self):
+        self.assertTrue(out_of_date(with_epic(issue(), None), FORMS, BOARD, epic_field=True))
+        self.assertTrue(out_of_date(with_epic(issue(), "Old"), FORMS, BOARD, epic_field=True))
+
+    def test_epic_value_matching_the_parents_is_left_alone(self):
+        self.assertFalse(out_of_date(with_epic(issue(), "Phase 2"), FORMS, BOARD, epic_field=True))
+
+    def test_epic_ignored_until_the_board_has_the_field(self):
+        self.assertFalse(out_of_date(with_epic(issue(), None), FORMS, BOARD))
+
     def test_complete_unlabelled_issue_is_left_alone(self):
         self.assertFalse(out_of_date(issue(), FORMS, BOARD))
 

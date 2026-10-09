@@ -11,7 +11,7 @@ from issue_fields import (all_problems, assignee_problems, board_values, check, 
                           confirmation_problems, confirmed_by_person, finished_parent_problems,
                           link_problems, load_forms,
                           open_sub_issues, parse_body, people_assigned, problems_text,
-                          reopen_reasons, reopen_text, start_status)
+                          reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options)
 
 FORMS = load_forms()
 
@@ -422,3 +422,47 @@ class CommentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def node(number, issue_type="Task", parent=None, title=None, repo="Akenon-Studio/handbook"):
+    return {"number": number, "title": title or f"Issue {number}", "issueType": {"name": issue_type},
+            "repository": {"nameWithOwner": repo}, "parent": parent}
+
+
+class EpicOfTest(unittest.TestCase):
+    def test_work_two_levels_under_an_epic(self):
+        epic = node(146, "Epic", title="Phase 3: the first release")
+        work = node(5, parent=node(37, parent=epic), repo="Akenon-Studio/hardware")
+        self.assertEqual(epic_of(work), ("handbook#146", "Phase 3: the first release"))
+
+    def test_an_epic_is_its_own_epic(self):
+        self.assertEqual(epic_of(node(136, "Epic", title="Phase 2")), ("handbook#136", "Phase 2"))
+
+    def test_no_epic_above(self):
+        self.assertIsNone(epic_of(node(5, parent=node(37))))
+        self.assertIsNone(epic_of(node(5)))
+
+    def test_the_topmost_epic_wins(self):
+        inner = node(2, "Epic", parent=node(1, "Epic", title="Top"))
+        self.assertEqual(epic_of(node(3, parent=inner))[1], "Top")
+
+    def test_ancestors_query_goes_deep_enough(self):
+        self.assertEqual(ancestors(3).count("parent {"), 2)
+
+
+LIVE = [{"id": "a", "name": "Phase 2", "color": "GRAY", "description": "handbook#136"}]
+
+
+class EpicOptionsTest(unittest.TestCase):
+    def test_up_to_date_changes_nothing(self):
+        self.assertIsNone(epic_options(LIVE, "handbook#136", "Phase 2"))
+
+    def test_new_epic_is_added_and_existing_ids_kept(self):
+        options = epic_options(LIVE, "handbook#147", "The display")
+        self.assertEqual(options[0]["id"], "a")
+        self.assertEqual(options[1], {"name": "The display", "color": "GRAY",
+                                      "description": "handbook#147"})
+
+    def test_renamed_epic_keeps_its_option(self):
+        options = epic_options(LIVE, "handbook#136", "Phase 2: the working flow")
+        self.assertEqual(options, [dict(LIVE[0], name="Phase 2: the working flow")])

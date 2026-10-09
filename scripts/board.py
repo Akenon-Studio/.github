@@ -96,7 +96,7 @@ def board_differences(board, want):
         if live["dataType"] != f["type"]:
             diffs.append(f"field '{f['name']}': expected type {f['type']}, got {live['dataType']}")
             continue
-        if f["type"] == "SINGLE_SELECT":
+        if f["type"] == "SINGLE_SELECT" and "options_from" not in f:  # Epic: options are data
             strip = lambda opts: [{k: o[k] for k in ("name", "color", "description")} for o in opts]
             if strip(live["options"]) != f["options"]:
                 diffs.append(f"field '{f['name']}': options are {[o['name'] for o in live['options']]}, "

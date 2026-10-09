@@ -102,6 +102,12 @@
       ]
     },
     {
+      "name": "Epic",
+      "type": "SINGLE_SELECT",
+      "options_from": "epics",
+      "_comment": "One option per epic, kept by issue_fields.py from each issue's parents, never set by hand (design 6.6): the option's name is the epic's title, its description the epic's repo#n. apply-board.py creates the field with the epics that exist; verify-settings.py checks only that it exists."
+    },
+    {
       "name": "Iteration",
       "type": "ITERATION",
       "_comment": "Weekly, Saturday to Friday: the Friday planning meeting closes one week and commits the next.",
@@ -228,6 +234,7 @@
       "filter": "is:open -label:needs-fields assignee:@me -status:Done",
       "fields": [
         "Title",
+        "Epic",
         "Status",
         "Priority",
         "Iteration",
@@ -245,6 +252,7 @@
       "filter": "is:open -label:needs-fields no:iteration -status:Done",
       "fields": [
         "Title",
+        "Epic",
         "Discipline",
         "Priority",
         "Assignees",
@@ -277,6 +285,40 @@
       ]
     },
     {
+      "name": "Epics",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open type:Epic",
+      "fields": [
+        "Title",
+        "Sub-issues progress",
+        "Priority",
+        "Assignees"
+      ],
+      "sort": [
+        "Priority",
+        "ASC"
+      ],
+      "_comment": "Each open epic and how much of it is done and left (design 6.6)."
+    },
+    {
+      "name": "By epic",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open -label:needs-fields -status:Done -type:Epic",
+      "fields": [
+        "Title",
+        "Status",
+        "Assignees",
+        "Discipline",
+        "Repository"
+      ],
+      "group_by": "Epic",
+      "sort": [
+        "Priority",
+        "ASC"
+      ],
+      "_comment": "Open work under each epic, with who is on it (design 6.6)."
+    },
+    {
       "name": "Roadmap",
       "layout": "ROADMAP_LAYOUT",
       "filter": "is:open -label:needs-fields -type:Bug",
@@ -286,7 +328,7 @@
         "Priority",
         "ASC"
       ],
-      "_comment": "Rows are parent issues (phase steps, partner workstreams; design 6.6). Dates come from Iteration; set Date fields to Iteration and zoom to Quarter by hand."
+      "_comment": "Rows are parent issues (phase steps, a release's parts; design 6.6); filter by Epic for one epic. Dates come from Iteration; set Date fields to Iteration and zoom to Quarter by hand."
     },
     {
       "name": "Peras cycles",
@@ -322,24 +364,6 @@
         "ASC"
       ],
       "_comment": "A bug leaves this view when it is closed as triaged into an intent or a task."
-    },
-    {
-      "name": "Audit",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open type:\"Audit finding\",Decision",
-      "fields": [
-        "Title",
-        "Audit",
-        "Severity",
-        "Status",
-        "Assignees"
-      ],
-      "group_by": "Audit",
-      "sort": [
-        "Severity",
-        "ASC"
-      ],
-      "_comment": "Phase 1 only (audit findings exist only in phase 1); delete this view from board.json when phase 1 ends."
     },
     {
       "name": "Process failures",

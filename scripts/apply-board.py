@@ -23,6 +23,16 @@ def create_board(title):
     return find_board(title)
 
 
+def epics():
+    """Every epic in the org as an Epic field option (design 6.6); issue_fields.py keeps them
+    current after this."""
+    found = graphql("""query($q: String!) { search(type: ISSUE, query: $q, first: 100) {
+        nodes { ... on Issue { number title repository { name } } } } }""",
+                    q=f"org:{ORG} type:Epic")["search"]["nodes"]
+    return [{"name": e["title"], "color": "GRAY",
+             "description": f"{e['repository']['name']}#{e['number']}"} for e in found if e]
+
+
 def options(want, live=None):
     """Spec options, keeping the IDs of options that already exist so item values survive."""
     ids = {o["name"]: o["id"] for o in (live or {}).get("options", [])}
@@ -44,14 +54,14 @@ def apply_field(board, f):
     if live is None:
         extra = {}
         if f["type"] == "SINGLE_SELECT":
-            extra["singleSelectOptions"] = options(f)
+            extra["singleSelectOptions"] = epics() if "options_from" in f else options(f)
         if f["type"] == "ITERATION":
             extra["iterationConfiguration"] = iterations(f)
         graphql("""mutation($input: CreateProjectV2FieldInput!) {
             createProjectV2Field(input: $input) { clientMutationId } }""",
                 input={"projectId": board["id"], "dataType": f["type"], "name": f["name"], **extra})
         print(f"field '{f['name']}': created")
-    elif f["type"] == "SINGLE_SELECT":
+    elif f["type"] == "SINGLE_SELECT" and "options_from" not in f:
         graphql("""mutation($input: UpdateProjectV2FieldInput!) {
             updateProjectV2Field(input: $input) { clientMutationId } }""",
                 input={"fieldId": live["id"], "singleSelectOptions": options(f, live)})

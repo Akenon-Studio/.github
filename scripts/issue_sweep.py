@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Re-check issues on a schedule, for changes that send no event every repo's caller listens to
-(design 6.8): a board Status set to Blocked or Waiting for human, an assignee added or removed, a parent or "blocked by" link added or removed, a
+(design 6.8): a part moved to another epic (the Epic board field of the work under it, 6.6), a board Status set to Blocked or Waiting for human, an assignee added or removed, a parent or "blocked by" link added or removed, a
 parent closed while its sub-issues are open, a parent's last open sub-issue closed (which sends the
 parent no event). Runs the issue_fields.py checks on every open issue in
 the managed repos and syncs only those whose `needs-fields` label or comment is out of date, then
@@ -24,8 +24,8 @@ import json
 import sys
 
 from board import find_board_fields, graphql, spec
-from issue_fields import (ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early, load_forms,
-                          problems_text, status_on, sync)
+from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early,
+                          epic_stale, load_forms, problems_text, status_on, sync)
 from rules import ORG, automation_owners, gh, managed_repos, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
@@ -57,8 +57,12 @@ def search(query, fields=ISSUE_SEARCH):
         after = page["pageInfo"]["endCursor"]
 
 
-def out_of_date(issue, forms, board_id):
-    """True if the issue's label or comment doesn't match what the checks find now."""
+def out_of_date(issue, forms, board_id, epic_field=False):
+    """True if the issue's label or comment doesn't match what the checks find now, or (when the
+    board has an Epic field) its Epic value doesn't match its parents, e.g. after a part moved to
+    another epic, which sends the work under it no event."""
+    if epic_field and epic_stale(board_id, issue):
+        return True
     problems = all_problems(issue, forms, status_on(board_id, issue))
     labelled = LABEL in {l["name"] for l in issue["labels"]["nodes"]}
     ours = [c["body"] for c in issue["comments"]["nodes"] if c["body"].startswith(MARKER)]
@@ -179,9 +183,10 @@ def main():
     dry_run = "--dry-run" in sys.argv[1:]
     forms, managed = load_forms(), set(managed_repos())
     board = find_board_fields(spec()["title"])
+    epic_field = any(f.get("name") == EPIC_FIELD for f in board["fields"]["nodes"])
     results = []
     for issue in search(f"org:{ORG} is:issue is:open"):
-        if in_managed_repo(issue, managed) and out_of_date(issue, forms, board["id"]):
+        if in_managed_repo(issue, managed) and out_of_date(issue, forms, board["id"], epic_field):
             results.append(issue_sync(issue, forms, board, dry_run))
     since = (datetime.datetime.now(datetime.timezone.utc) - CLOSED_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     for issue in search(f"org:{ORG} is:issue is:closed closed:>={since}"):
