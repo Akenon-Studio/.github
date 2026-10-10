@@ -7,7 +7,8 @@ adds. Uses the Claude API directly, not Claude Code: the plan's monthly API cred
 but not Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
 A push that leaves the PR's diff as it was (bringing `main` in without conflicts) gets no new
-review: each review records the diff's `git patch-id`, which ignores line numbers (design 6.4).
+review: each review records the diff's `git patch-id`, which ignores line numbers, with the repo's
+CLAUDE.md, so a new rule brought in from `main` does get a review (design 6.4).
 
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
 (GitHub's tokens are single-use there), so no API key exists anywhere.
@@ -21,6 +22,7 @@ ANTHROPIC_* sign-in, or an ANTHROPIC_API_KEY for a local try)
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -141,15 +143,16 @@ def to_github(review, files, left_out, already=frozenset()):
     return {"event": "COMMENT", "body": body, "comments": inline}
 
 
-def fingerprint(files):
-    """The `git patch-id --stable` of the reviewed files' diff: the same when only line numbers
-    moved, as when `main` is brought in. None if git can't tell."""
+def fingerprint(files, claude_md=""):
+    """What the review read, as 40 hex digits: the `git patch-id --stable` of the reviewed files'
+    diff (the same when only line numbers moved, as when `main` is brought in) and the repo's
+    CLAUDE.md. None if git can't tell."""
     try:
         out = subprocess.run(["git", "patch-id", "--stable"], input="".join(files.values()),
                              capture_output=True, text=True, timeout=60).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return None
-    return out[0] if out else None
+    return hashlib.sha1(f"{out[0]}\n{claude_md}".encode()).hexdigest() if out else None
 
 
 def last_fingerprint(reviews):
@@ -261,19 +264,19 @@ def main(argv):
     if diff is not None and not files:
         print("Nothing to review: the PR changes only generated or lock files.")
         return 0
-    fp = fingerprint(files) if files else None
+    try:
+        claude_md = open("CLAUDE.md").read()
+    except OSError:
+        claude_md = ""
+    fp = fingerprint(files, claude_md) if files else None
     if fp and fp == last_fingerprint(all_reviews(repo, number, token)):
-        print(f"The diff is unchanged since the last review (patch-id {fp}); nothing new to review.")
+        print(f"The diff and CLAUDE.md are unchanged since the last review ({fp}); nothing new to review.")
         return 0
     text, left_out = review_input(files)
     if not text:
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
-        try:
-            claude_md = open("CLAUDE.md").read()
-        except OSError:
-            claude_md = ""
         review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
                            left_out, earlier_comments(repo, number, token))
     if fp:

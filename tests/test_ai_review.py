@@ -86,6 +86,9 @@ class FingerprintTest(unittest.TestCase):
         self.assertNotEqual(fingerprint(split_diff(DIFF)),
                             fingerprint(split_diff(DIFF.replace("const c = 4;", "const c = 5;"))))
 
+    def test_a_new_claude_md_changes_it(self):
+        self.assertNotEqual(fingerprint(split_diff(DIFF), "rules"), fingerprint(split_diff(DIFF), "new rules"))
+
     def test_the_latest_own_review_counts(self):
         fp = "a" * 40
         bot = {"login": "github-actions[bot]"}

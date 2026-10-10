@@ -19,7 +19,8 @@
 #   In a repo without a pnpm-lock.yaml both pass with nothing to check; the job always runs, so it
 #   can be required everywhere and starts checking the day a lockfile is committed.
 # The repo is checked out under repo/ in the code job, so the scans don't read the scripts' copy.
-# A new push cancels the PR's run still going.
+# A newer push cancels the run still going, on main too: every scan reads the whole repo (gitleaks
+# its whole history), so the newer commit's scan covers the older one's.
 name: security-scan
 
 on:
