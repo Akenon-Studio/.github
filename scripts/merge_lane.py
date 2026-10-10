@@ -44,6 +44,7 @@ MAX_REFUSALS = 3          # GitHub refused the merge this many times in a row: i
 DEADLINE = 45 * 60        # a run stops after this: the app's token expires at 60 minutes
 UPDATE_LAG = 3 * 60       # after bringing main in, the longest GitHub may take to show the new commit
 MORE_LEFT = 3             # exit code: PRs are still labelled; start another run
+MORE_LEFT_UNCLOSED = 4    # exit code: both that, and issues to close by hand (start another run, fail)
 PASSING = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 MERGEABLE = {"CLEAN", "UNSTABLE", "HAS_HOOKS"}  # UNSTABLE: only a check that isn't required failed
 TRANSIENT = {500, 502, 503, 504}
@@ -265,7 +266,7 @@ def github_message(error):
 
 
 def run_one(gh, number, required, deadline, threads_required=True):
-    """Take one PR through the lane. Returns "merged", or "done" once it is dropped or gone, or
+    """Take one PR through the lane. Returns ("merged", author), or "done" once it is dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front). The timers are
     per run: a paused PR is first in the next run, which gives it CHECKS_TIMEOUT from its start,
     so it waits at most DEADLINE + CHECKS_TIMEOUT in all."""
@@ -326,7 +327,7 @@ def run_one(gh, number, required, deadline, threads_required=True):
                 gh.call(f"repos/{gh.repo}/pulls/{number}/merge", "PUT",
                         {"merge_method": "squash", "sha": head})
                 print(f"#{number}: merged")
-                return "merged"
+                return "merged", (pr.get("author") or {}).get("login")
             except urllib.error.HTTPError as e:
                 if e.code not in (405, 409):  # 405: not mergeable right now; 409: head moved
                     raise
@@ -347,26 +348,63 @@ def run_one(gh, number, required, deadline, threads_required=True):
         time.sleep(POLL)
 
 
-def close_issues(issues_gh, number):
-    """Close the merged PR's open closing issues, saying which PR closed them. Returns the ones
-    that couldn't be closed (the PR is merged either way)."""
-    refs = issues_gh.graphql(CLOSING, number=number)["pullRequest"]["closingIssuesReferences"]["nodes"]
+def can_write(issues_gh, repo, login, cache):
+    """Whether `login` may write to `repo`: the lane closes only what the PR's author could close."""
+    if (repo, login) not in cache:
+        try:
+            level = issues_gh.call(f"repos/{repo}/collaborators/{login}/permission")["permission"]
+        except urllib.error.HTTPError as e:
+            if e.code != 404:  # 404: not a collaborator there
+                raise
+            level = "none"
+        cache[(repo, login)] = level in ("admin", "maintain", "write")
+    return cache[(repo, login)]
+
+
+def close_issues(issues_gh, number, author):
+    """Close the merged PR's open closing issues, then say which PR closed them. Only issues in
+    repos the PR's author can write to: the `Closes` text is theirs, and this token reaches every
+    repo. Returns what couldn't be closed, for a person to do by hand (the PR is merged either way).
+    """
     pr_ref = f"{issues_gh.repo}#{number}"
-    failed = []
+    try:
+        pr = issues_gh.graphql(CLOSING, number=number)["pullRequest"]
+        refs = pr["closingIssuesReferences"]["nodes"]
+    except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
+        print(f"::error::#{number} merged, but its closing issues couldn't be read ({e!r})")
+        return [f"the issues {pr_ref} closes (couldn't read them)"]
+    failed, cache = [], {}
     for issue in refs:
         if issue["state"] != "OPEN":
             continue
         repo, n = issue["repository"]["nameWithOwner"], issue["number"]
         try:
+            if not author or not can_write(issues_gh, repo, author, cache):
+                print(f"::warning::#{number}: not closing {repo}#{n}: {author} can't write to {repo}")
+                failed.append(f"{repo}#{n} ({author} can't write there)")
+                continue
+            issues_gh.call(f"repos/{repo}/issues/{n}", "PATCH", {"state": "closed", "state_reason": "completed"})
+            print(f"#{number}: closed {repo}#{n}")
+        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as e:
+            print(f"::error::#{number} merged, but {repo}#{n} couldn't be closed ({e!r}): close it by hand")
+            failed.append(f"{repo}#{n}")
+            continue
+        try:  # closed first: a comment that fails leaves it closed, which is what matters
             issues_gh.call(f"repos/{repo}/issues/{n}/comments", "POST", {"body": (
                 f"<!-- merge-lane -->\nClosed by {pr_ref}, which the merge lane merged (GitHub doesn't "
                 "close a PR's issues when an app merges it; design 6.2).")}, tries=1)
-            issues_gh.call(f"repos/{repo}/issues/{n}", "PATCH", {"state": "closed", "state_reason": "completed"})
-            print(f"#{number}: closed {repo}#{n}")
-        except urllib.error.HTTPError as e:
-            print(f"::error::#{number} merged, but {repo}#{n} couldn't be closed ({e.code}): close it by hand")
-            failed.append(f"{repo}#{n}")
+        except (OSError, http.client.HTTPException) as e:
+            print(f"::warning::#{number}: closed {repo}#{n}, but couldn't say why ({e!r})")
     return failed
+
+
+def report(unclosed, code):
+    """The exit code. Issues left open fail the run (so whoever labelled is emailed), and a run with
+    PRs still to go says both, so the workflow starts the next run and still fails this one."""
+    if not unclosed:
+        return code
+    print(f"::error::Merged, but close these by hand: {', '.join(unclosed)}")
+    return MORE_LEFT_UNCLOSED if code == MORE_LEFT else 1
 
 
 def main():
@@ -379,21 +417,20 @@ def main():
     while True:
         waiting = [n for n in queue(gh.graphql(QUEUE, label=LABEL)) if n not in done]
         if not waiting:
-            print("The lane is empty." if not unclosed else
-                  f"The lane is empty; close by hand: {', '.join(unclosed)}")
-            return 1 if unclosed else 0
+            print("The lane is empty.")
+            return report(unclosed, 0)
         if time.time() > deadline:
             print(f"Time is up with {len(waiting)} PR(s) still labelled; starting a new run.")
-            return MORE_LEFT
+            return report(unclosed, MORE_LEFT)
         print(f"Lane: {', '.join(f'#{n}' for n in waiting)}")
         number = waiting[0]
         # An error here stops the run with every label left on (see the top): it is GitHub's or the
         # lane's, not the PR's, so no author is told to relabel.
         result = run_one(gh, number, required, deadline, threads_required)
         if result == "paused":
-            return MORE_LEFT
-        if result == "merged":
-            unclosed += close_issues(issues_gh, number)
+            return report(unclosed, MORE_LEFT)
+        if isinstance(result, tuple):  # ("merged", author)
+            unclosed += close_issues(issues_gh, number, result[1])
         done.add(number)
 
 

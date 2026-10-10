@@ -339,27 +339,43 @@ class MainTest(unittest.TestCase):
 
 class CloseIssuesTest(unittest.TestCase):
     class Issues(FakeGitHub):
-        def __init__(self, refs, fail=None):
+        def __init__(self, refs, fail=None, writers=("Akenon-Studio/x", "Akenon-Studio/.github")):
             super().__init__([None], fail)
-            self.refs = refs
+            self.refs, self.writers = refs, writers
 
         def graphql(self, query, **variables):
             return {"pullRequest": {"closingIssuesReferences": {"nodes": self.refs}}}
+
+        def call(self, path, method="GET", body=None, tries=4):
+            if path.endswith("/permission"):
+                repo = path.split("/collaborators/")[0].removeprefix("repos/")
+                return {"permission": "write" if repo in self.writers else "read"}
+            return super().call(path, method, body, tries)
 
     def ref(self, n, repo="Akenon-Studio/x", state="OPEN"):
         return {"number": n, "state": state, "repository": {"nameWithOwner": repo}}
 
     def test_says_which_pr_then_closes_each_open_one_in_any_repo(self):
         gh = self.Issues([self.ref(4), self.ref(93, "Akenon-Studio/.github"), self.ref(5, state="CLOSED")])
-        self.assertEqual(close_issues(gh, 7), [])
+        self.assertEqual(close_issues(gh, 7, "someone"), [])
         self.assertEqual(gh.calls, [
-            ("POST", "repos/Akenon-Studio/x/issues/4/comments"), ("PATCH", "repos/Akenon-Studio/x/issues/4"),
-            ("POST", "repos/Akenon-Studio/.github/issues/93/comments"),
-            ("PATCH", "repos/Akenon-Studio/.github/issues/93")])
+            ("PATCH", "repos/Akenon-Studio/x/issues/4"), ("POST", "repos/Akenon-Studio/x/issues/4/comments"),
+            ("PATCH", "repos/Akenon-Studio/.github/issues/93"),
+            ("POST", "repos/Akenon-Studio/.github/issues/93/comments")])
+
+    def test_never_closes_an_issue_where_the_author_cant_write(self):
+        gh = self.Issues([self.ref(1, "Akenon-Studio/secret")], writers=("Akenon-Studio/x",))
+        self.assertEqual(close_issues(gh, 7, "someone"), ["Akenon-Studio/secret#1 (someone can't write there)"])
+        self.assertEqual(gh.calls, [])
+
+    def test_a_failed_lookup_is_reported(self):
+        gh = self.Issues([])
+        gh.graphql = mock.Mock(side_effect=urllib.error.URLError("down"))
+        self.assertEqual(len(close_issues(gh, 7, "someone")), 1)
 
     def test_one_that_cant_be_closed_is_reported_and_the_rest_go_on(self):
         gh = self.Issues([self.ref(4), self.ref(6)], fail={"4": 403})
-        self.assertEqual(close_issues(gh, 7), ["Akenon-Studio/x#4"])
+        self.assertEqual(close_issues(gh, 7, "someone"), ["Akenon-Studio/x#4"])
         self.assertIn(("PATCH", "repos/Akenon-Studio/x/issues/6"), gh.calls)
 
 if __name__ == "__main__":

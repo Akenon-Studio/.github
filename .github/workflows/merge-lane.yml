@@ -54,7 +54,9 @@ jobs:
           app-id: ${{ vars.MERGE_LANE_APP_ID }}
           private-key: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
 
-      - name: Log in again for issues in every repo (a PR may close one elsewhere)
+      # Every repo, because a PR may close an issue elsewhere. The script closes an issue only in a
+      # repo the PR's author can write to, since the `Closes` text is theirs.
+      - name: Log in again for issues in every repo
         id: issues
         # pinned to a commit: this step holds the app's key (Renovate bumps it)
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
@@ -81,8 +83,10 @@ jobs:
         run: |
           status=0
           python3 .akenon-github/scripts/merge_lane.py || status=$?
-          if [ "$status" = 3 ]; then  # MORE_LEFT: out of time with PRs still labelled
+          # 3: out of time with PRs still labelled; 4: that, and issues to close by hand
+          if [ "$status" = 3 ] || [ "$status" = 4 ]; then
             gh workflow run merge-lane-caller.yml -R "$GITHUB_REPOSITORY" --ref main
+            [ "$status" = 4 ] && exit 1
             exit 0
           fi
           exit "$status"
