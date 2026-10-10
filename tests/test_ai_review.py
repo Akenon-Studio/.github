@@ -151,9 +151,11 @@ class RequestTest(unittest.TestCase):
         system, user = request("rules", "design", "t", "d", {"a.py": "x = 1"}, "diff")
         self.assertEqual(system[1]["cache_control"], {"type": "ephemeral", "ttl": "1h"})
         self.assertIn('<file path="a.py">\nx = 1\n</file>', user)
-        self.assertNotIn("This is a later round", system[0]["text"])
+        self.assertNotIn("This is a later round", user)
+        first = system
         system, user = request("rules", "design", "t", "d", {}, "diff", later=("earlier", "since"))
-        self.assertIn("This is a later round", system[0]["text"])
+        self.assertEqual(system, first, "the cached prefix is the same in every round")
+        self.assertTrue(user.startswith("This is a later round"))
         self.assertIn("<earlier_review>\nearlier\n</earlier_review>", user)
         self.assertIn("<changes_since>\nsince\n</changes_since>", user)
 

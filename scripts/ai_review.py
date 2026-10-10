@@ -209,14 +209,14 @@ def tagged(tag, text):
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None):
-    """(system, user) for the Messages API. The system holds what is the same for every PR of a
-    repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings and
-    replies, changes since the last review) for a later round."""
-    instructions = INSTRUCTIONS + (LATER_ROUND if later else "")
-    system = [{"type": "text", "text": instructions},
+    """(system, user) for the Messages API. The system holds what is the same for every round and
+    PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
+    and replies, changes since the last review) for a later round, which says so in the user
+    message to keep the cached prefix the same."""
+    system = [{"type": "text", "text": INSTRUCTIONS},
               {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
                "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
-    user = (f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
+    user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
             "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
             tagged("diff", diff_text))
     if later:

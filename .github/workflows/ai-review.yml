@@ -58,8 +58,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Without the design the review still runs (the script says so), so neither step fails the job
       - name: Log in as the org app, to read the design
         if: env.WANTED == 'true' && env.HAS_KEY == 'true'
+        continue-on-error: true
         id: app
         uses: actions/create-github-app-token@v2
         with:
@@ -70,7 +72,8 @@ jobs:
           permission-contents: read
 
       - name: Get the design
-        if: env.WANTED == 'true' && env.HAS_KEY == 'true'
+        if: env.WANTED == 'true' && env.HAS_KEY == 'true' && steps.app.outcome == 'success'
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: akenon-studio/handbook
