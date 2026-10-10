@@ -205,6 +205,10 @@ class RunOneTest(unittest.TestCase):
     def test_a_merge_returns_the_author_for_closing_issues(self):
         self.assertEqual(run_one(FakeGitHub([pr()]), 7, REQUIRED, float("inf")), ("merged", {"__typename": "User", "login": "someone"}))
 
+    def test_a_merge_whose_reply_was_lost_still_closes_its_issues(self):
+        gh = FakeGitHub([pr(), pr(state="MERGED")], fail={"merge": 405})
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"))[0], "merged")
+
     def test_brings_main_in_then_merges(self):
         gh = FakeGitHub([pr(status="BEHIND"), pr(head="def")])
         run_one(gh, 7, REQUIRED, float("inf"))
@@ -379,6 +383,9 @@ class CloseIssuesTest(unittest.TestCase):
         self.assertEqual(failed, ["Akenon-Studio/.github#93 (renovate can't write there)"])
         self.assertIn(("PATCH", "repos/Akenon-Studio/x/issues/4"), gh.calls)
         self.assertEqual(gh.lookups, [])  # a bot's login isn't a REST login: never looked up
+
+    def test_an_issue_it_cant_see_is_skipped(self):
+        self.assertEqual(close_issues(self.Issues([None]), 7, {"__typename": "User", "login": "someone"}), [])
 
     def test_a_failed_lookup_is_reported(self):
         gh = self.Issues([])

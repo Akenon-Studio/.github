@@ -285,6 +285,11 @@ def run_one(gh, number, required, deadline, threads_required=True):
         missing = "MISSING" in check_states(pr, required).values()
         if missing:
             missing_since.setdefault(head, time.time())
+        if pr["state"] == "MERGED":
+            # merged, though maybe not by a reply we saw (a lost response, then a 405): its issues
+            # still need closing, which is harmless if someone else merged it
+            print(f"#{number}: merged")
+            return "merged", pr.get("author") or {}
         action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0,
                                 threads_required)
         if updated_from and head != updated_from[0]:
@@ -381,7 +386,7 @@ def close_issues(issues_gh, number, author):  # author: {"__typename", "login"}
     failed, cache = ([f"the issues {pr_ref} closes beyond the first 50"] if more else []), {}
     bot, login = author.get("__typename") == "Bot", author.get("login")
     for issue in refs:
-        if issue["state"] != "OPEN":
+        if not issue or issue.get("state") != "OPEN":  # null: an issue this token can't see
             continue
         repo, n = issue["repository"]["nameWithOwner"], issue["number"]
         try:
