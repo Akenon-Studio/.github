@@ -9,10 +9,13 @@ close fails: that work splits the issue first, and the PR closes the new sub-iss
 
 A PR from a bot with no issue behind it (`no_issue` in rulesets/bots.json: Renovate's dependency
 updates, release-please's Release PR) passes without one, as long as every commit on it is that
-bot's own, signed (GitHub verifies the commits a bot makes through its API, so a forged author email
-doesn't pass): a person who pushes their work onto the bot's branch needs `Closes #n` like anyone.
-Merge commits that bring the base branch in (the merge lane, Update branch) don't count. Its source
-label says where it came from (design 6.8, check 1).
+bot's own: authored by the bot, committed by the bot or by GitHub for it (`web-flow`), and verified.
+GitHub checks the signature against the committer, so a person can't pass by forging only the
+author. A person who pushes their work onto the bot's branch needs `Closes #n` like anyone. Merge
+commits GitHub makes to bring the base branch in (the merge lane's update-branch call, the Update
+branch button: committed by `web-flow`, verified) are skipped; any other merge commit counts like a
+normal one, since a merge can carry changes of its own. Its source label says where it came from
+(design 6.8, check 1).
 
 Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE, PR_NUMBER and
 GITHUB_REPOSITORY from the environment; GH_TOKEN reads the PR's commits)
@@ -63,13 +66,25 @@ def exempt(author, author_type, sources):
     return author_type == "Bot" and sources.get(bot_login(author), {}).get("no_issue", False)
 
 
+GITHUB_COMMITTER = "web-flow"  # GitHub's own committer, for commits it makes through its API or UI
+
+
+def verified(c):
+    return bool(((c.get("commit") or {}).get("verification") or {}).get("verified"))
+
+
+def login(c, who):
+    return bot_login((c.get(who) or {}).get("login"))
+
+
 def only_bot_commits(commits, author):
-    """True if every commit on the PR, merge commits aside, was authored by the bot that opened it
-    and is verified."""
-    own = [c for c in commits if len(c.get("parents") or []) < 2]
-    return bool(own) and all(bot_login((c.get("author") or {}).get("login")) == bot_login(author)
-                             and ((c.get("commit") or {}).get("verification") or {}).get("verified")
-                             for c in own)
+    """True if every commit on the PR, GitHub's base-branch merges aside, is the bot's own: authored
+    by it, committed by it or by GitHub, and verified."""
+    bot = bot_login(author)
+    own = [c for c in commits if not (len(c.get("parents") or []) > 1 and verified(c)
+                                      and login(c, "committer") == GITHUB_COMMITTER)]
+    return bool(own) and all(login(c, "author") == bot and login(c, "committer") in (bot, GITHUB_COMMITTER)
+                             and verified(c) for c in own)
 
 
 def pr_commits(repo, number):

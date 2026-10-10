@@ -83,9 +83,9 @@ class BotCommitsTest(unittest.TestCase):
     BOT = "akenon-studio-release[bot]"
 
     @staticmethod
-    def commit(login, verified=True, parents=1):
-        return {"author": {"login": login} if login else None, "parents": [{}] * parents,
-                "commit": {"verification": {"verified": verified}}}
+    def commit(login, verified=True, parents=1, committer="web-flow"):
+        return {"author": {"login": login} if login else None, "committer": {"login": committer},
+                "parents": [{}] * parents, "commit": {"verification": {"verified": verified}}}
 
     def test_a_bots_own_signed_commits_only(self):
         bot = self.commit(self.BOT)
@@ -94,12 +94,22 @@ class BotCommitsTest(unittest.TestCase):
         self.assertFalse(only_bot_commits([bot, self.commit("someone")], self.BOT))
         self.assertFalse(only_bot_commits([self.commit(None)], "renovate[bot]"))  # an unlinked email
         self.assertFalse(only_bot_commits([self.commit(self.BOT, verified=False)], self.BOT))  # a forged email
+        # signed by a person who kept themselves as committer and forged only the author
+        self.assertFalse(only_bot_commits([self.commit(self.BOT, committer="someone")], self.BOT))
+        self.assertTrue(only_bot_commits([self.commit(self.BOT, committer=self.BOT)], self.BOT))
         self.assertFalse(only_bot_commits([], self.BOT))
 
-    def test_merging_main_in_doesnt_count(self):
-        merge = self.commit("akenon-studio-merge-lane[bot]", verified=False, parents=2)
+    def test_githubs_merges_of_main_dont_count(self):
+        merge = self.commit("akenon-studio-merge-lane[bot]", parents=2)  # update-branch: web-flow, verified
         self.assertTrue(only_bot_commits([self.commit(self.BOT), merge], self.BOT))
         self.assertFalse(only_bot_commits([merge], self.BOT))  # nothing of the bot's own
+
+    def test_a_persons_own_merge_commit_counts(self):
+        # git merge main --no-commit, own changes added, pushed: an "evil merge"
+        local = self.commit("someone", parents=2, committer="someone")
+        self.assertFalse(only_bot_commits([self.commit(self.BOT), local], self.BOT))
+        unsigned = self.commit("someone", parents=2, verified=False)
+        self.assertFalse(only_bot_commits([self.commit(self.BOT), unsigned], self.BOT))
 
 
 class MainTest(unittest.TestCase):
