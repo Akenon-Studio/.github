@@ -25,7 +25,7 @@ def pr(contexts=None, state="OPEN", draft=False, mergeable="MERGEABLE", status="
     if contexts is None:
         contexts = [run("pr-title / checks"), run("security-scan / code")]
     return {"number": 7, "state": state, "isDraft": draft, "mergeable": mergeable,
-            "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head,
+            "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head, "baseRefName": "main",
             "author": {"login": "someone"}, "labels": {"nodes": [{"name": n} for n in labels]},
             "reviewThreads": {"nodes": [{"isResolved": r} for r in threads]},
             "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
@@ -77,6 +77,11 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(action, "drop")
         self.assertIn("security-scan / code", reason)
 
+    def test_only_prs_into_main(self):
+        p = pr()
+        p["baseRefName"] = "feat/12-other"
+        self.assertEqual(self.action(p), "drop")
+
     def test_conflicts_drafts_and_unlabelled(self):
         self.assertEqual(self.action(pr(mergeable="CONFLICTING", status="DIRTY")), "drop")
         self.assertEqual(self.action(pr(draft=True)), "drop")
@@ -113,6 +118,13 @@ class QueueTest(unittest.TestCase):
             node(2, ("task", "2026-10-10T00:00:00Z"), ("ready-to-merge", "2026-10-10T02:00:00Z")),
         ]}}
         self.assertEqual(queue(data), [2, 3, 1])
+
+    def test_a_pr_whose_labelling_is_too_old_to_see_goes_to_the_back(self):
+        data = {"pullRequests": {"nodes": [
+            {"number": 5, "timelineItems": {"nodes": []}},
+            {"number": 6, "timelineItems": {"nodes": [{"createdAt": "2026-10-10T01:00:00Z",
+                                                        "label": {"name": "ready-to-merge"}}]}}]}}
+        self.assertEqual(queue(data), [6, 5])
 
 
 class CheckStatesTest(unittest.TestCase):

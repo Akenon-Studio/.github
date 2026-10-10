@@ -54,7 +54,7 @@ QUEUE = """query($owner: String!, $name: String!, $label: String!) {
 PR = """query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      number state isDraft mergeable mergeStateStatus reviewDecision headRefOid
+      number state isDraft mergeable mergeStateStatus reviewDecision headRefOid baseRefName
       author { login }
       labels(first: 100) { nodes { name } }
       reviewThreads(first: 100) { nodes { isResolved } }
@@ -118,7 +118,8 @@ def queue(repo_data):
     for pr in repo_data["pullRequests"]["nodes"]:
         times = [e["createdAt"] for e in pr["timelineItems"]["nodes"]
                  if (e.get("label") or {}).get("name") == LABEL]
-        when[pr["number"]] = max(times) if times else ""
+        # no labelling found (older than the events read): to the back, not the front
+        when[pr["number"]] = max(times) if times else "~"
     return sorted(when, key=lambda n: (when[n], n))
 
 
@@ -157,10 +158,12 @@ def decide(pr, required, missing_for):
     `missing_for`: seconds the lane has seen a required check with no run on this commit."""
     if pr["state"] != "OPEN" or LABEL not in {l["name"] for l in pr["labels"]["nodes"]}:
         return "gone", "no longer open or labelled"
+    if pr["baseRefName"] != "main":
+        return "drop", f"it targets `{pr['baseRefName']}`, and the lane merges only into `main`"
     if pr["isDraft"]:
         return "drop", "it is a draft"
     if pr["mergeable"] == "CONFLICTING" or pr["mergeStateStatus"] == "DIRTY":
-        return "drop", "it conflicts with main: merge main in and resolve, then label it again"
+        return "drop", "it conflicts with main: merge main in and resolve it"
     if too_many_checks(pr):
         return "drop", "it has over 100 checks, more than the lane reads: merge it by hand"
     # Before bringing main in: a PR that can't merge anyway isn't worth a CI run.
@@ -170,7 +173,7 @@ def decide(pr, required, missing_for):
         return "drop", "required checks failed: " + ", ".join(failed)
     waiting_on = people_needed(pr)
     if waiting_on:
-        return "blocked", "the rules block it: " + waiting_on + ". Fix that, then label it again"
+        return "blocked", "the rules block it: " + waiting_on
     if pr["mergeStateStatus"] == "BEHIND":
         return "update", "behind main"
     if pr["mergeable"] == "UNKNOWN" or pr["mergeStateStatus"] == "UNKNOWN":
@@ -183,7 +186,7 @@ def decide(pr, required, missing_for):
         return "wait", "required checks still running"
     if pr["mergeStateStatus"] in MERGEABLE:
         return "merge", "approved and green"
-    return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']}). Fix that, then label it again"
+    return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']})"
 
 
 def people_needed(pr):
