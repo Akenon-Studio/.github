@@ -76,6 +76,14 @@ class PayloadTest(unittest.TestCase):
         self.assertLess(body.index("Critical"), body.index("Minor"))
         self.assertIn("Not reviewed (diff too large): `big.ts`", body)
 
+    def test_a_long_body_keeps_the_most_severe_and_says_how_many_were_left_out(self):
+        f = {"path": "x.ts", "line": 1, "confidence": "high", "design": "", "failure": "", "body": "b" * 1000}
+        review = {"summary": "s", "comments": [{**f, "severity": "nit"}] * 40 + [{**f, "severity": "major"}] * 40}
+        body = to_github(review, {}, [])["body"]
+        self.assertLess(len(body), 65_536)
+        self.assertEqual(body.count("(**Major**"), 40)
+        self.assertIn("more finding(s) left out", body)
+
     def test_a_finding_without_a_known_severity_is_minor(self):
         out = to_github({"summary": "s", "comments": [{"path": "src/a.ts", "line": 2, "body": "x"}]},
                         split_diff(DIFF), [])
@@ -168,6 +176,20 @@ class RequestTest(unittest.TestCase):
                     f.write("x" * size)
             whole, omitted = full_files(["small", "big", "deleted"], d, budget=400_000)
             self.assertEqual((list(whole), omitted), (["small"], ["big"]))
+
+    def test_a_symlink_is_not_followed(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d, tempfile.NamedTemporaryFile("w") as secret:
+            secret.write("private")
+            secret.flush()
+            os.symlink(secret.name, os.path.join(d, "link"))
+            with open(os.path.join(d, "real"), "w") as f:
+                f.write("code")
+            self.assertEqual(full_files(["link", "real", "../x"], d)[0], {"real": "code"})
+
+    def test_a_later_round_sends_no_full_diff(self):
+        _, user = request("", "", "t", "d", {}, "", later=("earlier", "since"))
+        self.assertNotIn("<diff>", user)
 
     def test_omitted_files_are_named_to_the_model(self):
         _, user = request("", "", "t", "d", {}, "diff", omitted=["big.ts"])

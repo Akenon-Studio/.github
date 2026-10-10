@@ -45,10 +45,13 @@ MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to f
 REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 MAX_DIFF_CHARS = 200_000
-# The diff and the changed files in full together: about 100k tokens, which with the design (up to
-# 30k), CLAUDE.md and MAX_TOKENS of output stays inside the model's 200k context window. Files that
-# don't fit are left out, largest first, and the model is told which.
-MAX_INPUT_CHARS = 400_000
+# Everything the review reads (design, CLAUDE.md, diff, earlier rounds, files in full): about 120k
+# tokens even for code at 3 characters a token, so with MAX_TOKENS of output it stays inside the
+# model's 200k context window. The changed files in full get what is left; those that don't fit
+# are left out, largest first, and the model is told which.
+MAX_INPUT_CHARS = 360_000
+MAX_EARLIER_CHARS = 50_000  # the earlier rounds' findings and replies, latest kept
+MAX_BODY_CHARS = 60_000  # GitHub refuses a review body over 65,536 characters
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
                        r"|^animations/[^/]+/index\.js$|\.snap$")
@@ -198,13 +201,18 @@ def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
     """({path: text} of the changed files as the PR leaves them, [paths left out for size]):
     largest left out first past `budget` characters; deleted and binary files are skipped."""
     found, omitted = {}, []
+    top = os.path.realpath(root)
     for p in paths:
+        path = os.path.join(root, p)
+        # A symlink in the PR could point at the design or a runner file: only real files in the repo
+        if os.path.islink(path) or not os.path.realpath(path).startswith(top + os.sep):
+            continue
         try:
-            with open(os.path.join(root, p), encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 found[p] = f.read()
         except (OSError, UnicodeDecodeError):
             continue
-    while sum(map(len, found.values())) > budget:
+    while found and sum(map(len, found.values())) > budget:
         largest = max(found, key=lambda k: len(found[k]))
         del found[largest]
         omitted.append(largest)
@@ -231,14 +239,15 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
-    message to keep the cached prefix the same."""
+    message to keep the cached prefix the same. A later round's `files` are those the changes
+    touch, and it gets no `diff_text`."""
     system = [{"type": "text", "text": INSTRUCTIONS},
               {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
                "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
     user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
             "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
             (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
-            tagged("diff", diff_text))
+            (tagged("diff", diff_text) if diff_text else ""))
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
     return system, user
@@ -271,9 +280,17 @@ def to_github(review, files, left_out, already=frozenset(), round_no=1):
     body = f"**AI review (advisory), round {round_no}**\n\n" + review.get("summary", "").strip()
     titles = {"critical": "Critical, not on a changed line", "major": "Major, not on a changed line",
               "minor": "Minor", "nit": "Nits"}
-    for severity in SEVERITIES:
+    left = 0
+    for severity in SEVERITIES:  # most severe first, so a cut drops the least severe
         if rest[severity]:
-            body += f"\n\n{titles[severity]}:\n" + "\n".join(rest[severity])
+            body += f"\n\n{titles[severity]}:"
+        for item in rest[severity]:
+            if len(body) + len(item) > MAX_BODY_CHARS:
+                left += 1
+            else:
+                body += "\n" + item
+    if left:
+        body += f"\n\n{left} more finding(s) left out: the review body has a size limit."
     if left_out:
         body += "\n\nNot reviewed (diff too large): " + ", ".join(f"`{p}`" for p in left_out)
     return {"event": "COMMENT", "body": body, "comments": inline}
@@ -356,7 +373,7 @@ def earlier_review(repo, number, token, reviews):
             who = (c.get("author") or {}).get("login", "?")
             lines.append(f"[{who}] {c['body'].replace(MARKER, '').strip()}")
         out.append("\n".join(lines))
-    return "\n\n---\n\n".join(out)
+    return "\n\n---\n\n".join(out)[-MAX_EARLIER_CHARS:]  # the latest rounds, if it's long
 
 
 def all_reviews(repo, number, token):
@@ -503,13 +520,19 @@ def main(argv):
     else:
         design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
         since = changes_since(done[-1]["commit_id"], list(files)) if done else None
-        # A new CLAUDE.md rule applies to the whole PR, not just the new changes: a full round
-        if since is not None and changes_since(done[-1]["commit_id"], ["CLAUDE.md"]):
+        # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
+        # are as big as a diff can be
+        if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])
+                                  or len(since) > MAX_DIFF_CHARS):
             since = None
-        later = (earlier_review(repo, number, token, done), since) if since is not None else None
-        whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
+        if since is not None:  # a later round: the changes, and the files they touch in full
+            later, shown, paths = (earlier_review(repo, number, token, done), since), "", list(split_diff(since))
+        else:
+            later, shown, paths = None, text, list(files)
+        used = len(design) + len(claude_md) + len(shown) + sum(len(t) for t in later or ())
+        whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], pr.get("body") or "",
-                               whole, text, later, omitted)
+                               whole, shown, later, omitted)
         try:
             found = ask_claude(system, user)
         except CutOff as e:
