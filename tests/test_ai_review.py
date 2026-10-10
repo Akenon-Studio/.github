@@ -216,6 +216,19 @@ class RequestTest(unittest.TestCase):
         os.unlink(f.name)
 
 
+class GeneratedFilesTest(unittest.TestCase):
+    def test_changed_lockfiles_are_named_not_hidden(self):
+        # .github#114: the review called a changed pnpm-lock.yaml missing
+        diff = ("diff --git a/package.json b/package.json\n+x\n"
+                "diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n+y\n"
+                "diff --git a/apps/x/dist/a.js b/apps/x/dist/a.js\n+z\n")
+        self.assertEqual(ai_review.generated_paths(diff), ["pnpm-lock.yaml", "apps/x/dist/a.js"])
+        self.assertEqual(ai_review.generated_paths(None), [])
+        _, user = ai_review.request("", "", "t", "", {}, "d", generated=["pnpm-lock.yaml"])
+        self.assertIn("<generated_files>\npnpm-lock.yaml\n</generated_files>", user)
+        self.assertIn("<generated_files>", ai_review.INSTRUCTIONS)
+
+
 class CutOffTest(unittest.TestCase):
     def test_a_finished_review_is_read(self):
         self.assertEqual(parse("end_turn", ['{"summary": "ok", ', '"comments": []}']),
