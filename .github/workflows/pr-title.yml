@@ -23,8 +23,9 @@
 #   docs-covered: a PR that changes code a doc covers updates the doc or ticks "Still accurate:
 #     <doc>" in its body (design 6.5 item 3; scripts/docs_covered.py). Advisory while on trial: a
 #     failure is a warning, not a failed job (ADVISORY below).
-# A new push, edit or assignment cancels the PR's run still going: the newest event sees the same
-# commit or a newer one. A new step here runs in every repo without changing the callers.
+# No run is ever cancelled: an edit or assignment re-runs this on the same commit, and GitHub counts
+# a cancelled run there as a failed required check, which blocks the PR. A new step here runs in
+# every repo without changing the callers.
 name: pr-title
 
 on:
@@ -40,9 +41,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    concurrency:
-      group: pr-title-${{ github.repository }}-${{ github.ref }}
-      cancel-in-progress: true
     steps:
       - name: Get the repo
         uses: actions/checkout@v4
