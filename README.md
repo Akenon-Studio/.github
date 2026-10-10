@@ -9,7 +9,7 @@ never code, secrets or product plans.
 | `.github/ISSUE_TEMPLATE/` | The issue forms every repo uses (blank issues are off) |
 | `.github/PULL_REQUEST_TEMPLATE.md` | The PR template every repo uses |
 | `.github/workflows/pr-title.yml` | Reusable PR checks: conventional-commit title, the body closes whole issues, every `CLAUDE.md` passes, and a PR a person opens has its author assigned |
-| `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps, missing links and missing assignees with `needs-fields` |
+| `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps, missing links and missing assignees with `needs-fields`; on a PR event, sets the issues it closes to In review (`scripts/pr_status.py`) |
 | `scripts/issue_fields.py` | What that workflow runs; the forms are its only definition of what is required |
 | `tests/` | Unit tests (`python3 -m unittest discover tests`), run by `.github/workflows/tests.yml` |
 | `rulesets/` | Branch and tag rules, repo merge settings, labels, issue types, teams (`teams.json`: the automation owners and engineers), and which repos they apply to |
