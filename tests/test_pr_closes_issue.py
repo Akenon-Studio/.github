@@ -99,7 +99,7 @@ class BotCommitsTest(unittest.TestCase):
         self.assertTrue(only_bot_commits([self.commit(self.BOT, committer=self.BOT)], self.BOT))
         self.assertFalse(only_bot_commits([], self.BOT))
 
-    def test_githubs_merges_of_main_dont_count(self):
+    def test_the_merge_lanes_merges_of_main_dont_count(self):
         merge = self.commit("akenon-studio-merge-lane[bot]", parents=2)  # update-branch: web-flow, verified
         self.assertTrue(only_bot_commits([self.commit(self.BOT), merge], self.BOT))
         self.assertFalse(only_bot_commits([merge], self.BOT))  # nothing of the bot's own
@@ -110,6 +110,9 @@ class BotCommitsTest(unittest.TestCase):
         self.assertFalse(only_bot_commits([self.commit(self.BOT), local], self.BOT))
         unsigned = self.commit("someone", parents=2, verified=False)
         self.assertFalse(only_bot_commits([self.commit(self.BOT), unsigned], self.BOT))
+        # the web editor's conflict resolution: web-flow and verified, but authored by the person
+        web = self.commit("someone", parents=2)
+        self.assertFalse(only_bot_commits([self.commit(self.BOT), web], self.BOT))
 
 
 class MainTest(unittest.TestCase):
