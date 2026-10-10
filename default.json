@@ -7,7 +7,7 @@
     "helpers:pinGitHubActionDigests"
   ],
   "timezone": "Australia/Melbourne",
-  "schedule": ["before 9am on monday"],
+  "schedule": ["at any time"],
   "dependencyDashboard": false,
   "labels": ["dependencies"],
   "automerge": false,
