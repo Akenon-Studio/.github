@@ -74,6 +74,7 @@ jobs:
       - name: Get the design
         if: env.WANTED == 'true' && env.HAS_KEY == 'true' && steps.app.outcome == 'success'
         continue-on-error: true
+        id: design
         uses: actions/checkout@v4
         with:
           repository: akenon-studio/handbook
@@ -105,7 +106,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          DESIGN_FILE: .akenon-handbook/design.md
+          # Only from that checkout: a PR could commit a file at the same path
+          DESIGN_FILE: ${{ steps.design.outcome == 'success' && '.akenon-handbook/design.md' || '' }}
           ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
           ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}

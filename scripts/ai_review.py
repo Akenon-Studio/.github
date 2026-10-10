@@ -45,7 +45,10 @@ MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to f
 REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 MAX_DIFF_CHARS = 200_000
-MAX_FILES_CHARS = 400_000  # changed files in full; past this, only their diff
+# The diff and the changed files in full together: about 100k tokens, which with the design (up to
+# 30k), CLAUDE.md and MAX_TOKENS of output stays inside the model's 200k context window. Files that
+# don't fit are left out, largest first, and the model is told which.
+MAX_INPUT_CHARS = 400_000
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
                        r"|^animations/[^/]+/index\.js$|\.snap$")
@@ -63,7 +66,9 @@ later round in code you saw now is a miss; a finding that isn't a real problem c
 round. Both count against you.
 
 You get the repo's CLAUDE.md, the design sections that govern this repo, the PR's title and
-description, every changed file in full as the PR leaves it, and the diff.
+description, every changed file in full as the PR leaves it (any left out for size are listed in
+<files_omitted>: judge those from the diff alone), and the diff. The design is private and some
+repos are public: cite design sections by number only, never quote the design's text.
 
 Look for:
 1. Bugs: wrong logic, unhandled errors and edge cases, race conditions, retries and timeouts that
@@ -189,26 +194,40 @@ def design_sections(design, repo):
                    re.match(r"## (\d+)\.", p).group(1) in want)
 
 
-def full_files(paths, root="."):
-    """{path: text} of the changed files as the PR leaves them, largest left out first past
-    MAX_FILES_CHARS; deleted and binary files are skipped."""
-    found = {}
+def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
+    """({path: text} of the changed files as the PR leaves them, [paths left out for size]):
+    largest left out first past `budget` characters; deleted and binary files are skipped."""
+    found, omitted = {}, []
     for p in paths:
         try:
             with open(os.path.join(root, p), encoding="utf-8") as f:
                 found[p] = f.read()
         except (OSError, UnicodeDecodeError):
             continue
-    while sum(map(len, found.values())) > MAX_FILES_CHARS:
-        del found[max(found, key=lambda k: len(found[k]))]
-    return found
+    while sum(map(len, found.values())) > budget:
+        largest = max(found, key=lambda k: len(found[k]))
+        del found[largest]
+        omitted.append(largest)
+    return found, omitted
+
+
+NO_DESIGN = "(The design could not be read for this run: judge design fit from CLAUDE.md.)"
+
+
+def read_design(path, repo):
+    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none."""
+    try:
+        with open(path) as f:
+            return design_sections(f.read(), repo) or NO_DESIGN
+    except (TypeError, OSError):  # TypeError: no path given
+        return NO_DESIGN
 
 
 def tagged(tag, text):
     return f"<{tag}>\n{text}\n</{tag}>"
 
 
-def request(claude_md, design, title, description, files, diff_text, later=None):
+def request(claude_md, design, title, description, files, diff_text, later=None, omitted=()):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
@@ -218,6 +237,7 @@ def request(claude_md, design, title, description, files, diff_text, later=None)
                "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
     user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
             "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
+            (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
             tagged("diff", diff_text))
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
@@ -419,12 +439,16 @@ def parse(stop_reason, texts):
 
 
 def ask_claude(system, user):
-    # Streamed: a long review can outlast a plain request's timeout
-    with client().messages.stream(
-            model=MODEL, max_tokens=MAX_TOKENS, system=system, thinking={"type": "adaptive"},
-            output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
-            messages=[{"role": "user", "content": user}]) as stream:
-        message = stream.get_final_message()
+    import anthropic
+    try:
+        # Streamed: a long review can outlast a plain request's timeout
+        with client().messages.stream(
+                model=MODEL, max_tokens=MAX_TOKENS, system=system, thinking={"type": "adaptive"},
+                output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
+                messages=[{"role": "user", "content": user}]) as stream:
+            message = stream.get_final_message()
+    except anthropic.BadRequestError as e:  # e.g. the prompt is too long for the context window
+        raise CutOff(f"the request was refused: {str(e)[:300]}") from None
     u = message.usage
     print(f"Model {message.model}: {u.input_tokens} in (+{u.cache_read_input_tokens or 0} cached, "
           f"+{u.cache_creation_input_tokens or 0} written to cache), {u.output_tokens} out, "
@@ -439,8 +463,9 @@ def prompt_main(repo, base, design_path):
     text, _ = review_input(files)
     claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
     title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+    whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
     system, user = request(claude_md, design_sections(open(design_path).read(), repo), title, "",
-                           full_files(files), text)
+                           whole, text, omitted=omitted)
     print(json.dumps({"system": system, "user": user}))
     return 0
 
@@ -476,14 +501,15 @@ def main(argv):
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
-        try:
-            design = design_sections(open(os.environ["DESIGN_FILE"]).read(), repo.split("/")[1])
-        except (KeyError, OSError):
-            design = "(The design could not be read for this run: judge design fit from CLAUDE.md.)"
+        design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
         since = changes_since(done[-1]["commit_id"], list(files)) if done else None
+        # A new CLAUDE.md rule applies to the whole PR, not just the new changes: a full round
+        if since is not None and changes_since(done[-1]["commit_id"], ["CLAUDE.md"]):
+            since = None
         later = (earlier_review(repo, number, token, done), since) if since is not None else None
+        whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
         system, user = request(claude_md, design, pr["title"], pr.get("body") or "",
-                               full_files(files), text, later)
+                               whole, text, later, omitted)
         try:
             found = ask_claude(system, user)
         except CutOff as e:

@@ -5,9 +5,10 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from ai_review import (CutOff, added_lines, design_sections, fingerprint, full_files,  # noqa: E402
-                       heading, last_fingerprint, parse, request, review_input, split_diff,
-                       strip_markers, to_github)
+import ai_review  # noqa: E402
+from ai_review import (NO_DESIGN, CutOff, added_lines, design_sections, fingerprint,  # noqa: E402
+                       full_files, heading, last_fingerprint, parse, read_design, request,
+                       review_input, split_diff, strip_markers, to_github)
 
 DIFF = """diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts
@@ -165,7 +166,21 @@ class RequestTest(unittest.TestCase):
             for name, size in (("small", 10), ("big", 399_995)):
                 with open(os.path.join(d, name), "w") as f:
                     f.write("x" * size)
-            self.assertEqual(list(full_files(["small", "big", "deleted"], d)), ["small"])
+            whole, omitted = full_files(["small", "big", "deleted"], d, budget=400_000)
+            self.assertEqual((list(whole), omitted), (["small"], ["big"]))
+
+    def test_omitted_files_are_named_to_the_model(self):
+        _, user = request("", "", "t", "d", {}, "diff", omitted=["big.ts"])
+        self.assertIn("<files_omitted>\nbig.ts\n</files_omitted>", user)
+
+    def test_a_missing_or_empty_design_says_so(self):
+        import tempfile, os
+        self.assertEqual(read_design(None, "platform"), NO_DESIGN)
+        self.assertEqual(read_design("/nonexistent/design.md", "platform"), NO_DESIGN)
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write("# Design\nno numbered sections\n")
+        self.assertEqual(read_design(f.name, "platform"), NO_DESIGN)
+        os.unlink(f.name)
 
 
 class CutOffTest(unittest.TestCase):
@@ -179,6 +194,63 @@ class CutOffTest(unittest.TestCase):
             parse("max_tokens", ['{"summary": "o'])
         with self.assertRaises(CutOff):
             parse("end_turn", ["not json"])
+
+
+class MainTest(unittest.TestCase):
+    """main() with GitHub and Claude faked, in a temporary git repo."""
+
+    def setUp(self):
+        import os, subprocess, tempfile
+        self.cwd, self.dir = os.getcwd(), tempfile.mkdtemp()
+        os.chdir(self.dir)
+        subprocess.run(["git", "init", "-q"], check=True)
+        self.posted, self.saved = [], {k: getattr(ai_review, k) for k in
+                                       ("github", "all_reviews", "ask_claude", "earlier_comments")}
+        self.env = {k: os.environ.get(k) for k in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "DESIGN_FILE")}
+        os.environ.update(GITHUB_TOKEN="t", GITHUB_REPOSITORY="akenon-studio/platform", PR_NUMBER="7")
+        os.environ.pop("DESIGN_FILE", None)
+
+        def github(path, token, method="GET", body=None, accept=""):
+            if method == "POST":
+                self.posted.append(body)
+                return {}
+            return DIFF if accept.endswith("diff") else {"title": "t", "body": "", "head": {"sha": "abc"}}
+        ai_review.github = github
+        ai_review.all_reviews = lambda *a: []
+        ai_review.earlier_comments = lambda *a: set()
+
+    def tearDown(self):
+        import os, shutil
+        for k, v in self.saved.items():
+            setattr(ai_review, k, v)
+        for k, v in self.env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        os.chdir(self.cwd)
+        shutil.rmtree(self.dir)
+
+    def test_a_cut_off_review_records_no_fingerprint_and_fails(self):
+        # .github#87: the diff must be reviewed again by a re-run or the next push
+        def cut_off(system, user):
+            raise CutOff("max_tokens")
+        ai_review.ask_claude = cut_off
+        self.assertEqual(ai_review.main([]), 1)
+        self.assertEqual(len(self.posted), 1)
+        self.assertIn("cut off (max_tokens)", self.posted[0]["body"])
+        self.assertNotRegex(self.posted[0]["body"], ai_review.DIFF_MARKER)
+
+    def test_a_finished_review_records_its_fingerprint_and_says_the_design_is_missing(self):
+        seen = {}
+
+        def answer(system, user):
+            seen["design"] = system[1]["text"]
+            return {"summary": "Fine.", "comments": []}
+        ai_review.ask_claude = answer
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertRegex(self.posted[0]["body"], ai_review.DIFF_MARKER)
+        self.assertIn(NO_DESIGN, seen["design"])
 
 
 if __name__ == "__main__":
