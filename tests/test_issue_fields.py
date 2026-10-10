@@ -328,6 +328,7 @@ class ConfirmationTest(unittest.TestCase):
 
     def test_other_types_start_as_before(self):
         self.assertEqual(start_status("Decision", ""), "Waiting for human")
+        self.assertEqual(start_status("Bug", ""), "Waiting for human")  # a person triages it
         self.assertEqual(start_status("Task", body(**TASK)), "Todo")
 
     def test_unconfirmed_critical_finding_fails(self):
