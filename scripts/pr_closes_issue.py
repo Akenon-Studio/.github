@@ -8,15 +8,25 @@ close fails: that work splits the issue first, and the PR closes the new sub-iss
 (HTML comments, code) is not read.
 
 A PR from a bot with no issue behind it (`no_issue` in rulesets/bots.json: Renovate's dependency
-updates) passes without one; its source label says where it came from (design 6.8, check 1).
+updates, release-please's Release PR) passes without one, as long as every commit on it is that
+bot's own: authored by the bot, committed by the bot or by GitHub for it (`web-flow`), and verified.
+GitHub checks the signature against the committer, so a person can't pass by forging only the
+author. A person who pushes their work onto the bot's branch needs `Closes #n` like anyone. The merge
+lane's own merges that bring main in (authored by its app, committed by GitHub, verified) are
+skipped; any other merge commit counts like a normal one, since a merge can carry changes of its own
+(the web editor's conflict resolutions and the Update branch button are a person's). Bots rebase
+their own branches, so a person never needs to. Its source label says where it came from (design
+6.8, check 1).
 
-Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE and
-GITHUB_REPOSITORY from the environment)
+Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE, PR_NUMBER and
+GITHUB_REPOSITORY from the environment; GH_TOKEN reads the PR's commits)
 In Actions it runs as the `closes-issue` job of the reusable pr-title workflow.
 """
 
+import json
 import os
 import re
+import subprocess
 import sys
 
 from rules import bot_login, bot_sources
@@ -57,13 +67,57 @@ def exempt(author, author_type, sources):
     return author_type == "Bot" and sources.get(bot_login(author), {}).get("no_issue", False)
 
 
+GITHUB_COMMITTER = "web-flow"  # GitHub's own committer, for commits it makes through its API or UI
+MERGE_LANE = "akenon-studio-merge-lane"  # the merge lane's app, which brings main in (design 6.2)
+
+
+def verified(c):
+    return bool(((c.get("commit") or {}).get("verification") or {}).get("verified"))
+
+
+def login(c, who):
+    return bot_login((c.get(who) or {}).get("login"))
+
+
+def only_bot_commits(commits, author):
+    """True if every commit on the PR, the merge lane's merges of main aside, is the bot's own:
+    authored by it, committed by it or by GitHub, and verified."""
+    bot = bot_login(author)
+    own = [c for c in commits if not (len(c.get("parents") or []) > 1 and verified(c)
+                                      and login(c, "author") == MERGE_LANE
+                                      and login(c, "committer") == GITHUB_COMMITTER)]
+    return bool(own) and all(login(c, "author") == bot and login(c, "committer") in (bot, GITHUB_COMMITTER)
+                             and verified(c) for c in own)
+
+
+def pr_commits(repo, number):
+    """The PR's commits from the REST API, or None if they can't be read."""
+    run = subprocess.run([os.environ.get("GH", "gh"), "api", "--paginate", "--slurp",
+                          f"repos/{repo}/pulls/{number}/commits?per_page=100"], capture_output=True, text=True)
+    if run.returncode != 0:
+        print(f"::error::couldn't read the PR's commits ({run.stderr.strip()}): re-run the job")
+        return None
+    return [c for page in json.loads(run.stdout) for c in page]
+
+
 def main():
     author = os.environ.get("PR_AUTHOR", "")
-    if exempt(author, os.environ.get("PR_AUTHOR_TYPE", ""), bot_sources()):
-        print(f"OK: opened by {author}, a bot with no issue behind its PRs; its source label "
-              "says where it came from (rulesets/bots.json)")
-        return
     body, repo = os.environ.get("PR_BODY", ""), os.environ["GITHUB_REPOSITORY"]
+    if exempt(author, os.environ.get("PR_AUTHOR_TYPE", ""), bot_sources()):
+        commits = pr_commits(repo, os.environ.get("PR_NUMBER", ""))
+        if commits is None:
+            sys.exit(1)
+        if only_bot_commits(commits, author):
+            print(f"OK: opened by {author}, a bot with no issue behind its PRs, and every commit is "
+                  "its own; its source label says where it came from (rulesets/bots.json)")
+            return
+        foreign = [c for c in commits if login(c, "author") != bot_login(author)]
+        if foreign and all(len(c.get("parents") or []) > 1 for c in foreign):
+            print(f"::error::Someone merged main into {author}'s branch (Update branch or the web "
+                  "editor). Let the bot rebase it instead: Renovate's rebase checkbox, or the next "
+                  "release-please run.")
+        print(f"Opened by {author}, but not every commit is its own and signed, so it needs "
+              "`Closes #n` like any PR.")
     found = problems(body, repo)
     for p in found:
         print(f"::error::{p}")

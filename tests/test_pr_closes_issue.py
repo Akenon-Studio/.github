@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from pr_closes_issue import CLOSES, problems, refs  # noqa: E402
+from pr_closes_issue import CLOSES, only_bot_commits, problems, refs  # noqa: E402
 
 REPO = "Akenon-Studio/platform"
 
@@ -77,6 +77,73 @@ class RefsTest(unittest.TestCase):
         self.assertEqual(refs(CLOSES, "Closes #1, closes Akenon-Studio/Handbook#2", REPO),
                          ["akenon-studio/platform#1", "akenon-studio/handbook#2"])
 
+
+
+class BotCommitsTest(unittest.TestCase):
+    BOT = "akenon-studio-release[bot]"
+
+    @staticmethod
+    def commit(login, verified=True, parents=1, committer="web-flow"):
+        return {"author": {"login": login} if login else None, "committer": {"login": committer},
+                "parents": [{}] * parents, "commit": {"verification": {"verified": verified}}}
+
+    def test_a_bots_own_signed_commits_only(self):
+        bot = self.commit(self.BOT)
+        self.assertTrue(only_bot_commits([bot, bot], self.BOT))
+        # someone pushed their work onto the bot's branch: not exempt (.github#112)
+        self.assertFalse(only_bot_commits([bot, self.commit("someone")], self.BOT))
+        self.assertFalse(only_bot_commits([self.commit(None)], "renovate[bot]"))  # an unlinked email
+        self.assertFalse(only_bot_commits([self.commit(self.BOT, verified=False)], self.BOT))  # a forged email
+        # signed by a person who kept themselves as committer and forged only the author
+        self.assertFalse(only_bot_commits([self.commit(self.BOT, committer="someone")], self.BOT))
+        self.assertTrue(only_bot_commits([self.commit(self.BOT, committer=self.BOT)], self.BOT))
+        self.assertFalse(only_bot_commits([], self.BOT))
+
+    def test_the_merge_lanes_merges_of_main_dont_count(self):
+        merge = self.commit("akenon-studio-merge-lane[bot]", parents=2)  # update-branch: web-flow, verified
+        self.assertTrue(only_bot_commits([self.commit(self.BOT), merge], self.BOT))
+        self.assertFalse(only_bot_commits([merge], self.BOT))  # nothing of the bot's own
+
+    def test_a_persons_own_merge_commit_counts(self):
+        # git merge main --no-commit, own changes added, pushed: an "evil merge"
+        local = self.commit("someone", parents=2, committer="someone")
+        self.assertFalse(only_bot_commits([self.commit(self.BOT), local], self.BOT))
+        unsigned = self.commit("someone", parents=2, verified=False)
+        self.assertFalse(only_bot_commits([self.commit(self.BOT), unsigned], self.BOT))
+        # the web editor's conflict resolution: web-flow and verified, but authored by the person
+        web = self.commit("someone", parents=2)
+        self.assertFalse(only_bot_commits([self.commit(self.BOT), web], self.BOT))
+
+
+class MainTest(unittest.TestCase):
+    """main() as the workflow runs it, with a stub `gh` for the commits."""
+
+    def run_main(self, commits, body="", exit_code=0):
+        import json, os, subprocess, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            gh = os.path.join(d, "gh")
+            with open(gh, "w") as f:
+                f.write(f"#!/bin/sh\necho '{json.dumps([commits])}'\nexit {exit_code}\n")
+            os.chmod(gh, 0o755)
+            env = dict(os.environ, GH=gh, PR_BODY=body, PR_AUTHOR=BotCommitsTest.BOT, PR_AUTHOR_TYPE="Bot",
+                       PR_NUMBER="5", GITHUB_REPOSITORY="Akenon-Studio/platform")
+            script = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "pr_closes_issue.py"
+            return subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True)
+
+    def test_a_bots_own_pr_passes_without_closes(self):
+        p = self.run_main([BotCommitsTest.commit(BotCommitsTest.BOT)])
+        self.assertEqual(p.returncode, 0, p.stdout)
+
+    def test_a_persons_commit_on_it_needs_closes(self):
+        p = self.run_main([BotCommitsTest.commit(BotCommitsTest.BOT), BotCommitsTest.commit("someone")])
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("not every commit is its own", p.stdout)
+        self.assertEqual(self.run_main([BotCommitsTest.commit("someone")], body="Closes #3").returncode, 0)
+
+    def test_unreadable_commits_say_so(self):
+        p = self.run_main([], exit_code=1)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("couldn't read the PR's commits", p.stdout)
 
 if __name__ == "__main__":
     unittest.main()
