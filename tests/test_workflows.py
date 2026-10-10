@@ -77,6 +77,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
         # the called workflow gets no more than this; and the lane restarts itself by this file name
         self.assertEqual(caller["permissions"], {"contents": "read", "actions": "write"})
         self.assertIn("merge-lane-caller.yml", str(REUSABLE["merge-lane.yml"]["jobs"]["lane"]["steps"]))
+        # an environment secret reaches a called workflow only if the caller passes it (by name)
+        self.assertEqual(caller["jobs"]["merge-lane"]["secrets"],
+                         {"MERGE_LANE_APP_PRIVATE_KEY": "${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}"})
         self.assertIn("ready-to-merge", caller["jobs"]["merge-lane"]["if"])
         job = REUSABLE["merge-lane.yml"]["jobs"]["lane"]
         self.assertEqual(job["environment"], "merge-lane")

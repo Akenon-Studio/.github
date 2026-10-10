@@ -5,7 +5,8 @@
 #   on: { pull_request_target: { types: [labeled] }, workflow_dispatch: {} }
 #   permissions: { contents: read, actions: write }
 #   jobs: { merge-lane: { if: <the label is ready-to-merge, or not a label event>,
-#                         uses: akenon-studio/.github/.github/workflows/merge-lane.yml@main } }
+#                         uses: akenon-studio/.github/.github/workflows/merge-lane.yml@main,
+#                         secrets: { MERGE_LANE_APP_PRIVATE_KEY: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }} } } }
 #
 # A called workflow gets no more permission than its caller grants, so the caller must grant both.
 #
@@ -20,12 +21,11 @@ name: merge-lane
 
 on:
   workflow_call:
-    # Declared so the job can read it: a called workflow only sees secrets it declares. Callers pass
-    # nothing; the job's `environment: merge-lane` supplies the value from the caller repo's
-    # environment (which only main can use), so no caller needs `secrets: inherit`.
+    # Each caller passes it by name (not `secrets: inherit`); GitHub fills the value from the caller
+    # repo's merge-lane environment, which this job runs in and only main can use.
     secrets:
       MERGE_LANE_APP_PRIVATE_KEY:
-        required: false
+        required: true
 
 permissions:
   contents: read
