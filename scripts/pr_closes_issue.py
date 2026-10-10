@@ -111,6 +111,11 @@ def main():
             print(f"OK: opened by {author}, a bot with no issue behind its PRs, and every commit is "
                   "its own; its source label says where it came from (rulesets/bots.json)")
             return
+        foreign = [c for c in commits if login(c, "author") != bot_login(author)]
+        if foreign and all(len(c.get("parents") or []) > 1 for c in foreign):
+            print(f"::error::Someone merged main into {author}'s branch (Update branch or the web "
+                  "editor). Let the bot rebase it instead: Renovate's rebase checkbox, or the next "
+                  "release-please run.")
         print(f"Opened by {author}, but not every commit is its own and signed, so it needs "
               "`Closes #n` like any PR.")
     found = problems(body, repo)
