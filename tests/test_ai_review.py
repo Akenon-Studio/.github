@@ -97,6 +97,11 @@ class FingerprintTest(unittest.TestCase):
                    {"user": bot, "body": "a review with no fingerprint"}]
         self.assertEqual(last_fingerprint(reviews), fp)
 
+    def test_the_last_marker_in_a_review_counts(self):
+        bot = {"login": "github-actions[bot]"}
+        body = f"summary <!-- ai-review-diff: {'b' * 40} --> end\n\n<!-- ai-review-diff: {'a' * 40} -->"
+        self.assertEqual(last_fingerprint([{"user": bot, "body": body}]), "a" * 40)
+
     def test_a_marker_from_anyone_else_is_ignored(self):
         reviews = [{"user": {"login": "someone"}, "body": f"<!-- ai-review-diff: {'a' * 40} -->"}]
         self.assertIsNone(last_fingerprint(reviews))

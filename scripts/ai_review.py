@@ -161,9 +161,9 @@ def last_fingerprint(reviews):
     for review in reversed(reviews):
         if (review.get("user") or {}).get("login") != REVIEWER:
             continue
-        m = DIFF_MARKER.search(review.get("body") or "")
-        if m:
-            return m.group(1)
+        found = DIFF_MARKER.findall(review.get("body") or "")
+        if found:
+            return found[-1]  # ours is appended last; the model's text is stripped of any (main)
     return None
 
 
@@ -279,6 +279,8 @@ def main(argv):
     else:
         review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
                            left_out, earlier_comments(repo, number, token))
+    # The model's text can be steered by the diff: it must not carry a marker that skips a later push.
+    review["body"] = DIFF_MARKER.sub("", review["body"])
     if fp:
         review["body"] += f"\n\n<!-- ai-review-diff: {fp} -->"
     post = {**review, "commit_id": pr["head"]["sha"]}
