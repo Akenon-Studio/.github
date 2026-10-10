@@ -28,13 +28,15 @@ def missing_from(text, repos, pattern, skip=()):
 
 
 CALLERS = (".github/workflows/pr-title-caller.yml", ".github/workflows/issue-fields-caller.yml")
-TRIGGERS = re.compile(r"^\s*types:\s*\[(.*?)\]", re.MULTILINE)
+# An event and its types list, with comment lines between allowed
+TRIGGERS = re.compile(r"^\s*([a-z_]+):[ \t]*(?:#.*)?\n(?:[ \t]*#.*\n)*[ \t]*types:\s*\[(.*?)\]", re.MULTILINE)
 
 
 def triggers(text):
-    """The event types a caller workflow listens to, as a set (empty if it names none)."""
-    found = TRIGGERS.search(text or "")
-    return {t.strip() for t in found.group(1).split(",")} if found else set()
+    """The event types a caller workflow listens to, as a set of `event: type` (empty if it names
+    none), so a repo missing a whole event shows too."""
+    return {f"{event}: {t.strip()}" for event, types in TRIGGERS.findall(text or "")
+            for t in types.split(",")}
 
 
 def main():
