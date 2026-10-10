@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from pr_closes_issue import CLOSES, problems, refs  # noqa: E402
+from pr_closes_issue import CLOSES, only_bot_commits, problems, refs  # noqa: E402
 
 REPO = "Akenon-Studio/platform"
 
@@ -77,6 +77,16 @@ class RefsTest(unittest.TestCase):
         self.assertEqual(refs(CLOSES, "Closes #1, closes Akenon-Studio/Handbook#2", REPO),
                          ["akenon-studio/platform#1", "akenon-studio/handbook#2"])
 
+
+
+class BotCommitsTest(unittest.TestCase):
+    def test_a_bots_own_commits_only(self):
+        bot = {"author": {"login": "akenon-studio-release[bot]"}}
+        self.assertTrue(only_bot_commits([bot, bot], "akenon-studio-release[bot]"))
+        # someone pushed their work onto the bot's branch: not exempt (.github#112)
+        self.assertFalse(only_bot_commits([bot, {"author": {"login": "someone"}}], "akenon-studio-release[bot]"))
+        self.assertFalse(only_bot_commits([{"author": None}], "renovate[bot]"))  # an unlinked email
+        self.assertFalse(only_bot_commits([], "renovate[bot]"))  # couldn't read them
 
 if __name__ == "__main__":
     unittest.main()

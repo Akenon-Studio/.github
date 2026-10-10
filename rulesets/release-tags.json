@@ -4,7 +4,7 @@
   "enforcement": "active",
   "bypass_actors": [],
   "conditions": {
-    "ref_name": { "include": ["refs/tags/v*", "refs/tags/*-v*"], "exclude": [] }
+    "ref_name": { "include": ["refs/tags/v*", "refs/tags/desktop-v*", "refs/tags/api-v*", "refs/tags/web-v*", "refs/tags/sdk-v*"], "exclude": [] }
   },
   "rules": [
     { "type": "deletion" },

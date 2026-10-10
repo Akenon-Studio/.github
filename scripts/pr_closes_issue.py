@@ -8,15 +8,19 @@ close fails: that work splits the issue first, and the PR closes the new sub-iss
 (HTML comments, code) is not read.
 
 A PR from a bot with no issue behind it (`no_issue` in rulesets/bots.json: Renovate's dependency
-updates) passes without one; its source label says where it came from (design 6.8, check 1).
+updates, release-please's Release PR) passes without one, as long as every commit on it is that
+bot's own: a person who pushes their work onto the bot's branch needs `Closes #n` like anyone. Its
+source label says where it came from (design 6.8, check 1).
 
-Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE and
-GITHUB_REPOSITORY from the environment)
+Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE, PR_NUMBER and
+GITHUB_REPOSITORY from the environment; GH_TOKEN reads the PR's commits)
 In Actions it runs as the `closes-issue` job of the reusable pr-title workflow.
 """
 
+import json
 import os
 import re
+import subprocess
 import sys
 
 from rules import bot_login, bot_sources
@@ -57,13 +61,31 @@ def exempt(author, author_type, sources):
     return author_type == "Bot" and sources.get(bot_login(author), {}).get("no_issue", False)
 
 
+def only_bot_commits(commits, author):
+    """True if every commit on the PR was authored by the bot that opened it."""
+    return bool(commits) and all(bot_login((c.get("author") or {}).get("login")) == bot_login(author)
+                                 for c in commits)
+
+
+def pr_commits(repo, number):
+    """The PR's commits from the REST API ([] if they can't be read: then the PR isn't exempt)."""
+    run = subprocess.run([os.environ.get("GH", "gh"), "api", "--paginate", "--slurp",
+                          f"repos/{repo}/pulls/{number}/commits?per_page=100"], capture_output=True, text=True)
+    if run.returncode != 0:
+        print(f"::warning::couldn't read the PR's commits: {run.stderr.strip()}")
+        return []
+    return [c for page in json.loads(run.stdout) for c in page]
+
+
 def main():
     author = os.environ.get("PR_AUTHOR", "")
-    if exempt(author, os.environ.get("PR_AUTHOR_TYPE", ""), bot_sources()):
-        print(f"OK: opened by {author}, a bot with no issue behind its PRs; its source label "
-              "says where it came from (rulesets/bots.json)")
-        return
     body, repo = os.environ.get("PR_BODY", ""), os.environ["GITHUB_REPOSITORY"]
+    if exempt(author, os.environ.get("PR_AUTHOR_TYPE", ""), bot_sources()):
+        if only_bot_commits(pr_commits(repo, os.environ.get("PR_NUMBER", "")), author):
+            print(f"OK: opened by {author}, a bot with no issue behind its PRs, and every commit is "
+                  "its own; its source label says where it came from (rulesets/bots.json)")
+            return
+        print(f"Opened by {author}, but not every commit is its own, so it needs `Closes #n` like any PR.")
     found = problems(body, repo)
     for p in found:
         print(f"::error::{p}")
