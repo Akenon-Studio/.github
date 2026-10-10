@@ -9,8 +9,10 @@ close fails: that work splits the issue first, and the PR closes the new sub-iss
 
 A PR from a bot with no issue behind it (`no_issue` in rulesets/bots.json: Renovate's dependency
 updates, release-please's Release PR) passes without one, as long as every commit on it is that
-bot's own: a person who pushes their work onto the bot's branch needs `Closes #n` like anyone. Its
-source label says where it came from (design 6.8, check 1).
+bot's own, signed (GitHub verifies the commits a bot makes through its API, so a forged author email
+doesn't pass): a person who pushes their work onto the bot's branch needs `Closes #n` like anyone.
+Merge commits that bring the base branch in (the merge lane, Update branch) don't count. Its source
+label says where it came from (design 6.8, check 1).
 
 Usage: scripts/pr_closes_issue.py      (reads PR_BODY, PR_AUTHOR, PR_AUTHOR_TYPE, PR_NUMBER and
 GITHUB_REPOSITORY from the environment; GH_TOKEN reads the PR's commits)
@@ -62,18 +64,21 @@ def exempt(author, author_type, sources):
 
 
 def only_bot_commits(commits, author):
-    """True if every commit on the PR was authored by the bot that opened it."""
-    return bool(commits) and all(bot_login((c.get("author") or {}).get("login")) == bot_login(author)
-                                 for c in commits)
+    """True if every commit on the PR, merge commits aside, was authored by the bot that opened it
+    and is verified."""
+    own = [c for c in commits if len(c.get("parents") or []) < 2]
+    return bool(own) and all(bot_login((c.get("author") or {}).get("login")) == bot_login(author)
+                             and ((c.get("commit") or {}).get("verification") or {}).get("verified")
+                             for c in own)
 
 
 def pr_commits(repo, number):
-    """The PR's commits from the REST API ([] if they can't be read: then the PR isn't exempt)."""
+    """The PR's commits from the REST API, or None if they can't be read."""
     run = subprocess.run([os.environ.get("GH", "gh"), "api", "--paginate", "--slurp",
                           f"repos/{repo}/pulls/{number}/commits?per_page=100"], capture_output=True, text=True)
     if run.returncode != 0:
-        print(f"::warning::couldn't read the PR's commits: {run.stderr.strip()}")
-        return []
+        print(f"::error::couldn't read the PR's commits ({run.stderr.strip()}): re-run the job")
+        return None
     return [c for page in json.loads(run.stdout) for c in page]
 
 
@@ -81,11 +86,15 @@ def main():
     author = os.environ.get("PR_AUTHOR", "")
     body, repo = os.environ.get("PR_BODY", ""), os.environ["GITHUB_REPOSITORY"]
     if exempt(author, os.environ.get("PR_AUTHOR_TYPE", ""), bot_sources()):
-        if only_bot_commits(pr_commits(repo, os.environ.get("PR_NUMBER", "")), author):
+        commits = pr_commits(repo, os.environ.get("PR_NUMBER", ""))
+        if commits is None:
+            sys.exit(1)
+        if only_bot_commits(commits, author):
             print(f"OK: opened by {author}, a bot with no issue behind its PRs, and every commit is "
                   "its own; its source label says where it came from (rulesets/bots.json)")
             return
-        print(f"Opened by {author}, but not every commit is its own, so it needs `Closes #n` like any PR.")
+        print(f"Opened by {author}, but not every commit is its own and signed, so it needs "
+              "`Closes #n` like any PR.")
     found = problems(body, repo)
     for p in found:
         print(f"::error::{p}")
