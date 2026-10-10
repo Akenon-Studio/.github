@@ -44,6 +44,11 @@ MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
 REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
+# The tokens a review used, in its body, for the monthly scorecard's cost per PR (scripts/ai_scorecard.py)
+USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
+# On every thread: the reply the scorecard reads (design 6.4)
+OUTCOME_ASK = ("Reply with the outcome first: **Fixed**, **Not an issue** (and why), or **Moved to** "
+               "the issue's link; then resolve the thread.")
 MAX_DIFF_CHARS = 200_000
 # Everything the review reads (design, CLAUDE.md, diff, earlier rounds, files in full): about 120k
 # tokens even for code at 3 characters a token, so with MAX_TOKENS of output it stays inside the
@@ -145,7 +150,8 @@ REVIEW_SCHEMA = {
 
 
 class CutOff(Exception):
-    """The model stopped before it finished the review."""
+    """The model stopped before it finished the review. `usage` is what it spent, when it ran."""
+    usage = None
 
 
 def split_diff(diff):
@@ -283,7 +289,7 @@ def to_github(review, files, left_out, already=frozenset(), round_no=1):
         text = c.get("body", "").strip() + (f"\n\n**Fails when:** {failure}" if failure and severity in THREADS else "")
         if severity in THREADS and c.get("line") in added.get(c.get("path"), ()):
             inline.append({"path": c["path"], "line": c["line"], "side": "RIGHT",
-                           "body": f"{heading(c)}\n\n{text}\n\n{MARKER}"})
+                           "body": f"{heading(c)}\n\n{text}\n\n{OUTCOME_ASK}\n\n{MARKER}"})
         else:
             rest[severity].append(f"- `{c.get('path')}:{c.get('line')}` ({heading(c)}): {text}")
     body = f"**AI review (advisory), round {round_no}**\n\n" + review.get("summary", "").strip()
@@ -318,10 +324,10 @@ def fingerprint(files, claude_md=""):
 
 
 def strip_markers(text):
-    """Text without fingerprint markers, removed until none is left (one pass could join the halves
-    of a marker split around another into a new one)."""
+    """Text without fingerprint or usage markers, removed until none is left (one pass could join
+    the halves of a marker split around another into a new one)."""
     while True:
-        stripped = DIFF_MARKER.sub("", text)
+        stripped = USAGE_MARKER.sub("", DIFF_MARKER.sub("", text))
         if stripped == text:
             return text
         text = stripped
@@ -380,7 +386,7 @@ def earlier_review(repo, number, token, reviews):
                  f" ({'resolved' if t['isResolved'] else 'open'}):"]
         for c in comments:
             who = (c.get("author") or {}).get("login", "?")
-            lines.append(f"[{who}] {c['body'].replace(MARKER, '').strip()}")
+            lines.append(f"[{who}] {c['body'].replace(MARKER, '').replace(OUTCOME_ASK, '').strip()}")
         out.append("\n".join(lines))
     return "\n\n---\n\n".join(out)[-MAX_EARLIER_CHARS:]  # the latest rounds, if it's long
 
@@ -481,7 +487,17 @@ def ask_claude(system, user):
     print(f"Model {message.model}: {u.input_tokens} in (+{u.cache_read_input_tokens or 0} cached, "
           f"+{u.cache_creation_input_tokens or 0} written to cache), {u.output_tokens} out, "
           f"stop {message.stop_reason}")
-    return parse(message.stop_reason, [b.text for b in message.content if b.type == "text"])
+    usage = {"model": message.model, "input": u.input_tokens, "cache_read": u.cache_read_input_tokens or 0,
+             "cache_write": u.cache_creation_input_tokens or 0, "output": u.output_tokens}
+    try:
+        return parse(message.stop_reason, [b.text for b in message.content if b.type == "text"]), usage
+    except CutOff as e:
+        e.usage = usage  # a cut-off review still cost this
+        raise
+
+
+def usage_marker(usage):
+    return f"\n\n<!-- ai-review-usage: {json.dumps(usage)} -->" if usage else ""
 
 
 def prompt_main(repo, base, design_path):
@@ -525,6 +541,7 @@ def main(argv):
         return 0
     done = own_reviews(reviews)
     text, left_out = review_input(files)
+    usage = None
     if not text:
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
@@ -547,19 +564,20 @@ def main(argv):
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
                                omitted, history)
         try:
-            found = ask_claude(system, user)
+            found, usage = ask_claude(system, user)
         except CutOff as e:
             # No fingerprint: this diff was not reviewed, so a re-run or the next push reviews it
             github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body={
                 "event": "COMMENT", "commit_id": pr["head"]["sha"],
                 "body": f"**AI review (advisory)**\n\nThe review was cut off ({e}) before it finished. "
-                        "Re-run the `ai-review` job, or push again."})
+                        "Re-run the `ai-review` job, or push again." + usage_marker(e.usage)})
             print(f"Cut off ({e}); posted a note and recorded no fingerprint.")
             return 1
         review = to_github(found, files, left_out, earlier_comments(repo, number, token),
                            round_no=len(done) + 1)
     # The model's text can be steered by the diff: it must not carry a marker that skips a later push.
     review["body"] = strip_markers(review["body"])
+    review["body"] += usage_marker(usage)
     if fp:
         review["body"] += f"\n\n<!-- ai-review-diff: {fp} -->"
     post = {**review, "commit_id": pr["head"]["sha"]}

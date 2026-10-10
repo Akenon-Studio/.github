@@ -66,7 +66,8 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual(out["event"], "COMMENT")
         self.assertEqual(out["comments"], [{"path": "src/a.ts", "line": 2, "side": "RIGHT", "body":
                                             "**Major** · high confidence\n\nb changed\n\n"
-                                            "**Fails when:** b is 3, callers expect 2\n\n<!-- ai-review -->"}])
+                                            "**Fails when:** b is 3, callers expect 2\n\n"
+                                            f"{ai_review.OUTCOME_ASK}\n\n<!-- ai-review -->"}])
         body = out["body"]
         self.assertTrue(body.startswith("**AI review (advisory), round 2**"))
         self.assertIn("Critical, not on a changed line:\n- `src/a.ts:1`", body)
@@ -266,22 +267,29 @@ class MainTest(unittest.TestCase):
     def test_a_cut_off_review_records_no_fingerprint_and_fails(self):
         # .github#87: the diff must be reviewed again by a re-run or the next push
         def cut_off(system, user):
-            raise CutOff("max_tokens")
+            e = CutOff("max_tokens")
+            e.usage = {"model": "m", "input": 1, "cache_read": 0, "cache_write": 0, "output": 9}
+            raise e
         ai_review.ask_claude = cut_off
         self.assertEqual(ai_review.main([]), 1)
         self.assertEqual(len(self.posted), 1)
         self.assertIn("cut off (max_tokens)", self.posted[0]["body"])
         self.assertNotRegex(self.posted[0]["body"], ai_review.DIFF_MARKER)
+        self.assertRegex(self.posted[0]["body"], ai_review.USAGE_MARKER)  # it still cost tokens
 
     def test_a_finished_review_records_its_fingerprint_and_says_the_design_is_missing(self):
         seen = {}
 
         def answer(system, user):
             seen["design"] = system[1]["text"]
-            return {"summary": "Fine.", "comments": []}
+            return {"summary": "Fine.", "comments": []}, {"model": "m", "input": 1, "cache_read": 2,
+                                                           "cache_write": 3, "output": 4}
         ai_review.ask_claude = answer
         self.assertEqual(ai_review.main([]), 0)
         self.assertRegex(self.posted[0]["body"], ai_review.DIFF_MARKER)
+        # the scorecard's cost per PR (.github#88)
+        self.assertEqual(ai_review.USAGE_MARKER.findall(self.posted[0]["body"]),
+                         ['{"model": "m", "input": 1, "cache_read": 2, "cache_write": 3, "output": 4}'])
         self.assertIn(NO_DESIGN, seen["design"])
 
 
