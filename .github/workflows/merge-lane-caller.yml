@@ -14,3 +14,7 @@ jobs:
     # Only the lane's own label starts it from a label event (other labels would cost a run each).
     if: github.event_name != 'pull_request_target' || github.event.label.name == 'ready-to-merge'
     uses: akenon-studio/.github/.github/workflows/merge-lane.yml@main
+    # Passed by name: GitHub fills it from the merge-lane environment the lane's job runs in (main
+    # only). Only this one secret, not `secrets: inherit`.
+    secrets:
+      MERGE_LANE_APP_PRIVATE_KEY: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
