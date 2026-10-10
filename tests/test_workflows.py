@@ -65,8 +65,12 @@ class ReusableWorkflowsTest(unittest.TestCase):
                         continue
                     self.assertIn(f"{check}=", result["env"]["OUTCOMES"], f"{name}: {job_id}: {check}")
 
+    def test_pr_title_is_never_cancelled(self):
+        # it re-runs on the same commit (edits, assignments); a cancelled run there blocks the PR
+        self.assertNotIn("concurrency", REUSABLE["pr-title.yml"]["jobs"]["checks"])
+
     def test_check_jobs_cancel_superseded_runs(self):
-        for name in ("pr-title.yml", "security-scan.yml"):
+        for name in ("security-scan.yml",):  # runs only on new commits, so a cancelled run is stale
             for job_id, job in REUSABLE[name]["jobs"].items():
                 self.assertTrue(job["concurrency"]["cancel-in-progress"], f"{name}: {job_id}")
                 self.assertIn("github.ref", job["concurrency"]["group"])
