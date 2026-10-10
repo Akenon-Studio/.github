@@ -58,6 +58,7 @@ MAX_INPUT_CHARS = 360_000
 MAX_EARLIER_CHARS = 50_000  # the earlier rounds' findings and replies, latest kept
 MAX_BODY_CHARS = 60_000  # GitHub refuses a review body over 65,536 characters
 MAX_DESCRIPTION_CHARS = 20_000
+MAX_GENERATED = 200  # generated paths named in the request; the rest are counted (a vendored tree)
 SECTION = re.compile(r"\d+(\.\d+)*")  # a design section number, the only design text posted
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
@@ -77,7 +78,9 @@ round. Both count against you.
 
 You get the repo's CLAUDE.md, the design sections that govern this repo, the PR's title and
 description, every changed file in full as the PR leaves it (any left out for size are listed in
-<files_omitted>: judge those from the diff alone), and the diff. The design is private and some
+<files_omitted>: judge those from the diff alone), and the diff. Changed files that are generated
+(lockfiles, build output) are not shown but are listed in <generated_files>: they did change, so
+never report one as missing (unless it is marked deleted). The design is private and some
 repos are public: cite design sections by number only, never quote the design's text.
 
 Look for:
@@ -168,6 +171,22 @@ def split_diff(diff):
     return {p: t for p, t in files.items() if not SKIP_PATH.search(p)}
 
 
+def generated_paths(diff):
+    """The changed paths split_diff leaves out (lockfiles, build output), so the model knows they
+    changed (.github#114); a deleted one says so."""
+    out, path, deleted = [], None, False
+    for line in (diff or "").splitlines() + ["diff --git a/ b/"]:
+        if line.startswith("diff --git "):
+            if path and SKIP_PATH.search(path):
+                out.append(f"{path} (deleted)" if deleted else path)
+            path, deleted = line.rstrip().split(" b/", 1)[-1], False
+        elif line.startswith("deleted file mode"):
+            deleted = True
+    if len(out) > MAX_GENERATED:  # bounded, so it can't push the request past the window
+        out = out[:MAX_GENERATED] + [f"... and {len(out) - MAX_GENERATED} more"]
+    return out
+
+
 def added_lines(file_diff):
     """Line numbers (in the new file) that a file's diff adds. Lines before the first hunk are the
     file header (`+++ b/...`); inside a hunk every `+` line is content, even `+++i;`."""
@@ -244,7 +263,7 @@ def tagged(tag, text):
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
-            history=""):
+            history="", generated=()):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
@@ -257,6 +276,7 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
     user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
             "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
             (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
+            (tagged("generated_files", "\n".join(generated)) + "\n\n" if generated else "") +
             (tagged("diff", diff_text) if diff_text else ""))
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
@@ -509,7 +529,7 @@ def prompt_main(repo, base, design_path):
     title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
     whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
     system, user = request(claude_md, design_sections(open(design_path).read(), repo), title, "",
-                           whole, text, omitted=omitted)
+                           whole, text, omitted=omitted, generated=generated_paths(diff))
     print(json.dumps({"system": system, "user": user}))
     return 0
 
@@ -559,10 +579,12 @@ def main(argv):
         else:
             later, shown, paths = None, text, list(files)
         description = (pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
-        used = len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
+        generated = generated_paths(diff)  # the whole PR's, every round
+        used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
+                + sum(len(g) + 1 for g in generated))
         whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history)
+                               omitted, history, generated)
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:

@@ -216,6 +216,25 @@ class RequestTest(unittest.TestCase):
         os.unlink(f.name)
 
 
+class GeneratedFilesTest(unittest.TestCase):
+    def test_changed_lockfiles_are_named_not_hidden(self):
+        # .github#114: the review called a changed pnpm-lock.yaml missing
+        diff = ("diff --git a/package.json b/package.json\n+x\n"
+                "diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n+y\n"
+                "diff --git a/apps/x/dist/a.js b/apps/x/dist/a.js\ndeleted file mode 100644\n-z\n")
+        self.assertEqual(ai_review.generated_paths(diff), ["pnpm-lock.yaml", "apps/x/dist/a.js (deleted)"])
+        self.assertEqual(ai_review.generated_paths(None), [])
+        _, user = ai_review.request("", "", "t", "", {}, "d", generated=["pnpm-lock.yaml"])
+        self.assertIn("<generated_files>\npnpm-lock.yaml\n</generated_files>", user)
+        self.assertIn("<generated_files>", ai_review.INSTRUCTIONS)
+
+    def test_a_long_list_is_capped(self):
+        diff = "".join(f"diff --git a/dist/{i}.js b/dist/{i}.js\n+x\n" for i in range(ai_review.MAX_GENERATED + 5))
+        got = ai_review.generated_paths(diff)
+        self.assertEqual(len(got), ai_review.MAX_GENERATED + 1)
+        self.assertEqual(got[-1], "... and 5 more")
+
+
 class CutOffTest(unittest.TestCase):
     def test_a_finished_review_is_read(self):
         self.assertEqual(parse("end_turn", ['{"summary": "ok", ', '"comments": []}']),
@@ -311,6 +330,38 @@ class MainTest(unittest.TestCase):
         self.assertNotIn(ai_review.OUTCOME_ASK, body)
         self.assertTrue(body.rstrip().endswith("-->"))
         self.assertRegex(body.split("ai-review-usage")[-1], ai_review.DIFF_MARKER)
+
+    def test_the_request_names_the_generated_files(self):
+        seen = {}
+
+        def answer(system, user):
+            seen["user"] = user
+            return {"summary": "Fine.", "comments": []}, None
+        ai_review.ask_claude = answer  # DIFF changes pnpm-lock.yaml, which isn't shown
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertIn("<generated_files>\npnpm-lock.yaml\n</generated_files>", seen["user"])
+
+    def test_a_later_round_names_the_generated_files_too(self):
+        import subprocess
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+                       check=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        ai_review.all_reviews = lambda *a: [{"user": {"login": ai_review.REVIEWER}, "commit_id": head,
+                                              "body": "**AI review (advisory), round 1**\n\n<!-- ai-review-diff: " + "a" * 40 + " -->"}]
+        saved = ai_review.earlier_review
+        ai_review.earlier_review = lambda *a: "earlier findings"
+        seen = {}
+
+        def answer(system, user):
+            seen["user"] = user
+            return {"summary": "Fine.", "comments": []}, None
+        ai_review.ask_claude = answer
+        try:
+            self.assertEqual(ai_review.main([]), 0)
+        finally:
+            ai_review.earlier_review = saved
+        self.assertIn("This is a later round", seen["user"])
+        self.assertIn("<generated_files>\npnpm-lock.yaml\n</generated_files>", seen["user"])
 
     def test_a_finished_review_records_its_fingerprint_and_says_the_design_is_missing(self):
         seen = {}
