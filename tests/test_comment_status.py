@@ -44,13 +44,15 @@ class DecideTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(comment_status, k) for k in
-                      ("find_board_fields", "load_issue", "board_item", "set_field", "gh")}
+                      ("find_board_fields", "load_issue", "board_item", "set_field", "gh", "try_gh")}
         self.calls = []
         comment_status.find_board_fields = lambda title: {"id": "B"}
         comment_status.load_issue = lambda repo, n: {"assignedActors": {"nodes": [{"login": "x"}]}}
         comment_status.board_item = lambda board, issue: ("I", "In progress")
         comment_status.set_field = lambda board, item, field, value: self.calls.append((field, value))
         comment_status.gh = lambda path, *a, body=None: self.calls.append((path, body))
+        self.writers = set()
+        comment_status.try_gh = lambda path: {"permission": "write" if path.split("/")[-2] in self.writers else "read"}
 
     def tearDown(self):
         for k, v in self.saved.items():
@@ -59,7 +61,8 @@ class MainTest(unittest.TestCase):
     def run_event(self, body, action="created", user_type="User", association="MEMBER", **issue):
         e = {"action": action, "repository": {"full_name": "Akenon-Studio/platform"},
              "issue": {"number": 5, "state": "open", **issue},
-             "comment": {"body": body, "user": {"type": user_type}, "author_association": association}}
+             "comment": {"body": body, "user": {"type": user_type, "login": "someone"},
+                         "author_association": association}}
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(e, f)
         return comment_status.main(f.name)
@@ -68,6 +71,11 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.run_event("Waiting on: @partner"), 0)
         self.assertEqual(self.calls, [("repos/Akenon-Studio/platform/issues/5/assignees", {"assignees": ["partner"]}),
                                       ("Status", "Waiting for human")])
+
+    def test_a_private_member_with_write_access_counts(self):
+        self.writers = {"someone"}
+        self.run_event("Waiting on: @partner", association="CONTRIBUTOR")
+        self.assertIn(("Status", "Waiting for human"), self.calls)
 
     def test_pr_comments_change_nothing(self):
         comment_status.find_board_fields = lambda title: self.fail("no board call for a PR comment")

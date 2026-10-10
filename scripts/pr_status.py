@@ -94,7 +94,10 @@ def main(path):
     targets = [(r["repository"]["nameWithOwner"], r["number"], move)
                for r in found["closingIssuesReferences"]["nodes"] if r and r["state"] == "OPEN"]
     if move == "review":  # an edit that stopped closing an issue lets it go
+        still = {f"{t.lower()}#{n}" for t, n, _ in targets}  # e.g. linked in the sidebar
         for ref in dropped(event):
+            if ref in still:
+                continue
             target, n = ref.split("#")
             targets.append((target, int(n), "back"))
     board = None

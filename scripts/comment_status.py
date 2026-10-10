@@ -18,14 +18,14 @@ import sys
 
 from board import find_board_fields
 from issue_fields import WAITING, board_item, load_issue, set_field
-from rules import gh
+from rules import gh, try_gh
 
 WAITING_LINE = re.compile(r"^ {0,3}(?:[-*+][ \t]+)?[*_]*waiting on\b[*_]*(.*)$", re.I | re.M)  # 4 spaces: code
 NOT_WAITING = re.compile(r"^[\s:*_–-]*(nothing|none|no one|nobody|n/?a)\b|^[\s:*_–-]*$", re.I)
 MENTION = re.compile(r"(?<![\w/@])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\b")
 # Fenced code (``` or ~~~, closed or running to the end), inline code and HTML comments
 QUOTED = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)|`[^`\n]*`|<!--.*?-->", re.S)
-PEOPLE = {"OWNER", "MEMBER", "COLLABORATOR"}  # whose comments count: not a drive-by on a public repo
+PEOPLE = {"OWNER", "MEMBER", "COLLABORATOR"}  # whose comments count at once; others need write access
 FROM = {"Todo", "In progress", None}  # a Waiting on line keeps In review, Blocked and Done
 
 
@@ -38,6 +38,16 @@ def waiting_on(body):
         if not NOT_WAITING.match(rest):
             return rest.strip(" :*_–-")
     return None
+
+
+def counts(repo, comment):
+    """Whether the comment is from someone who works here: an org member or collaborator by its
+    association, or (a private member's association can read CONTRIBUTOR) write access to the repo."""
+    if comment.get("author_association") in PEOPLE:
+        return True
+    login = (comment.get("user") or {}).get("login")
+    level = (try_gh(f"repos/{repo}/collaborators/{login}/permission") or {}) if login else {}
+    return level.get("permission") in ("admin", "maintain", "write")
 
 
 def decide(body, status, assigned):
@@ -54,11 +64,13 @@ def main(path):
     event = json.load(open(path))
     issue, comment = event["issue"], event["comment"]
     if (event.get("action") != "created" or "pull_request" in issue or issue.get("state") != "open"
-            or (comment.get("user") or {}).get("type") == "Bot"
-            or comment.get("author_association") not in PEOPLE):
-        print("Nothing to change: not a new comment on an open issue by someone in the org")
+            or (comment.get("user") or {}).get("type") == "Bot"):
+        print("Nothing to change: not a person's new comment on an open issue")
         return 0
     repo, number = event["repository"]["full_name"], issue["number"]
+    if not counts(repo, comment):
+        print(f"#{number}: the commenter can't write to {repo}, so the comment changes nothing")
+        return 0
     board = find_board_fields("Akenon Studio")
     loaded = load_issue(repo, number)
     item, status = board_item(board, loaded)

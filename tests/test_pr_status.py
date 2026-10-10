@@ -107,6 +107,14 @@ class MainTest(unittest.TestCase):
         self.assertIn((f"{REPO.lower()}#12", "Status", "In progress"), self.set)
         self.assertNotIn((f"{REPO}#1", "Status", "In progress"), self.set)  # still closed: stays
 
+    def test_a_dropped_line_still_linked_stays(self):
+        self.status = "In review"
+        e = event("edited")
+        e["pull_request"]["body"] = "Fixes nothing here"  # #1 still linked (closingIssuesReferences)
+        e["changes"] = {"body": {"from": "Closes #1"}}
+        self.run_event(e)
+        self.assertEqual(self.set, [])
+
     def test_nothing_read_when_nothing_changes(self):
         pr_status.graphql = lambda q, **v: self.fail("no call for a merge")
         self.assertEqual(self.run_event(event("closed", merged=True)), 0)
