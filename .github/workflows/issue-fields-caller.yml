@@ -3,6 +3,10 @@ name: issue-fields-caller
 on:
   issues:
     types: [opened, edited, reopened, typed, untyped]
+  # The issues a PR closes go to In review (scripts/pr_status.py). _target: it runs main's
+  # workflow with the app key even for a PR whose branch changed it, and checks out no PR code.
+  pull_request_target:
+    types: [opened, reopened, edited, ready_for_review, converted_to_draft, closed]
 
 permissions:
   contents: read

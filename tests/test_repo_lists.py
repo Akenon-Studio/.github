@@ -33,14 +33,23 @@ class MissingFrom(unittest.TestCase):
 class CallerTriggers(unittest.TestCase):
     def test_reads_the_types_list(self):
         text = "on:\n  pull_request:\n    types: [opened, edited, assigned]\n"
-        self.assertEqual(verify.triggers(text), {"opened", "edited", "assigned"})
+        self.assertEqual(verify.triggers(text), {"pull_request: opened", "pull_request: edited",
+                                                 "pull_request: assigned"})
+
+    def test_every_event_counts(self):
+        # .github#90: issue-fields also listens to PR events; a repo without them must show
+        text = ("on:\n  issues:\n    types: [opened]\n  # why\n  pull_request_target:  # note\n"
+                "    # more\n    types: [closed, opened]\n")
+        self.assertEqual(verify.triggers(text), {"issues: opened", "pull_request_target: closed",
+                                                 "pull_request_target: opened"})
+        self.assertNotEqual(verify.triggers(text), verify.triggers("on:\n  issues:\n    types: [opened]\n"))
 
     def test_no_types_is_empty(self):
         self.assertEqual(verify.triggers("on: push\n"), set())
 
     def test_this_repos_pr_caller_reruns_on_assignment(self):
         text = (ROOT / ".github/workflows/pr-title-caller.yml").read_text()
-        self.assertTrue({"assigned", "unassigned"} <= verify.triggers(text))
+        self.assertTrue({"pull_request: assigned", "pull_request: unassigned"} <= verify.triggers(text))
 
 
 if __name__ == "__main__":

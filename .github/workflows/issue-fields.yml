@@ -2,10 +2,13 @@
 # missing or invalid answers, a missing parent, a Blocked issue with no "blocked by" link, an
 # author never assigned, or Waiting for human with no person assigned with the needs-fields label
 # (design 6.6, 6.8; scripts/issue_fields.py). Changes no event reports here (board Status, links,
-# assignees, closing a parent early) are caught by the issue-sweep workflow.
+# assignees, closing a parent early) are caught by the issue-sweep workflow. On a PR event it sets
+# the issues the PR closes to In review, and back when it closes unmerged or turns into a draft
+# (scripts/pr_status.py).
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
 #
-#   on: { issues: { types: [opened, edited, reopened, typed, untyped] } }
+#   on: { issues: { types: [opened, edited, reopened, typed, untyped] },
+#         pull_request_target: { types: [opened, reopened, edited, ready_for_review, converted_to_draft, closed] } }
 #   jobs: { issue-fields: { uses: akenon-studio/.github/.github/workflows/issue-fields.yml@main,
 #                           secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
 #
@@ -27,7 +30,7 @@ permissions:
 
 concurrency:
   # opened and typed arrive together for a new issue; handle them one at a time
-  group: issue-fields-${{ github.repository }}-${{ github.event.issue.number }}
+  group: issue-fields-${{ github.repository }}-${{ github.event.issue.number || format('pr-{0}', github.event.pull_request.number) }}
   cancel-in-progress: false
 
 jobs:
@@ -50,11 +53,16 @@ jobs:
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
-      - name: Sync the issue to the board
+      - name: Sync the issue to the board, or the issues a PR closes
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ github.event.issue.number }}
+          EVENT: ${{ github.event_name }}
         run: |
           pip install --quiet pyyaml
-          python3 scripts/issue_fields.py "$REPO" "$NUMBER"
+          if [ "$EVENT" = pull_request_target ]; then
+            python3 scripts/pr_status.py "$GITHUB_EVENT_PATH"
+          else
+            python3 scripts/issue_fields.py "$REPO" "$NUMBER"
+          fi
