@@ -11,9 +11,10 @@ outcome its replies give. It needs a token that reads pull requests and contents
 board, assigned to the automation owners.
 
 What it reports (design 6.4):
-- late catches: critical or major threads after round one whose line was already in the code round
-  one saw (the commented line's text is in that file at round one's commit; a line too short to
-  tell, like `}`, doesn't count). Target near zero.
+- late catches: critical or major threads after round one whose code was already there in round
+  one: the last lines of the comment's diff hunk (up to the commented line) appear, in order, as
+  whole lines of that file at round one's commit. Lines too short to tell (`}`, `return x`) don't
+  count. Target near zero.
 - false alarms: critical or major threads whose outcome is "not an issue".
 - rounds per PR: the reviews that finished (not a cut-off or too-large note).
 - cost per PR: from the tokens each review records (its usage marker), at PRICES.
@@ -42,10 +43,13 @@ USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
 SEVERITY = re.compile(r"\*\*(Critical|Major|Minor|Nit)\*\*")
 SERIOUS = {"critical", "major"}
 OUTCOMES = (("fixed", "fixed"), ("not an issue", "not an issue"), ("moved to", "moved"))
-NOT_A_ROUND = ("The review was cut off", "Not reviewed: the diff is too large")  # scripts/ai_review.py
-MIN_LINE = 8  # a shorter line (`}`, `return x`) is in most files, so it can't show the code was there
-# USD per million tokens: input, cache write (1 hour), cache read, output.
-# platform.claude.com/docs/en/about-claude/pricing, read 2026-10-10.
+# The notes ai_review.py posts instead of a review start with one of these, after the header
+NOT_A_ROUND = ("The review was cut off", "Not reviewed: the diff is too large")
+WINDOW = 3  # hunk lines, up to the commented one, that must all be at round one's commit
+MIN_CHARS = 25  # shorter than this together (`}`, `return x`) is in most files: can't tell
+# USD per million tokens: input, cache write (1 hour), cache read, output. Matched by prefix, so a
+# dated snapshot id prices too. platform.claude.com/docs/en/about-claude/pricing, read 2026-10-10
+# (Opus 5.5's cache reads are 0.05x input, not the usual 0.1x).
 PRICES = {"claude-opus-5-5": (4.0, 8.0, 0.20, 20.0)}
 
 PRS_QUERY = """query($q: String!, $after: String) {
@@ -99,15 +103,47 @@ def outcome(replies):
     return None
 
 
-def commented_line(diff_hunk):
-    """The text of the line a review comment sits on: the last line of its diff hunk."""
+def commented_lines(diff_hunk):
+    """The last WINDOW lines of the new side of a comment's diff hunk, up to the commented line,
+    stripped; blank lines left out. Empty if the comment is on a removed line."""
     lines = (diff_hunk or "").splitlines()
-    return lines[-1][1:].strip() if lines and lines[-1][:1] in "+ " else ""
+    if not lines or lines[-1][:1] not in "+ ":
+        return []
+    new = [l[1:].strip() for l in lines[1:] if l[:1] in "+ "]
+    return [l for l in new if l][-WINDOW:]
+
+
+def was_there(lines, text):
+    """True if `lines` appear in order as whole lines of `text` (blank lines ignored), and are long
+    enough together to tell."""
+    if sum(len(l) for l in lines) < MIN_CHARS:
+        return False
+    have = [l.strip() for l in text.splitlines() if l.strip()]
+    return any(have[i:i + len(lines)] == lines for i in range(len(have) - len(lines) + 1))
+
+
+def is_round(body):
+    """A finished review, not a cut-off or too-large note (those don't count as rounds)."""
+    if body.startswith("**AI review (advisory), round"):
+        return True
+    after = body.split("\n\n", 1)[1] if "\n\n" in body else ""
+    return not after.startswith(NOT_A_ROUND)  # the reviewer before 2026-10-10 had no round number
+
+
+def usage_of(body):
+    """The tokens a review recorded (its last usage marker), or None."""
+    found = USAGE_MARKER.findall(body)
+    try:
+        usage = json.loads(found[-1]) if found else None
+    except json.JSONDecodeError:
+        return None
+    return usage if isinstance(usage, dict) else None
 
 
 def cost(usage):
     """USD for one review's recorded usage, or None for a model without a price."""
-    price = PRICES.get(usage.get("model", ""))
+    model = usage.get("requested") or usage.get("model") or ""
+    price = next((p for key, p in PRICES.items() if model.startswith(key)), None)
     if not price:
         return None
     tokens = (usage.get("input", 0), usage.get("cache_write", 0), usage.get("cache_read", 0),
@@ -132,10 +168,9 @@ def pr_record(repo, number, url, data, read=file_at):
                      key=lambda r: r["submittedAt"])
     if not reviews:
         return None
-    rounds = [r for r in reviews if not any(note in r["body"] for note in NOT_A_ROUND)]
+    rounds = [r for r in reviews if is_round(r["body"])]
     round_of = {r["id"]: i + 1 for i, r in enumerate(rounds)}
-    usages = [json.loads(u) for r in reviews for u in USAGE_MARKER.findall(r["body"])[-1:]]
-    costs = [cost(u) for u in usages]
+    costs = [cost(u) for u in map(usage_of, (r["body"] for r in reviews)) if u]
     first_commit = rounds[0]["commit"]["oid"] if rounds else None
     seen = {}  # path -> its text at round one's commit
     threads = []
@@ -148,11 +183,11 @@ def pr_record(repo, number, url, data, read=file_at):
         round_no = round_of.get((first.get("pullRequestReview") or {}).get("id"), 1)
         late = False
         if round_no > 1 and level in SERIOUS and first_commit:
-            line = commented_line(first.get("diffHunk"))
-            if len(line) >= MIN_LINE:
+            lines = commented_lines(first.get("diffHunk"))
+            if lines:
                 if t["path"] not in seen:
                     seen[t["path"]] = read(repo, first_commit, t["path"]) or ""
-                late = line in seen[t["path"]]
+                late = was_there(lines, seen[t["path"]])
         replies = [c["body"] for c in comments[1:] if (c.get("author") or {}).get("login") not in REVIEWER]
         threads.append({"url": first["url"], "severity": level, "round": round_no, "late": late,
                         "resolved": t["isResolved"], "outcome": outcome(replies)})

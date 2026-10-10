@@ -7,17 +7,17 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from ai_scorecard import (body, commented_line, cost, last_month, month_range, outcome,  # noqa: E402
-                          pr_record, score, severity)
+from ai_scorecard import (body, commented_lines, cost, is_round, last_month, month_range,  # noqa: E402
+                          outcome, pr_record, score, severity, usage_of, was_there)
 
 MARKER = "<!-- ai-review -->"
 USAGE = '<!-- ai-review-usage: {"model": "claude-opus-5-5", "input": 1000000, "cache_read": 0, ' \
         '"cache_write": 0, "output": 100000} -->'
 
 
-def review(id, at, commit, text="Summary.", login="github-actions"):
+def review(id, at, commit, text="Summary.", login="github-actions", header="**AI review (advisory), round 1**"):
     return {"id": id, "author": {"login": login}, "submittedAt": at, "commit": {"oid": commit},
-            "body": f"**AI review (advisory), round 1**\n\n{text}\n\n{USAGE}"}
+            "body": f"{header}\n\n{text}\n\n{USAGE}"}
 
 
 def thread(review_id, head, line, replies=(), resolved=True, path="a.py"):
@@ -45,22 +45,47 @@ class PartsTest(unittest.TestCase):
         self.assertEqual(outcome(["Moved to #12"]), "moved")
         self.assertIsNone(outcome(["Done, I think"]))
 
-    def test_the_commented_line_ends_the_hunk(self):
-        self.assertEqual(commented_line("@@ -1,2 +1,2 @@\n a\n+  return total(x)"), "return total(x)")
-        self.assertEqual(commented_line(""), "")
+    def test_the_commented_lines_end_the_hunk(self):
+        hunk = "@@ -1,4 +1,5 @@\n a = 1\n-gone()\n+\n b = 2\n+  return total(x)"
+        self.assertEqual(commented_lines(hunk), ["a = 1", "b = 2", "return total(x)"])
+        self.assertEqual(commented_lines("@@ -1 +0,0 @@\n-removed()"), [])
+        self.assertEqual(commented_lines(""), [])
+
+    def test_was_there_means_whole_lines_in_order(self):
+        text = "def f():\n    total = add(a, b)\n\n    return total\n"
+        self.assertTrue(was_there(["total = add(a, b)", "return total"], text))
+        self.assertFalse(was_there(["return total", "total = add(a, b)"], text))  # order
+        self.assertFalse(was_there(["total = add(a, b", "return total"], text))  # a part of a line
+        self.assertFalse(was_there(["return total"], text))  # too short to tell
+
+    def test_notes_are_not_rounds(self):
+        self.assertTrue(is_round("**AI review (advisory), round 2**\n\nThe review was cut off before, now fine."))
+        self.assertTrue(is_round("**AI review (advisory)**\n\nOld reviewer summary."))
+        self.assertFalse(is_round("**AI review (advisory)**\n\nThe review was cut off (max_tokens) before..."))
+        self.assertFalse(is_round("**AI review (advisory)**\n\nNot reviewed: the diff is too large."))
+
+    def test_the_last_usage_marker_and_a_broken_one(self):
+        self.assertEqual(usage_of('x <!-- ai-review-usage: {"a": 1} --> <!-- ai-review-usage: {"a": 2} -->'),
+                         {"a": 2})
+        self.assertIsNone(usage_of("<!-- ai-review-usage: {not json} -->"))
+        self.assertIsNone(usage_of("no marker"))
 
     def test_cost_at_the_price_table(self):
         self.assertAlmostEqual(cost({"model": "claude-opus-5-5", "input": 1_000_000, "output": 100_000,
                                      "cache_read": 1_000_000, "cache_write": 0}), 4 + 2 + 0.2)
         self.assertIsNone(cost({"model": "unknown"}))
+        # a dated snapshot id, or priced on the model that was asked for
+        self.assertAlmostEqual(cost({"model": "claude-opus-5-5-20261001", "output": 1_000_000}), 20)
+        self.assertAlmostEqual(cost({"model": "other", "requested": "claude-opus-5-5", "input": 1_000_000}), 4)
 
 
 class RecordTest(unittest.TestCase):
     def data(self):
-        old = "x = compute_everything()"
+        old = "x = compute_everything(inputs)"
         return {"reviews": {"nodes": [
             review("r2", "2026-10-11T02:00:00Z", "c2"), review("r1", "2026-10-11T01:00:00Z", "c1"),
-            review("note", "2026-10-11T03:00:00Z", "c3", "The review was cut off (max_tokens)"),
+            review("note", "2026-10-11T03:00:00Z", "c3", "The review was cut off (max_tokens)",
+                   header="**AI review (advisory)**"),
             review("x", "2026-10-11T00:00:00Z", "c0", login="someone")]},
             "reviewThreads": {"nodes": [
                 thread("r1", "**Major** · high confidence", "y = new_code_here()", ["Fixed in c2"]),
@@ -74,7 +99,7 @@ class RecordTest(unittest.TestCase):
 
         def read(repo, sha, path):
             reads.append((repo, sha, path))
-            return "x = compute_everything()\n"
+            return "x = compute_everything(inputs)\n"
         rec = pr_record("platform", 7, "u", self.data(), read)
         self.assertEqual(rec["rounds"], 2)  # the cut-off note and someone else's review aren't rounds
         self.assertEqual(reads, [("platform", "c1", "a.py")])  # round one's commit, read once
@@ -89,7 +114,7 @@ class RecordTest(unittest.TestCase):
                                                          "reviewThreads": {"nodes": []}}))
 
     def test_the_score_and_report(self):
-        rec = pr_record("platform", 7, "u", self.data(), lambda *a: "x = compute_everything()")
+        rec = pr_record("platform", 7, "u", self.data(), lambda *a: "x = compute_everything(inputs)")
         s = score([rec])
         self.assertEqual(len(s["late"]), 1)
         self.assertEqual(len(s["false_alarms"]), 1)

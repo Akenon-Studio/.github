@@ -10,7 +10,7 @@ name: ai-scorecard
 
 on:
   schedule:
-    - cron: "0 21 1 * *"  # the 1st, early morning in Australia
+    - cron: "0 21 1 * *"  # 21:00 UTC on the 1st: the morning of the 2nd in Australia
   workflow_dispatch:
     inputs:
       month:

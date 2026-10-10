@@ -487,7 +487,7 @@ def ask_claude(system, user):
     print(f"Model {message.model}: {u.input_tokens} in (+{u.cache_read_input_tokens or 0} cached, "
           f"+{u.cache_creation_input_tokens or 0} written to cache), {u.output_tokens} out, "
           f"stop {message.stop_reason}")
-    usage = {"model": message.model, "input": u.input_tokens, "cache_read": u.cache_read_input_tokens or 0,
+    usage = {"model": message.model, "requested": MODEL, "input": u.input_tokens, "cache_read": u.cache_read_input_tokens or 0,
              "cache_write": u.cache_creation_input_tokens or 0, "output": u.output_tokens}
     try:
         return parse(message.stop_reason, [b.text for b in message.content if b.type == "text"]), usage
@@ -575,12 +575,11 @@ def main(argv):
             return 1
         review = to_github(found, files, left_out, earlier_comments(repo, number, token),
                            round_no=len(done) + 1)
-    # The model's text can be steered by the diff: it must not carry a marker that skips a later push.
+    # The model's text can be steered by the diff: it must not carry a marker that skips a later
+    # push or forges the cost. Ours go last, so they are the ones read.
+    markers = usage_marker(usage) + (f"\n\n<!-- ai-review-diff: {fp} -->" if fp else "")
     review["body"] = strip_markers(review["body"])
-    review["body"] += usage_marker(usage)
-    if fp:
-        review["body"] += f"\n\n<!-- ai-review-diff: {fp} -->"
-    post = {**review, "commit_id": pr["head"]["sha"]}
+    post = {**review, "body": review["body"] + markers, "commit_id": pr["head"]["sha"]}
     try:
         github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body=post)
     except urllib.error.HTTPError as e:
@@ -589,13 +588,14 @@ def main(argv):
         # GitHub refuses the whole review if one inline comment can't be placed: post them in the body
         body = review["body"] + "\n"
         for c in review["comments"]:  # under GitHub's limit, like the body itself
-            line = f"\n- `{c['path']}:{c['line']}`: {c['body'].replace(MARKER, '').strip()}"
+            text = strip_markers(c["body"].replace(MARKER, "").replace(OUTCOME_ASK, "")).strip()
+            line = f"\n- `{c['path']}:{c['line']}`: {text}"
             if len(body) + len(line) > MAX_BODY_CHARS + 5_000:
                 body += "\n\nMore findings left out: the review body has a size limit."
                 break
             body += line
         github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST",
-               body={**post, "comments": [], "body": body})
+               body={**post, "comments": [], "body": body + markers})
     print(f"Posted a review with {len(review['comments'])} thread(s).")
     return 0
 
