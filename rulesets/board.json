@@ -213,7 +213,43 @@
         "Created",
         "ASC"
       ],
-      "_comment": "Filters cannot OR across fields, so this relies on Status: a new Decision starts in Waiting for human (form automation), an issue whose PR awaits review is In review, and Peras sets Waiting for human when a cycle pauses."
+      "_comment": "Filters cannot OR across fields, so this relies on Status: a new Decision or Bug starts in Waiting for human (form automation), an issue whose PR awaits review is In review, and Peras sets Waiting for human when a cycle pauses."
+    },
+    {
+      "name": "Needs fixing",
+      "_comment": "Issues the automation flagged (issue-fields, issue-sweep): each has one comment saying what to fix. Every other view but My work, Epics and Overview leaves them out, so this is where they show (design 6.6).",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open label:needs-fields",
+      "fields": [
+        "Title",
+        "Status",
+        "Assignees",
+        "Repository"
+      ],
+      "sort": [
+        "Created",
+        "ASC"
+      ]
+    },
+    {
+      "name": "My work",
+      "layout": "TABLE_LAYOUT",
+      "filter": "is:open assignee:@me -status:Done",
+      "fields": [
+        "Title",
+        "Epic",
+        "Status",
+        "Priority",
+        "Iteration",
+        "Repository",
+        "Labels"
+      ],
+      "group_by": "Status",
+      "sort": [
+        "Priority",
+        "ASC"
+      ],
+      "_comment": "What I and my agents (who work as my login) are on, flagged issues included: their needs-fields label shows."
     },
     {
       "name": "This week",
@@ -227,24 +263,6 @@
         "Priority"
       ],
       "column": "Status"
-    },
-    {
-      "name": "My work",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open -label:needs-fields assignee:@me -status:Done",
-      "fields": [
-        "Title",
-        "Epic",
-        "Status",
-        "Priority",
-        "Iteration",
-        "Repository"
-      ],
-      "group_by": "Status",
-      "sort": [
-        "Priority",
-        "ASC"
-      ]
     },
     {
       "name": "Backlog",
@@ -267,24 +285,6 @@
       "_comment": "Unplanned work, for Friday planning."
     },
     {
-      "name": "By discipline",
-      "layout": "BOARD_LAYOUT",
-      "filter": "is:open -label:needs-fields -status:Done",
-      "fields": [
-        "Title",
-        "Assignees",
-        "Status",
-        "Priority",
-        "Iteration",
-        "Labels"
-      ],
-      "column": "Discipline",
-      "sort": [
-        "Priority",
-        "ASC"
-      ]
-    },
-    {
       "name": "Epics",
       "layout": "TABLE_LAYOUT",
       "filter": "is:open type:Epic",
@@ -299,89 +299,6 @@
         "ASC"
       ],
       "_comment": "Each open epic and how much of it is done and left (design 6.6)."
-    },
-    {
-      "name": "By epic",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open -label:needs-fields -status:Done -type:Epic",
-      "fields": [
-        "Title",
-        "Status",
-        "Assignees",
-        "Discipline",
-        "Repository"
-      ],
-      "group_by": "Epic",
-      "sort": [
-        "Priority",
-        "ASC"
-      ],
-      "_comment": "Open work under each epic, with who is on it (design 6.6)."
-    },
-    {
-      "name": "Roadmap",
-      "layout": "ROADMAP_LAYOUT",
-      "filter": "is:open -label:needs-fields -type:Bug",
-      "fields": [],
-      "group_by": "Parent issue",
-      "sort": [
-        "Priority",
-        "ASC"
-      ],
-      "_comment": "Rows are parent issues (phase steps, a release's parts; design 6.6); filter by Epic for one epic. Dates come from Iteration; set Date fields to Iteration and zoom to Quarter by hand."
-    },
-    {
-      "name": "Peras cycles",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open type:Intent has:peras",
-      "fields": [
-        "Title",
-        "Peras",
-        "Status",
-        "Priority",
-        "Assignees",
-        "Linked pull requests"
-      ],
-      "sort": [
-        "Peras",
-        "ASC"
-      ],
-      "_comment": "Stage, risk and budget columns arrive with Peras in phase 2 (design 7.9)."
-    },
-    {
-      "name": "Bugs to triage",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open type:Bug",
-      "fields": [
-        "Title",
-        "Repository",
-        "Priority",
-        "Assignees",
-        "Labels"
-      ],
-      "sort": [
-        "Created",
-        "ASC"
-      ],
-      "_comment": "A bug leaves this view when it is closed as triaged into an intent or a task."
-    },
-    {
-      "name": "Process failures",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open type:\"Process failure\"",
-      "fields": [
-        "Title",
-        "Status",
-        "Discipline",
-        "Priority",
-        "Assignees",
-        "Repository"
-      ],
-      "sort": [
-        "Created",
-        "ASC"
-      ],
-      "_comment": "Open process failures (design 6.6, 6.8): mistakes no check prevents yet, for the partners and the scheduled architecture review."
     },
     {
       "name": "Overview",

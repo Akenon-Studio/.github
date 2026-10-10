@@ -6,8 +6,8 @@ answers must be one of the options, and a question labelled "(required when Kind
 required when that answer is given.
 
 Dropdowns whose label is also a board field (Discipline, Phase, Priority, Audit, Severity) are
-copied to the board. New items start in Todo; Decisions and critical or high Audit findings in
-Waiting for human. An issue with problems gets the `needs-fields` label and one comment listing
+copied to the board. New items start in Todo; Decisions, bug reports and critical or high Audit
+findings in Waiting for human. An issue with problems gets the `needs-fields` label and one comment listing
 them; once fixed, the label goes and the comment says so. The issue body is the source of truth: edit the answer there and the
 board follows.
 
@@ -59,7 +59,8 @@ RECLOSE_MARKER = "<!-- issue-fields: closed again -->"
 AUTOMATION_APP = "akenon-studio-automation"  # the org app this workflow signs in as
 EMPTY = {"", "_No response_"}
 REQUIRED_WHEN = re.compile(r"\(required when (.+?) is (.+?)\)")
-START_STATUS = {"Decision": "Waiting for human"}  # everything else starts in Todo
+# A person decides a Decision and triages a bug report first (design 6.6); everything else starts in Todo
+START_STATUS = {"Decision": "Waiting for human", "Bug": "Waiting for human"}
 CONFIRMED = "confirmed"
 NEEDS_CONFIRMING = {"Critical", "High"}  # Audit finding severities a person confirms (design 6.1)
 
@@ -141,8 +142,8 @@ def needs_confirming(issue_type, text):
 
 
 def start_status(issue_type, text):
-    """The board Status a new item starts in: Waiting for human for a Decision and for a critical
-    or high Audit finding (a person confirms it first), Todo for everything else."""
+    """The board Status a new item starts in: Waiting for human for a Decision, a bug report and a
+    critical or high Audit finding (a person confirms it first), Todo for everything else."""
     if needs_confirming(issue_type, text):
         return "Waiting for human"
     return START_STATUS.get(issue_type, "Todo")

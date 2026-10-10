@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Create or update the org project board from rulesets/board.json: the project, its fields and
-options, and the repos linked to it. Safe to re-run; it never deletes fields or items.
+options, the repos linked to it and its views. Safe to re-run; it never deletes fields or items,
+but it deletes a view that board.json doesn't list (the board is code, design 6.6).
 
 Usage: scripts/apply-board.py
 Needs an org member logged in to gh with the project scope. The API cannot set a view's grouping,
@@ -102,9 +103,6 @@ def main():
             print(f"  - {name}: {step}")
 
 
-DEFAULT_VIEW = "View 1"  # the view GitHub makes with every new project
-
-
 def apply_views(board, want):
     ids = {f["name"]: f["id"] for f in board["fields"]["nodes"] if "name" in f}
     have = views_by_name(board)
@@ -125,10 +123,12 @@ def apply_views(board, want):
                     input={"viewId": view["createProjectV2View"]["projectV2View"]["id"],
                            "filter": v["filter"]})
             print(f"view '{v['name']}': created")
-    if DEFAULT_VIEW in have and DEFAULT_VIEW not in {v["name"] for v in want["views"]}:
+    # Views not in board.json: GitHub's default "View 1", one removed from board.json, or one made
+    # by hand (verify-settings.py reports those until they are added to board.json or deleted)
+    for name in sorted(set(have) - {v["name"] for v in want["views"]}):
         graphql("""mutation($id: ID!) { deleteProjectV2View(input: {viewId: $id}) { clientMutationId } }""",
-                id=have[DEFAULT_VIEW]["id"])
-        print(f"view '{DEFAULT_VIEW}': deleted (GitHub's default)")
+                id=have[name]["id"])
+        print(f"view '{name}': deleted (not in board.json)")
 
 
 if __name__ == "__main__":
