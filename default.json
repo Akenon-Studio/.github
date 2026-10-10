@@ -38,9 +38,15 @@
       "enabled": false
     },
     {
-      "description": "dependency-cruiser 16 supports TypeScript <6; stay on 5 until it is upgraded (platform#53).",
+      "description": "dependency-cruiser 16 supports TypeScript <6, and outside its range it can stop parsing .ts files without failing; a repo stays on TypeScript 5 until it moves to dependency-cruiser 18 (platform#53).",
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<6"
+    },
+    {
+      "description": "platform is on dependency-cruiser 18, which supports TypeScript <7 (platform#196). Add a repo here when it moves to dependency-cruiser 18.",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
     }
   ]
 }
