@@ -51,15 +51,21 @@ class MainTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(pr_status, k) for k in
                       ("graphql", "find_board_fields", "load_issue", "board_item", "set_field", "try_gh")}
-        self.set = []
+        self.set, self.other_prs = [], []
         refs = [{"number": 1, "state": "OPEN", "repository": {"nameWithOwner": REPO}},
                 {"number": 2, "state": "CLOSED", "repository": {"nameWithOwner": REPO}},
                 {"number": 3, "state": "OPEN", "repository": {"nameWithOwner": "Akenon-Studio/handbook"}},
                 None]
-        pr_status.graphql = lambda q, **v: {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": refs}}}}
+        def graphql(q, **v):
+            if "closedByPullRequestsReferences" in q:
+                return {"repository": {"issue": {"closedByPullRequestsReferences": {"nodes": self.other_prs}}}}
+            return {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": refs}}}}
+        pr_status.graphql = graphql
         pr_status.find_board_fields = lambda title: {"id": "B"}
-        pr_status.load_issue = lambda repo, n: {"n": f"{repo}#{n}", "assignedActors": {"nodes": [{"login": "x"}]}}
-        pr_status.board_item = lambda board, issue: (issue["n"], "In progress")
+        self.status = "In progress"
+        pr_status.load_issue = lambda repo, n: {"n": f"{repo}#{n}", "state": "OPEN",
+                                                "assignedActors": {"nodes": [{"login": "x"}]}}
+        pr_status.board_item = lambda board, issue: (issue["n"], self.status)
         pr_status.set_field = lambda board, item, field, value: self.set.append((item, field, value))
         # the author can write to platform, not handbook
         pr_status.try_gh = lambda path: {"permission": "write" if "/platform/" in path else "read"}
@@ -81,6 +87,25 @@ class MainTest(unittest.TestCase):
         pr_status.try_gh = lambda path: self.fail("a bot has no collaborator permission to ask about")
         self.run_event(event("opened", login="renovate", user_type="Bot"))
         self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In review")])
+
+    def test_another_ready_pr_keeps_it_in_review(self):
+        self.status = "In review"
+        self.other_prs = [{"number": 9, "isDraft": False, "repository": {"nameWithOwner": REPO}}]
+        self.run_event(event("closed"))
+        self.assertEqual(self.set, [])
+        self.other_prs = [{"number": 9, "isDraft": True, "repository": {"nameWithOwner": REPO}},
+                          {"number": 7, "isDraft": False, "repository": {"nameWithOwner": REPO}}]  # this one
+        self.run_event(event("closed"))
+        self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In progress")])
+
+    def test_an_edit_that_stops_closing_an_issue_lets_it_go(self):
+        self.status = "In review"
+        e = event("edited")
+        e["pull_request"]["body"] = "Closes #1"
+        e["changes"] = {"body": {"from": "Closes #12\nCloses #1"}}
+        self.run_event(e)
+        self.assertIn((f"{REPO.lower()}#12", "Status", "In progress"), self.set)
+        self.assertNotIn((f"{REPO}#1", "Status", "In progress"), self.set)  # still closed: stays
 
     def test_nothing_read_when_nothing_changes(self):
         pr_status.graphql = lambda q, **v: self.fail("no call for a merge")
