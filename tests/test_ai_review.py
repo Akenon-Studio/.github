@@ -94,6 +94,11 @@ class PayloadTest(unittest.TestCase):
         c = {"severity": "critical", "confidence": "low", "design": "design 6.2"}
         self.assertEqual(heading(c), "**Critical** · low confidence · design 6.2")
 
+    def test_design_text_other_than_a_section_number_is_not_posted(self):
+        # the design is private; .github is public
+        c = {"severity": "major", "confidence": "high", "design": "6.2: the lane merges one PR at a time"}
+        self.assertEqual(heading(c), "**Major** · high confidence")
+
     def test_a_line_already_commented_on_is_not_repeated(self):
         files = split_diff(DIFF)
         review = {"summary": "s", "comments": [{"path": "src/a.ts", "line": 2, "severity": "major",
@@ -186,6 +191,11 @@ class RequestTest(unittest.TestCase):
             with open(os.path.join(d, "real"), "w") as f:
                 f.write("code")
             self.assertEqual(full_files(["link", "real", "../x"], d)[0], {"real": "code"})
+
+    def test_a_full_review_after_earlier_rounds_sees_them(self):
+        _, user = request("", "", "t", "d", {}, "diff", history="F1 settled")
+        self.assertIn("<earlier_review>\nF1 settled\n</earlier_review>", user)
+        self.assertFalse(user.startswith("This is a later round"))
 
     def test_a_later_round_sends_no_full_diff(self):
         _, user = request("", "", "t", "d", {}, "", later=("earlier", "since"))

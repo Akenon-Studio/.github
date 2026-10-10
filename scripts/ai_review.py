@@ -52,6 +52,8 @@ MAX_DIFF_CHARS = 200_000
 MAX_INPUT_CHARS = 360_000
 MAX_EARLIER_CHARS = 50_000  # the earlier rounds' findings and replies, latest kept
 MAX_BODY_CHARS = 60_000  # GitHub refuses a review body over 65,536 characters
+MAX_DESCRIPTION_CHARS = 20_000
+SECTION = re.compile(r"\d+(\.\d+)*")  # a design section number, the only design text posted
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
                        r"|^animations/[^/]+/index\.js$|\.snap$")
@@ -235,12 +237,14 @@ def tagged(tag, text):
     return f"<{tag}>\n{text}\n</{tag}>"
 
 
-def request(claude_md, design, title, description, files, diff_text, later=None, omitted=()):
+def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
+            history=""):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
     message to keep the cached prefix the same. A later round's `files` are those the changes
-    touch, and it gets no `diff_text`."""
+    touch, and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
+    the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled."""
     system = [{"type": "text", "text": INSTRUCTIONS},
               {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
                "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
@@ -250,14 +254,19 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
             (tagged("diff", diff_text) if diff_text else ""))
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
+    elif history:
+        user += ("\n\nThis PR was reviewed before; those findings and the replies are below. Don't "
+                 "repeat them or findings the replies settled.\n" + tagged("earlier_review", history))
     return system, user
 
 
 def heading(c):
-    """`**Major** · high confidence · design 6.2` for a finding."""
+    """`**Major** · high confidence · design 6.2` for a finding. The design field is posted only as
+    a section number: the design is private and some repos are public."""
     parts = [f"**{c.get('severity', 'minor').capitalize()}**", f"{c.get('confidence', 'high')} confidence"]
-    if (c.get("design") or "").strip():
-        parts.append(f"design {c['design'].strip().removeprefix('design ').strip()}")
+    section = (c.get("design") or "").strip().removeprefix("design ").strip()
+    if SECTION.fullmatch(section):
+        parts.append(f"design {section}")
     return " · ".join(parts)
 
 
@@ -464,8 +473,10 @@ def ask_claude(system, user):
                 output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
                 messages=[{"role": "user", "content": user}]) as stream:
             message = stream.get_final_message()
-    except anthropic.BadRequestError as e:  # e.g. the prompt is too long for the context window
-        raise CutOff(f"the request was refused: {str(e)[:300]}") from None
+    except anthropic.BadRequestError as e:
+        if "too long" not in str(e):
+            raise  # a bad parameter: the log shows it, and a re-run won't help
+        raise CutOff("the PR is too large for one review") from None
     u = message.usage
     print(f"Model {message.model}: {u.input_tokens} in (+{u.cache_read_input_tokens or 0} cached, "
           f"+{u.cache_creation_input_tokens or 0} written to cache), {u.output_tokens} out, "
@@ -525,14 +536,16 @@ def main(argv):
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])
                                   or len(since) > MAX_DIFF_CHARS):
             since = None
+        history = earlier_review(repo, number, token, done) if done else ""
         if since is not None:  # a later round: the changes, and the files they touch in full
-            later, shown, paths = (earlier_review(repo, number, token, done), since), "", list(split_diff(since))
+            later, shown, paths = (history, since), "", list(split_diff(since))
         else:
             later, shown, paths = None, text, list(files)
-        used = len(design) + len(claude_md) + len(shown) + sum(len(t) for t in later or ())
+        description = (pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
+        used = len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
         whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
-        system, user = request(claude_md, design, pr["title"], pr.get("body") or "",
-                               whole, shown, later, omitted)
+        system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
+                               omitted, history)
         try:
             found = ask_claude(system, user)
         except CutOff as e:
@@ -556,10 +569,15 @@ def main(argv):
         if e.code != 422 or not review["comments"]:
             raise
         # GitHub refuses the whole review if one inline comment can't be placed: post them in the body
-        lines = [f"- `{c['path']}:{c['line']}`: {c['body'].replace(MARKER, '').strip()}"
-                 for c in review["comments"]]
+        body = review["body"] + "\n"
+        for c in review["comments"]:  # under GitHub's limit, like the body itself
+            line = f"\n- `{c['path']}:{c['line']}`: {c['body'].replace(MARKER, '').strip()}"
+            if len(body) + len(line) > MAX_BODY_CHARS + 5_000:
+                body += "\n\nMore findings left out: the review body has a size limit."
+                break
+            body += line
         github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST",
-               body={**post, "comments": [], "body": review["body"] + "\n\n" + "\n".join(lines)})
+               body={**post, "comments": [], "body": body})
     print(f"Posted a review with {len(review['comments'])} thread(s).")
     return 0
 
