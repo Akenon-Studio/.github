@@ -58,6 +58,7 @@ MAX_INPUT_CHARS = 360_000
 MAX_EARLIER_CHARS = 50_000  # the earlier rounds' findings and replies, latest kept
 MAX_BODY_CHARS = 60_000  # GitHub refuses a review body over 65,536 characters
 MAX_DESCRIPTION_CHARS = 20_000
+MAX_GENERATED = 200  # generated paths named in the request; the rest are counted (a vendored tree)
 SECTION = re.compile(r"\d+(\.\d+)*")  # a design section number, the only design text posted
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
@@ -181,6 +182,8 @@ def generated_paths(diff):
             path, deleted = line.rstrip().split(" b/", 1)[-1], False
         elif line.startswith("deleted file mode"):
             deleted = True
+    if len(out) > MAX_GENERATED:  # bounded, so it can't push the request past the window
+        out = out[:MAX_GENERATED] + [f"... and {len(out) - MAX_GENERATED} more"]
     return out
 
 
@@ -576,10 +579,12 @@ def main(argv):
         else:
             later, shown, paths = None, text, list(files)
         description = (pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
-        used = len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
+        generated = generated_paths(diff)  # the whole PR's, every round
+        used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
+                + sum(len(g) + 1 for g in generated))
         whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated_paths(diff))  # the whole PR's, every round
+                               omitted, history, generated)
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:
