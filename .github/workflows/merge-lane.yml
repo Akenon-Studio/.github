@@ -20,6 +20,12 @@ name: merge-lane
 
 on:
   workflow_call:
+    # Declared so the job can read it: a called workflow only sees secrets it declares. Callers pass
+    # nothing; the job's `environment: merge-lane` supplies the value from the caller repo's
+    # environment (which only main can use), so no caller needs `secrets: inherit`.
+    secrets:
+      MERGE_LANE_APP_PRIVATE_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -34,6 +40,12 @@ jobs:
       group: merge-lane-${{ github.repository }}
       cancel-in-progress: false
     steps:
+      - name: The app's key is here
+        env:
+          KEY: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::MERGE_LANE_APP_PRIVATE_KEY is empty: set it in this repo's merge-lane environment (design 6.2)"; exit 1; }
+
       - name: Log in as the Merge Lane app
         id: app
         # pinned to a commit: this step holds the app's key (Renovate bumps it)
