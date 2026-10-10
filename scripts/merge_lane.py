@@ -354,7 +354,7 @@ def can_write(issues_gh, repo, login, cache):
         try:
             level = issues_gh.call(f"repos/{repo}/collaborators/{login}/permission")["permission"]
         except urllib.error.HTTPError as e:
-            if e.code != 404:  # 404: not a collaborator there
+            if e.code not in (404, 422):  # not a collaborator there; 422: a bot, which has no access level
                 raise
             level = "none"
         cache[(repo, login)] = level in ("admin", "maintain", "write")

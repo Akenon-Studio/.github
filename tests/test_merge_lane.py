@@ -202,6 +202,9 @@ class RunOneTest(unittest.TestCase):
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
 
+    def test_a_merge_returns_the_author_for_closing_issues(self):
+        self.assertEqual(run_one(FakeGitHub([pr()]), 7, REQUIRED, float("inf")), ("merged", "someone"))
+
     def test_brings_main_in_then_merges(self):
         gh = FakeGitHub([pr(status="BEHIND"), pr(head="def")])
         run_one(gh, 7, REQUIRED, float("inf"))
