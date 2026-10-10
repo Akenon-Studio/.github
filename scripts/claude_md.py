@@ -9,7 +9,7 @@ and fenced code blocks are not rules. Dead references:
   absolute paths when running in CI (they name a person's machine);
 - `enforced by:` that names nothing in backticks, or names something that is neither an existing
   path nor a known check (a required check in rulesets/required-checks.json, or a job or workflow
-  in this repo's or the .github repo's workflows);
+  in this repo's or the .github repo's workflows, or a step id of such a job);
 - "design 6.8" or "section 6.8" with no such heading in handbook/design.md. Checked only where the
   design can be read (the handbook repo, and local runs such as the workspace CLAUDE.md); elsewhere
   the script says it skipped them, and the daily claude-md-check workflow checks every repo's
@@ -86,6 +86,8 @@ def known_checks(repo, workflow_dirs):
             names |= {name, path.name}
             for job_id, job in (workflow.get("jobs") or {}).items():
                 names |= {job_id, f"{name} / {job_id}", job.get("name", job_id)}
+                # a check that is a step of a job (design 6.3): `pr-title / closes-issue`
+                names |= {f"{name} / {s['id']}" for s in job.get("steps") or [] if s.get("id")}
     return names
 
 

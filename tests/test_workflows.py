@@ -43,9 +43,32 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_security_scan_checks(self):
         caller = load("security-scan-caller.yml")
         self.assertEqual(list(caller["jobs"]), ["security-scan"])
-        self.assertEqual(sorted(REUSABLE["security-scan.yml"]["jobs"]), ["code", "dependencies", "licences", "secrets"])
+        self.assertEqual(sorted(REUSABLE["security-scan.yml"]["jobs"]), ["code", "dependencies"])
         self.assertEqual(set(caller["on"]), {"pull_request", "push"})
 
+
+    def test_one_job_per_check_workflow_and_every_check_step_reported(self):
+        # design 6.3: billing rounds every job up to a minute; a check step that isn't in the
+        # Result step's OUTCOMES would fail without failing the job (continue-on-error)
+        self.assertEqual(list(REUSABLE["pr-title.yml"]["jobs"]), ["checks"])
+        for name in ("pr-title.yml", "security-scan.yml"):
+            for job_id, job in REUSABLE[name]["jobs"].items():
+                steps = job["steps"]
+                checks = [s["id"] for s in steps if s.get("continue-on-error")]
+                self.assertTrue(checks, f"{name}: {job_id}")
+                result = steps[-1]
+                self.assertEqual(result["name"], "Result", f"{name}: {job_id}")
+                self.assertNotIn("continue-on-error", result)
+                for check in checks:
+                    if check == "install":  # licences reports a failed install
+                        continue
+                    self.assertIn(f"{check}=", result["env"]["OUTCOMES"], f"{name}: {job_id}: {check}")
+
+    def test_check_jobs_cancel_superseded_runs(self):
+        for name in ("pr-title.yml", "security-scan.yml"):
+            for job_id, job in REUSABLE[name]["jobs"].items():
+                self.assertTrue(job["concurrency"]["cancel-in-progress"], f"{name}: {job_id}")
+                self.assertIn("github.ref", job["concurrency"]["group"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@ Read the design first. not code because: it is a pointer to design 6.8
 
 ## Rules
 
-- Every PR closes an issue. enforced by: `pr-title / check`
+- Every PR closes an issue. enforced by: `pr-title / closes-issue`
 - Scripts live in `scripts/rules.py` and friends; enforced by: `scripts/issue_fields.py`
 - Wrapped rules are fine when the reason ends the item,
   not code because: taste can't be checked (see `tests/`)
@@ -44,7 +44,8 @@ class PassesTest(unittest.TestCase):
         self.assertEqual(run("# Title\n" + "\n" * 59), [])
 
     def test_known_checks_include_required_checks_and_jobs(self):
-        self.assertIn("pr-title / check", CHECKS)
+        self.assertIn("pr-title / checks", CHECKS)
+        self.assertIn("pr-title / closes-issue", CHECKS)  # a step of that job
         self.assertIn("unit", CHECKS)  # tests.yml job
         self.assertIn("checks", CHECKS)  # platform's required check
 
