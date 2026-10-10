@@ -223,14 +223,27 @@ def drop(gh, pr, reason):
             f"Label it `{LABEL}` again when it's ready (design 6.2).")
     if not already_said(pr, body):
         # not retried: a POST that went through but timed out would post twice; a failure stops
-        # the run with the label still on, and the next run says it
-        gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": body}, tries=1)
+        # the run with the label still on, and the next run says it. A refusal that is about this
+        # PR (a locked conversation) doesn't: the label still comes off, or the PR would block the
+        # lane, first in every run.
+        try:
+            gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": body}, tries=1)
+        except urllib.error.HTTPError as e:
+            if e.code not in (403, 404, 422) or rate_limited(e):
+                raise
+            print(f"::warning::#{pr['number']}: couldn't comment ({e.code}); taking the label off anyway")
     try:
         gh.call(f"repos/{gh.repo}/issues/{pr['number']}/labels/{LABEL}", "DELETE")
     except urllib.error.HTTPError as e:
         if e.code != 404:  # already taken off
             raise
     print(f"#{pr['number']}: left the lane ({reason})")
+
+
+def rate_limited(error):
+    """A 403 or 429 that is GitHub's rate limit, not a refusal about the PR."""
+    headers = error.headers or {}
+    return error.code == 429 or headers.get("x-ratelimit-remaining") == "0" or headers.get("retry-after")
 
 
 def github_message(error):
@@ -243,7 +256,9 @@ def github_message(error):
 
 def run_one(gh, number, required, deadline, threads_required=True):
     """Take one PR through the lane. Returns "done" once it is merged, dropped or gone, or
-    "paused" if the run's deadline came first (it stays labelled, at the front)."""
+    "paused" if the run's deadline came first (it stays labelled, at the front). The timers are
+    per run: a paused PR is first in the next run, which gives it CHECKS_TIMEOUT from its start,
+    so it waits at most DEADLINE + CHECKS_TIMEOUT in all."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
     updated_from = None  # (head before the update, when): until GitHub shows the new commit
     while True:

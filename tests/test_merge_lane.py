@@ -276,6 +276,24 @@ class RunOneTest(unittest.TestCase):
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(self.writes(gh)[0], ("POST", "7/comments"))
 
+    def test_a_locked_conversation_still_takes_the_label_off(self):
+        gh = FakeGitHub([pr(draft=True)], fail={"comments": 403})
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_a_rate_limit_while_commenting_stops_the_run(self):
+        gh = FakeGitHub([pr(draft=True)])
+        real = gh.call
+
+        def limited(path, method="GET", body=None, tries=4):
+            if path.endswith("comments"):
+                raise urllib.error.HTTPError(path, 403, "rate limit", {"x-ratelimit-remaining": "0"}, None)
+            return real(path, method, body, tries)
+        gh.call = limited
+        with self.assertRaises(urllib.error.HTTPError):
+            run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertNotIn(("DELETE", "7/labels/ready-to-merge"), self.writes(gh))
+
     def test_a_failed_check_leaves_before_main_is_brought_in(self):
         gh = FakeGitHub([pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code")],
                             status="BEHIND")])
