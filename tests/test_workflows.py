@@ -74,6 +74,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_the_merge_lane_runs_only_mains_code_one_at_a_time(self):
         caller = load("merge-lane-caller.yml")
         self.assertEqual(caller["on"]["pull_request_target"]["types"], ["labeled"])
+        # the called workflow gets no more than this; and the lane restarts itself by this file name
+        self.assertEqual(caller["permissions"], {"contents": "read", "actions": "write"})
+        self.assertIn("merge-lane-caller.yml", str(REUSABLE["merge-lane.yml"]["jobs"]["lane"]["steps"]))
         self.assertIn("ready-to-merge", caller["jobs"]["merge-lane"]["if"])
         job = REUSABLE["merge-lane.yml"]["jobs"]["lane"]
         self.assertEqual(job["environment"], "merge-lane")

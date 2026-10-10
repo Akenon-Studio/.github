@@ -15,9 +15,9 @@ from merge_lane import BLOCKED_LOOKS, NEVER_RAN, check_states, decide, queue, ru
 REQUIRED = {"pr-title / checks", "security-scan / code"}
 
 
-def run(name, status="COMPLETED", conclusion="SUCCESS", required=True):
+def run(name, status="COMPLETED", conclusion="SUCCESS", required=True, started="2026-10-10T01:00:00Z"):
     return {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion,
-            "isRequired": required}
+            "isRequired": required, "startedAt": started}
 
 
 def pr(contexts=None, state="OPEN", draft=False, mergeable="MERGEABLE", status="CLEAN",
@@ -59,10 +59,16 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(action, "drop")
         self.assertIn("pr-title / checks", reason)
 
-    def test_a_rerun_that_passed_wins_over_the_old_failure(self):
-        p = pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("pr-title / checks"),
-                         run("security-scan / code")])
-        self.assertEqual(self.action(p), "merge")
+    def test_the_newest_run_of_a_check_counts_in_any_order(self):
+        old_fail = run("pr-title / checks", conclusion="FAILURE", started="2026-10-10T01:00:00Z")
+        new_pass = run("pr-title / checks", started="2026-10-10T02:00:00Z")
+        for contexts in ([old_fail, new_pass], [new_pass, old_fail]):
+            self.assertEqual(self.action(pr(contexts=contexts + [run("security-scan / code")])), "merge")
+        old_pass = run("pr-title / checks", started="2026-10-10T01:00:00Z")
+        new_fail = run("pr-title / checks", conclusion="FAILURE", started="2026-10-10T02:00:00Z")
+        for contexts in ([old_pass, new_fail], [new_fail, old_pass]):
+            self.assertEqual(self.action(pr(contexts=contexts + [run("security-scan / code")],
+                                            status="BLOCKED")), "drop")
 
     def test_a_missing_check_waits_then_leaves(self):
         p = pr(contexts=[run("pr-title / checks")], status="BLOCKED")
@@ -165,6 +171,22 @@ class RunOneTest(unittest.TestCase):
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual([w for w in self.writes(gh) if w[1] == "7/update-branch"], [("PUT", "7/update-branch")] * 3)
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_update_errors_count_only_in_a_row(self):
+        calls = {"n": 0}
+        gh = FakeGitHub([pr(status="BEHIND")] * 5 + [pr()])
+        real = gh.call
+
+        def flaky(path, method="GET", body=None):  # fail, succeed, fail, succeed: never 3 in a row
+            if path.endswith("update-branch"):
+                calls["n"] += 1
+                if calls["n"] % 2:
+                    gh.calls.append((method, path))
+                    raise urllib.error.HTTPError(path, 422, "moved", {}, None)
+            return real(path, method, body)
+        gh.call = flaky
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh)[-1], ("PUT", "7/merge"))
 
     def test_main_moving_again_and_again_drops(self):
         gh = FakeGitHub([pr(status="BEHIND")])

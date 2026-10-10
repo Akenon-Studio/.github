@@ -18,6 +18,7 @@ Usage: scripts/merge_lane.py   (in Actions, as the reusable merge-lane workflow;
 (the app's), GITHUB_REPOSITORY)
 """
 
+import http.client
 import json
 import os
 import sys
@@ -56,8 +57,8 @@ PR = """query($owner: String!, $name: String!, $number: Int!) {
           pageInfo { hasNextPage }
           nodes {
             __typename
-            ... on CheckRun { name status conclusion isRequired(pullRequestNumber: $number) }
-            ... on StatusContext { context state isRequired(pullRequestNumber: $number) }
+            ... on CheckRun { name status conclusion startedAt isRequired(pullRequestNumber: $number) }
+            ... on StatusContext { context state createdAt isRequired(pullRequestNumber: $number) }
           } } } } } } } } }"""
 
 
@@ -82,7 +83,7 @@ class GitHub:
             except urllib.error.HTTPError as e:
                 if e.code not in TRANSIENT or attempt == tries - 1:
                     raise
-            except (urllib.error.URLError, TimeoutError):
+            except (OSError, http.client.HTTPException):  # URLError, timeouts, resets, short reads
                 if attempt == tries - 1:
                     raise
             time.sleep(5 * 2 ** attempt)
@@ -115,19 +116,18 @@ def check_states(pr, required):
     """{required check: PASS, FAIL or PENDING}; one with no run at all is MISSING."""
     commit = pr["commits"]["nodes"][0]["commit"]
     contexts = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
-    states = {}
+    latest = {}  # {name: (started, state)}: a re-run leaves the old run in the list; the newest counts
     for c in contexts:
         if c["__typename"] == "CheckRun":
-            name = c["name"]
+            name, started = c["name"], c.get("startedAt") or ""
             state = ("PENDING" if c["status"] != "COMPLETED"
                      else "PASS" if c["conclusion"] in PASSING else "FAIL")
         else:
-            name = c["context"]
+            name, started = c["context"], c.get("createdAt") or ""
             state = {"SUCCESS": "PASS", "PENDING": "PENDING", "EXPECTED": "PENDING"}.get(c["state"], "FAIL")
-        if name in required or c.get("isRequired"):
-            # a re-run leaves the old run in the list: a pass or a run still going wins over a failure
-            if states.get(name) not in ("PASS", "PENDING"):
-                states[name] = state
+        if (name in required or c.get("isRequired")) and started >= latest.get(name, ("",))[0]:
+            latest[name] = (started, state)
+    states = {name: state for name, (_, state) in latest.items()}
     for name in required:
         states.setdefault(name, "MISSING")
     return states
@@ -219,7 +219,7 @@ def run_one(gh, number, required, deadline):
             try:
                 gh.call(f"repos/{gh.repo}/pulls/{number}/update-branch", "PUT",
                         {"expected_head_sha": head})
-                updates += 1
+                updates, update_errors = updates + 1, 0  # only failures in a row count
                 print(f"#{number}: brought main in; waiting for its checks")
             except urllib.error.HTTPError as e:
                 # 422: the head moved (an update already landing) or a conflict GitHub hasn't
@@ -266,7 +266,7 @@ def main():
         try:
             if run_one(gh, number, required, deadline) == "paused":
                 return MORE_LEFT
-        except (urllib.error.URLError, RuntimeError, KeyError, TypeError) as e:
+        except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
             # one PR's error doesn't stop the others; it stays labelled for the next run
             print(f"::error::#{number}: {e!r}")
             failed.append(number)

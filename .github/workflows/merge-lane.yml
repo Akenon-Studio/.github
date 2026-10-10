@@ -1,9 +1,13 @@
-# Reusable: the merge lane (design 6.2; scripts/merge_lane.py). Every repo (this one included, see
-# merge-lane-caller.yml) calls it with:
+# Reusable: the merge lane (design 6.2; scripts/merge_lane.py). Every repo (this one included) calls
+# it from a file named exactly `.github/workflows/merge-lane-caller.yml` (the lane restarts itself
+# by that name), with:
 #
 #   on: { pull_request_target: { types: [labeled] }, push: { branches: [main] }, workflow_dispatch: {} }
+#   permissions: { contents: read, actions: write }
 #   jobs: { merge-lane: { if: <the label is ready-to-merge, or not a label event>,
 #                         uses: akenon-studio/.github/.github/workflows/merge-lane.yml@main } }
+#
+# A called workflow gets no more permission than its caller grants, so the caller must grant both.
 #
 # pull_request_target runs main's workflow, not the PR's, so a PR can't change what runs with the
 # app's key; the key is in each repo's `merge-lane` environment, which only main can use. It never
