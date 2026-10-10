@@ -3,7 +3,11 @@
 #
 #   on: { pull_request: { types: [opened, synchronize, ready_for_review, reopened] } }
 #   permissions: { contents: read, pull-requests: write, id-token: write }
-#   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main } }
+#   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main,
+#     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
+#
+# The org app's key reads the design (handbook/design.md, private) that the review checks against:
+# a token for the handbook repo only, contents read only.
 #
 # scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
@@ -18,6 +22,9 @@ name: ai-review
 
 on:
   workflow_call:
+    secrets:
+      AKENON_APP_PRIVATE_KEY:
+        required: false  # without it the review runs without the design, and says so
 
 permissions:
   contents: read
@@ -27,12 +34,13 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30  # round one, uncapped, with effort, can take ten minutes
     concurrency:
       group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     # The skips are on the steps, not the job: a skipped job reports "skipped" (tests/test_workflows.py).
     env:
+      HAS_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY != '' }}
       WANTED: >-
         ${{ !github.event.pull_request.draft &&
             github.event.pull_request.head.repo.full_name == github.repository &&
@@ -42,11 +50,35 @@ jobs:
         if: env.WANTED != 'true'
         run: echo "Skipped, a draft, fork PR or Renovate update."
 
-      - name: Get the repo (for its CLAUDE.md)
+      - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Log in as the org app, to read the design
+        if: env.WANTED == 'true' && env.HAS_KEY == 'true'
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: handbook
+          permission-contents: read
+
+      - name: Get the design
+        if: env.WANTED == 'true' && env.HAS_KEY == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/handbook
+          ref: main
+          path: .akenon-handbook
+          sparse-checkout: design.md
+          sparse-checkout-cone-mode: false
+          token: ${{ steps.app.outputs.token }}
           persist-credentials: false
 
       - name: Get the script
@@ -70,6 +102,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          DESIGN_FILE: .akenon-handbook/design.md
           ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
           ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}

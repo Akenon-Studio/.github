@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""First-pass AI review of a PR (design 6.4: advisory; comments only, never approves).
+"""AI review of a PR (design 6.4: advisory; comments only, never approves).
 
-Reads the PR's diff and the repo's CLAUDE.md, asks Claude for findings through the Claude API as structured JSON, and
-posts them as one GitHub review with event COMMENT: a summary plus inline comments on lines the PR
-adds. Uses the Claude API directly, not Claude Code: the plan's monthly API credits cover the API
-but not Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
+Round one is the full review: the strongest model, more effort, no cap on findings, with the PR,
+the repo's CLAUDE.md, the design sections that apply to the repo and every changed file in full.
+Each finding carries an absolute severity (critical, major, minor, nit) and a confidence; critical
+and major findings become review threads, minor ones and nits lines in the summary. Later rounds
+review only the changes since the last review, with the earlier findings and the replies to them.
+Uses the Claude API directly, not Claude Code: the plan's monthly API credits cover the API but not
+Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
 A push that leaves the PR's diff as it was (bringing `main` in without conflicts) gets no new
 review: each review records the diff's `git patch-id --verbatim`, which ignores line numbers but not
-whitespace (indentation is code in Python and YAML), with the repo's
-CLAUDE.md, so a new rule brought in from `main` does get a review (design 6.4).
+whitespace (indentation is code in Python and YAML), with the repo's CLAUDE.md, so a new rule
+brought in from `main` does get a review (design 6.4). A review cut off before it finished records
+no fingerprint and fails the job, so a re-run or the next push reviews the diff again.
 
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
 (GitHub's tokens are single-use there), so no API key exists anywhere.
 
-Usage: scripts/ai_review.py   (in Actions, as the `ai-review` reusable workflow; reads GITHUB_TOKEN,
-GITHUB_REPOSITORY, PR_NUMBER, ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN and ANTHROPIC_FEDERATION_RULE_ID,
+Usage: scripts/ai_review.py   (in Actions, as the `ai-review` reusable workflow, run in a checkout
+of the PR's head with its history; reads GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, DESIGN_FILE
+(the handbook's design.md), ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN and ANTHROPIC_FEDERATION_RULE_ID,
 ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID; optional
 AI_REVIEW_MODEL)
-       scripts/ai_review.py --dry-run <diff file>   (prints what it would post; needs the same
-ANTHROPIC_* sign-in, or an ANTHROPIC_API_KEY for a local try)
+       scripts/ai_review.py --prompt <repo> <base ref> <design.md>   (in a checkout of the branch:
+prints the round-one request, for a local review or a replay)
 """
 
 import base64
@@ -33,30 +38,74 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-sonnet-5-5")
+MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-opus-5-5")
+EFFORT = "high"
+MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
 REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 MAX_DIFF_CHARS = 200_000
+MAX_FILES_CHARS = 400_000  # changed files in full; past this, only their diff
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
                        r"|^animations/[^/]+/index\.js$|\.snap$")
+# The design sections each repo's review reads (design 6.4): structure, architecture, standards;
+# Peras is also governed by 7.
+DESIGN_SECTIONS = {"peras": ("4", "5", "6", "7")}
+DEFAULT_SECTIONS = ("4", "5", "6")
+SEVERITIES = ("critical", "major", "minor", "nit")
+THREADS = {"critical", "major"}  # these become review threads; the rest go in the summary
 
-INSTRUCTIONS = """You are the first-pass reviewer for Akenon Studio (design 6.4). A person approves
-every PR; you only comment. The repo's CLAUDE.md and the PR are below.
+INSTRUCTIONS = """You are the code reviewer for Akenon Studio (design 6.4). A person approves every
+PR; you only comment. This is the only full review of this PR: later rounds see only the changes
+made after it, so report every real problem now, however many there are. A problem found in a
+later round in code you saw now is a miss; a finding that isn't a real problem costs the author a
+round. Both count against you.
 
-Look for, most serious first:
-1. Bugs: wrong logic, unhandled errors and edge cases, race conditions.
-2. Security: injection, secrets, unsafe input, auth mistakes, user data or audio leaving the device.
-3. Architecture fit: code in the wrong layer or package, a new dependency between packages or apps,
-   a provider SDK outside its adapter.
+You get the repo's CLAUDE.md, the design sections that govern this repo, the PR's title and
+description, every changed file in full as the PR leaves it, and the diff.
+
+Look for:
+1. Bugs: wrong logic, unhandled errors and edge cases, race conditions, retries and timeouts that
+   go wrong, state left behind on failure.
+2. Security: injection, secrets, unsafe input, auth mistakes, a check that can be bypassed, user
+   data or audio leaving the device.
+3. Design fit: anything that breaks a rule in the design sections or CLAUDE.md, or puts code in the
+   wrong layer or package; name the section (e.g. "6.2").
 4. Wasted performance: allocations in render or audio loops, listeners or GPU resources never
    released, blocking calls on Electron's main process, a query per item, repeated work.
 5. Docs: a paragraph the change makes wrong, duplicated text, a doc that isn't needed.
+6. Tests: a changed behaviour no test checks, or a test that would pass with the change undone.
 
-Comment only on lines the PR adds (the `+` lines; give the line number in the new file). Say what
-goes wrong and the fix in under 80 words. At most 10 comments, the most important. No praise, no style nits a linter catches. If there is nothing
-worth saying, return no comments and a one-line summary saying so."""
+Leave out what the deterministic checks already enforce: formatting, lint, types, PR titles,
+secret scanning, dependency audit, licences. No praise, no style preferences.
+
+Severity is absolute. Judge each finding on its own against this scale, never against the other
+findings: there is no quota, and ten critical findings are ten critical findings.
+- critical: harm in normal use: a security hole, user data or audio leaving the device, data loss,
+  a crash, a broken `main` or release, a required check that can be bypassed.
+- major: wrong in a realistic case, or a design rule broken: wrong behaviour on a plausible input,
+  a resource leak, waste on a hot path.
+- minor: real but unlikely or small: a rare edge case, waste off the hot paths, a doc made slightly
+  wrong.
+- nit: polish.
+A critical or major finding states its concrete failure in `failure`: the input or situation, what
+goes wrong, and the result. If you can't state one, it is at most minor. Confidence is separate:
+how sure you are the problem is real. A possible security hole you are unsure of stays critical,
+with low confidence.
+
+Each finding: the file, and a line the PR adds (a `+` line, numbered in the new file) where the
+problem is; what goes wrong and the fix, in under 100 words; the design section it breaks, or "".
+If there is nothing worth saying, return no findings and a one-line summary saying so."""
+
+LATER_ROUND = """
+
+This is a later round. You did the full review earlier; your findings and the replies to them are
+below, then the changes pushed since (they can include changes brought in from `main`). Review
+only those changes: report a problem they bring, or an earlier finding whose fix is wrong or
+incomplete. Don't repeat earlier findings, and don't raise findings about code the earlier review
+saw unchanged. Use the same scale; raise an earlier finding's severity only if the new code made
+it worse."""
 
 REVIEW_SCHEMA = {
     "type": "object",
@@ -69,9 +118,13 @@ REVIEW_SCHEMA = {
                 "properties": {
                     "path": {"type": "string"},
                     "line": {"type": "integer"},
+                    "severity": {"type": "string", "enum": list(SEVERITIES)},
+                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "design": {"type": "string"},
+                    "failure": {"type": "string"},
                     "body": {"type": "string"},
                 },
-                "required": ["path", "line", "body"],
+                "required": ["path", "line", "severity", "confidence", "design", "failure", "body"],
                 "additionalProperties": False,
             },
         },
@@ -79,6 +132,10 @@ REVIEW_SCHEMA = {
     "required": ["summary", "comments"],
     "additionalProperties": False,
 }
+
+
+class CutOff(Exception):
+    """The model stopped before it finished the review."""
 
 
 def split_diff(diff):
@@ -124,21 +181,79 @@ def review_input(files):
     return text, left_out
 
 
-def to_github(review, files, left_out, already=frozenset()):
-    """The GitHub review payload: inline comments that land on added lines; the rest go in the body.
-    A (path, line) in `already` (commented on by an earlier review of this PR) is not repeated."""
-    inline, stray, added = [], [], {p: added_lines(t) for p, t in files.items()}
+def design_sections(design, repo):
+    """The top-level sections of design.md that govern `repo` (DESIGN_SECTIONS), as one text."""
+    want = DESIGN_SECTIONS.get(repo, DEFAULT_SECTIONS)
+    parts = re.split(r"(?m)^(?=## )", design)
+    return "".join(p for p in parts if re.match(r"## (\d+)\.", p) and
+                   re.match(r"## (\d+)\.", p).group(1) in want)
+
+
+def full_files(paths, root="."):
+    """{path: text} of the changed files as the PR leaves them, largest left out first past
+    MAX_FILES_CHARS; deleted and binary files are skipped."""
+    found = {}
+    for p in paths:
+        try:
+            with open(os.path.join(root, p), encoding="utf-8") as f:
+                found[p] = f.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+    while sum(map(len, found.values())) > MAX_FILES_CHARS:
+        del found[max(found, key=lambda k: len(found[k]))]
+    return found
+
+
+def tagged(tag, text):
+    return f"<{tag}>\n{text}\n</{tag}>"
+
+
+def request(claude_md, design, title, description, files, diff_text, later=None):
+    """(system, user) for the Messages API. The system holds what is the same for every PR of a
+    repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings and
+    replies, changes since the last review) for a later round."""
+    instructions = INSTRUCTIONS + (LATER_ROUND if later else "")
+    system = [{"type": "text", "text": instructions},
+              {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
+               "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+    user = (f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
+            "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
+            tagged("diff", diff_text))
+    if later:
+        user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
+    return system, user
+
+
+def heading(c):
+    """`**Major** · high confidence · design 6.2` for a finding."""
+    parts = [f"**{c.get('severity', 'minor').capitalize()}**", f"{c.get('confidence', 'high')} confidence"]
+    if (c.get("design") or "").strip():
+        parts.append(f"design {c['design'].strip().removeprefix('design ').strip()}")
+    return " · ".join(parts)
+
+
+def to_github(review, files, left_out, already=frozenset(), round_no=1):
+    """The GitHub review payload. Critical and major findings on lines the PR adds are inline
+    threads; the rest go in the body, grouped by severity. A (path, line) in `already` (commented
+    on by an earlier review of this PR) is not repeated."""
+    inline, rest, added = [], {s: [] for s in SEVERITIES}, {p: added_lines(t) for p, t in files.items()}
     for c in review.get("comments", []):
         if (c.get("path"), c.get("line")) in already:
             continue
-        if c.get("line") in added.get(c.get("path"), ()):
+        severity = c.get("severity") if c.get("severity") in SEVERITIES else "minor"
+        failure = (c.get("failure") or "").strip()
+        text = c.get("body", "").strip() + (f"\n\n**Fails when:** {failure}" if failure and severity in THREADS else "")
+        if severity in THREADS and c.get("line") in added.get(c.get("path"), ()):
             inline.append({"path": c["path"], "line": c["line"], "side": "RIGHT",
-                           "body": f"{c['body']}\n\n{MARKER}"})
+                           "body": f"{heading(c)}\n\n{text}\n\n{MARKER}"})
         else:
-            stray.append(f"- `{c.get('path')}:{c.get('line')}`: {c.get('body')}")
-    body = "**AI review (advisory)**\n\n" + review.get("summary", "").strip()
-    if stray:
-        body += "\n\nAlso:\n" + "\n".join(stray)
+            rest[severity].append(f"- `{c.get('path')}:{c.get('line')}` ({heading(c)}): {text}")
+    body = f"**AI review (advisory), round {round_no}**\n\n" + review.get("summary", "").strip()
+    titles = {"critical": "Critical, not on a changed line", "major": "Major, not on a changed line",
+              "minor": "Minor", "nit": "Nits"}
+    for severity in SEVERITIES:
+        if rest[severity]:
+            body += f"\n\n{titles[severity]}:\n" + "\n".join(rest[severity])
     if left_out:
         body += "\n\nNot reviewed (diff too large): " + ", ".join(f"`{p}`" for p in left_out)
     return {"event": "COMMENT", "body": body, "comments": inline}
@@ -166,16 +281,62 @@ def strip_markers(text):
         text = stripped
 
 
+def own_reviews(reviews):
+    """This workflow's finished reviews (they carry a fingerprint), oldest first. Only its own count,
+    so no one can silence the next review by posting the marker."""
+    return [r for r in reviews if (r.get("user") or {}).get("login") == REVIEWER
+            and DIFF_MARKER.search(r.get("body") or "")]
+
+
 def last_fingerprint(reviews):
-    """The diff fingerprint in the latest of these reviews (oldest first) that has one. Only this
-    workflow's own reviews count, so no one can silence the next review by posting the marker."""
-    for review in reversed(reviews):
-        if (review.get("user") or {}).get("login") != REVIEWER:
+    """The diff fingerprint in the latest of these reviews (oldest first) that has one."""
+    done = own_reviews(reviews)
+    # ours is appended last; the model's text is stripped of any (main)
+    return DIFF_MARKER.findall(done[-1]["body"])[-1] if done else None
+
+
+def changes_since(commit, paths):
+    """`git diff` of the PR's files from an earlier reviewed commit to the checkout; None when that
+    commit isn't in the history (the branch was rewritten), so the round is a full review."""
+    try:
+        run = subprocess.run(["git", "diff", commit, "HEAD", "--", *paths],
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return run.stdout if run.returncode == 0 else None
+
+
+THREADS_QUERY = """query($owner: String!, $name: String!, $n: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $n) {
+    reviewThreads(first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes {
+      isResolved path line originalLine
+      comments(first: 20) { nodes { author { login } body } } } } } } }"""
+
+
+def earlier_review(repo, number, token, reviews):
+    """The earlier rounds as text for the model: each review's summary, then each of its threads
+    with the replies and whether it was resolved."""
+    owner, name = repo.split("/")
+    threads, after = [], None
+    while True:
+        data = graphql(THREADS_QUERY, token, owner=owner, name=name, n=int(number), after=after)
+        page = data["repository"]["pullRequest"]["reviewThreads"]
+        threads += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        after = page["pageInfo"]["endCursor"]
+    out = [strip_markers(r["body"]).strip() for r in reviews]
+    for t in threads:
+        comments = t["comments"]["nodes"]
+        if not comments or MARKER not in (comments[0]["body"] or ""):
             continue
-        found = DIFF_MARKER.findall(review.get("body") or "")
-        if found:
-            return found[-1]  # ours is appended last; the model's text is stripped of any (main)
-    return None
+        lines = [f"Thread on {t['path']}:{t.get('line') or t.get('originalLine')}"
+                 f" ({'resolved' if t['isResolved'] else 'open'}):"]
+        for c in comments:
+            who = (c.get("author") or {}).get("login", "?")
+            lines.append(f"[{who}] {c['body'].replace(MARKER, '').strip()}")
+        out.append("\n".join(lines))
+    return "\n\n---\n\n".join(out)
 
 
 def all_reviews(repo, number, token):
@@ -197,6 +358,13 @@ def github(path, token, method="GET", body=None, accept="application/vnd.github+
     with urllib.request.urlopen(req, timeout=60) as res:
         raw = res.read().decode()
     return raw if accept.endswith("diff") else (json.loads(raw) if raw else None)
+
+
+def graphql(query, token, **variables):
+    out = github("graphql", token, method="POST", body={"query": query, "variables": variables})
+    if out.get("errors"):
+        raise RuntimeError(f"GitHub GraphQL: {out['errors']}")
+    return out["data"]
 
 
 def earlier_comments(repo, number, token):
@@ -240,28 +408,46 @@ def client():
         workspace_id=os.environ["ANTHROPIC_WORKSPACE_ID"]))
 
 
-def ask_claude(claude_md, title, description, diff_text):
-    message = client().messages.create(
-        model=MODEL, max_tokens=16000, system=INSTRUCTIONS,
-        output_config={"format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
-        messages=[{"role": "user", "content":
-                   f"<claude_md>\n{claude_md}\n</claude_md>\n\n<pr_title>{title}</pr_title>\n"
-                   f"<pr_description>\n{description}\n</pr_description>\n\n<diff>\n{diff_text}\n</diff>"}])
-    print(f"Model {message.model}: {message.usage.input_tokens} in, {message.usage.output_tokens} out, "
-          f"stop {message.stop_reason}")
+def parse(stop_reason, texts):
+    """The review from the model's text blocks; CutOff unless it finished with valid JSON."""
+    if stop_reason != "end_turn":
+        raise CutOff(stop_reason)
     try:
-        return json.loads(next(b.text for b in message.content if b.type == "text"))
-    except (StopIteration, json.JSONDecodeError):
-        return {"summary": f"The review was cut off ({message.stop_reason}) before it finished; "
-                           "nothing to report from this run.", "comments": []}
+        return json.loads("".join(texts))
+    except json.JSONDecodeError:
+        raise CutOff("unreadable output") from None
+
+
+def ask_claude(system, user):
+    # Streamed: a long review can outlast a plain request's timeout
+    with client().messages.stream(
+            model=MODEL, max_tokens=MAX_TOKENS, system=system, thinking={"type": "adaptive"},
+            output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
+            messages=[{"role": "user", "content": user}]) as stream:
+        message = stream.get_final_message()
+    u = message.usage
+    print(f"Model {message.model}: {u.input_tokens} in (+{u.cache_read_input_tokens or 0} cached, "
+          f"+{u.cache_creation_input_tokens or 0} written to cache), {u.output_tokens} out, "
+          f"stop {message.stop_reason}")
+    return parse(message.stop_reason, [b.text for b in message.content if b.type == "text"])
+
+
+def prompt_main(repo, base, design_path):
+    """Print the round-one request for the checked-out branch against `base` (local review, replay)."""
+    diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
+    files = split_diff(diff)
+    text, _ = review_input(files)
+    claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
+    title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+    system, user = request(claude_md, design_sections(open(design_path).read(), repo), title, "",
+                           full_files(files), text)
+    print(json.dumps({"system": system, "user": user}))
+    return 0
 
 
 def main(argv):
-    if argv[:1] == ["--dry-run"]:
-        files = split_diff(open(argv[1]).read())
-        text, left_out = review_input(files)
-        print(json.dumps(to_github(ask_claude("", "dry run", "", text), files, left_out), indent=2))
-        return 0
+    if argv[:1] == ["--prompt"]:
+        return prompt_main(*argv[1:4])
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
@@ -279,17 +465,37 @@ def main(argv):
         claude_md = open("CLAUDE.md").read()
     except OSError:
         claude_md = ""
+    reviews = all_reviews(repo, number, token)
     fp = fingerprint(files, claude_md) if files else None
-    if fp and fp == last_fingerprint(all_reviews(repo, number, token)):
+    if fp and fp == last_fingerprint(reviews):
         print(f"The diff and CLAUDE.md are unchanged since the last review ({fp}); nothing new to review.")
         return 0
+    done = own_reviews(reviews)
     text, left_out = review_input(files)
     if not text:
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
-        review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
-                           left_out, earlier_comments(repo, number, token))
+        try:
+            design = design_sections(open(os.environ["DESIGN_FILE"]).read(), repo.split("/")[1])
+        except (KeyError, OSError):
+            design = "(The design could not be read for this run: judge design fit from CLAUDE.md.)"
+        since = changes_since(done[-1]["commit_id"], list(files)) if done else None
+        later = (earlier_review(repo, number, token, done), since) if since is not None else None
+        system, user = request(claude_md, design, pr["title"], pr.get("body") or "",
+                               full_files(files), text, later)
+        try:
+            found = ask_claude(system, user)
+        except CutOff as e:
+            # No fingerprint: this diff was not reviewed, so a re-run or the next push reviews it
+            github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body={
+                "event": "COMMENT", "commit_id": pr["head"]["sha"],
+                "body": f"**AI review (advisory)**\n\nThe review was cut off ({e}) before it finished. "
+                        "Re-run the `ai-review` job, or push again."})
+            print(f"Cut off ({e}); posted a note and recorded no fingerprint.")
+            return 1
+        review = to_github(found, files, left_out, earlier_comments(repo, number, token),
+                           round_no=len(done) + 1)
     # The model's text can be steered by the diff: it must not carry a marker that skips a later push.
     review["body"] = strip_markers(review["body"])
     if fp:
@@ -305,7 +511,7 @@ def main(argv):
                  for c in review["comments"]]
         github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST",
                body={**post, "comments": [], "body": review["body"] + "\n\n" + "\n".join(lines)})
-    print(f"Posted a review with {len(review['comments'])} inline comment(s).")
+    print(f"Posted a review with {len(review['comments'])} thread(s).")
     return 0
 
 

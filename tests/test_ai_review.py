@@ -5,7 +5,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from ai_review import (added_lines, fingerprint, last_fingerprint, review_input, split_diff,  # noqa: E402
+from ai_review import (CutOff, added_lines, design_sections, fingerprint, full_files,  # noqa: E402
+                       heading, last_fingerprint, parse, request, review_input, split_diff,
                        strip_markers, to_github)
 
 DIFF = """diff --git a/src/a.ts b/src/a.ts
@@ -50,24 +51,44 @@ class DiffTest(unittest.TestCase):
 
 
 class PayloadTest(unittest.TestCase):
-    def test_comments_on_added_lines_go_inline_the_rest_in_the_body(self):
+    def test_critical_and_major_on_added_lines_are_threads_the_rest_in_the_body(self):
         files = split_diff(DIFF)
+        f = {"confidence": "high", "design": "", "failure": ""}
         review = {"summary": "One bug.", "comments": [
-            {"path": "src/a.ts", "line": 2, "body": "b changed"},
-            {"path": "src/a.ts", "line": 1, "body": "not added"},
-            {"path": "nope.ts", "line": 1, "body": "no file"}]}
-        out = to_github(review, files, ["big.ts"])
+            {**f, "path": "src/a.ts", "line": 2, "severity": "major", "body": "b changed",
+             "failure": "b is 3, callers expect 2"},
+            {**f, "path": "src/a.ts", "line": 3, "severity": "minor", "body": "small"},
+            {**f, "path": "src/a.ts", "line": 3, "severity": "nit", "body": "polish"},
+            {**f, "path": "src/a.ts", "line": 1, "severity": "critical", "body": "not added"},
+            {**f, "path": "nope.ts", "line": 1, "severity": "major", "body": "no file"}]}
+        out = to_github(review, files, ["big.ts"], round_no=2)
         self.assertEqual(out["event"], "COMMENT")
-        self.assertEqual(out["comments"], [{"path": "src/a.ts", "line": 2, "side": "RIGHT",
-                                            "body": "b changed\n\n<!-- ai-review -->"}])
-        self.assertIn("`src/a.ts:1`: not added", out["body"])
-        self.assertIn("`nope.ts:1`", out["body"])
-        self.assertIn("Not reviewed (diff too large): `big.ts`", out["body"])
-        self.assertTrue(out["body"].startswith("**AI review (advisory)**"))
+        self.assertEqual(out["comments"], [{"path": "src/a.ts", "line": 2, "side": "RIGHT", "body":
+                                            "**Major** · high confidence\n\nb changed\n\n"
+                                            "**Fails when:** b is 3, callers expect 2\n\n<!-- ai-review -->"}])
+        body = out["body"]
+        self.assertTrue(body.startswith("**AI review (advisory), round 2**"))
+        self.assertIn("Critical, not on a changed line:\n- `src/a.ts:1`", body)
+        self.assertIn("Major, not on a changed line:\n- `nope.ts:1`", body)
+        self.assertIn("Minor:\n- `src/a.ts:3` (**Minor** · high confidence): small", body)
+        self.assertIn("Nits:\n- `src/a.ts:3`", body)
+        self.assertLess(body.index("Critical"), body.index("Minor"))
+        self.assertIn("Not reviewed (diff too large): `big.ts`", body)
+
+    def test_a_finding_without_a_known_severity_is_minor(self):
+        out = to_github({"summary": "s", "comments": [{"path": "src/a.ts", "line": 2, "body": "x"}]},
+                        split_diff(DIFF), [])
+        self.assertEqual(out["comments"], [])
+        self.assertIn("Minor:", out["body"])
+
+    def test_heading_names_the_design_section_once(self):
+        c = {"severity": "critical", "confidence": "low", "design": "design 6.2"}
+        self.assertEqual(heading(c), "**Critical** · low confidence · design 6.2")
 
     def test_a_line_already_commented_on_is_not_repeated(self):
         files = split_diff(DIFF)
-        review = {"summary": "s", "comments": [{"path": "src/a.ts", "line": 2, "body": "again"}]}
+        review = {"summary": "s", "comments": [{"path": "src/a.ts", "line": 2, "severity": "major",
+                                                "body": "again"}]}
         out = to_github(review, files, [], already={("src/a.ts", 2)})
         self.assertEqual(out["comments"], [])
         self.assertNotIn("again", out["body"])
@@ -115,6 +136,48 @@ class FingerprintTest(unittest.TestCase):
     def test_a_marker_from_anyone_else_is_ignored(self):
         reviews = [{"user": {"login": "someone"}, "body": f"<!-- ai-review-diff: {'a' * 40} -->"}]
         self.assertIsNone(last_fingerprint(reviews))
+
+
+class RequestTest(unittest.TestCase):
+    DESIGN = "## 3. Products\nthree\n## 4. Repository\nfour\n### 4.1 Sub\nsub\n## 6. Engineering\nsix\n## 7. Peras\nseven\n"
+
+    def test_each_repo_reads_its_design_sections(self):
+        self.assertEqual(design_sections(self.DESIGN, "platform"),
+                         "## 4. Repository\nfour\n### 4.1 Sub\nsub\n## 6. Engineering\nsix\n")
+        self.assertIn("## 7. Peras", design_sections(self.DESIGN, "peras"))
+        self.assertNotIn("## 3.", design_sections(self.DESIGN, "peras"))
+
+    def test_the_shared_part_is_cached_and_a_later_round_says_so(self):
+        system, user = request("rules", "design", "t", "d", {"a.py": "x = 1"}, "diff")
+        self.assertEqual(system[1]["cache_control"], {"type": "ephemeral", "ttl": "1h"})
+        self.assertIn('<file path="a.py">\nx = 1\n</file>', user)
+        self.assertNotIn("This is a later round", system[0]["text"])
+        system, user = request("rules", "design", "t", "d", {}, "diff", later=("earlier", "since"))
+        self.assertIn("This is a later round", system[0]["text"])
+        self.assertIn("<earlier_review>\nearlier\n</earlier_review>", user)
+        self.assertIn("<changes_since>\nsince\n</changes_since>", user)
+
+    def test_full_files_leave_out_the_largest_past_the_limit(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            for name, size in (("small", 10), ("big", 399_995)):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("x" * size)
+            self.assertEqual(list(full_files(["small", "big", "deleted"], d)), ["small"])
+
+
+class CutOffTest(unittest.TestCase):
+    def test_a_finished_review_is_read(self):
+        self.assertEqual(parse("end_turn", ['{"summary": "ok", ', '"comments": []}']),
+                         {"summary": "ok", "comments": []})
+
+    def test_a_review_cut_off_is_not(self):
+        # it must record no fingerprint, so the diff is reviewed again (.github#87)
+        with self.assertRaises(CutOff):
+            parse("max_tokens", ['{"summary": "o'])
+        with self.assertRaises(CutOff):
+            parse("end_turn", ["not json"])
+
 
 if __name__ == "__main__":
     unittest.main()
