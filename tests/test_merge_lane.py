@@ -21,14 +21,14 @@ def run(name, status="COMPLETED", conclusion="SUCCESS", required=True, started="
 
 
 def pr(contexts=None, state="OPEN", draft=False, mergeable="MERGEABLE", status="CLEAN",
-       labels=("ready-to-merge",), threads=(), review=None):
+       labels=("ready-to-merge",), threads=(), review=None, head="abc"):
     if contexts is None:
         contexts = [run("pr-title / checks"), run("security-scan / code")]
     return {"number": 7, "state": state, "isDraft": draft, "mergeable": mergeable,
-            "mergeStateStatus": status, "reviewDecision": review, "headRefOid": "abc",
+            "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head,
             "author": {"login": "someone"}, "labels": {"nodes": [{"name": n} for n in labels]},
             "reviewThreads": {"nodes": [{"isResolved": r} for r in threads]},
-            "commits": {"nodes": [{"commit": {"oid": "abc", "statusCheckRollup": {
+            "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
                 "contexts": {"nodes": contexts}}}}]}}
 
 
@@ -116,6 +116,12 @@ class QueueTest(unittest.TestCase):
 
 
 class CheckStatesTest(unittest.TestCase):
+    def test_a_queued_rerun_is_newer_than_an_old_failure(self):
+        old_fail = run("pr-title / checks", conclusion="FAILURE", started="2026-10-10T01:00:00Z")
+        queued = run("pr-title / checks", status="QUEUED", conclusion=None, started=None)
+        for contexts in ([old_fail, queued], [queued, old_fail]):
+            self.assertEqual(check_states(pr(contexts=contexts), REQUIRED)["pr-title / checks"], "PENDING")
+
     def test_commit_statuses_count_too(self):
         p = pr(contexts=[run("pr-title / checks"),
                          {"__typename": "StatusContext", "context": "security-scan / code", "state": "PENDING",
@@ -140,8 +146,26 @@ class FakeGitHub:
             raise urllib.error.HTTPError(path, code, "no", {}, None)
 
 
-@mock.patch.object(merge_lane.time, "sleep", lambda s: None)
+class Clock:
+    """Fake time: sleeping moves it on, so a wait that never ends shows up as a timeout drop."""
+    def __init__(self):
+        self.now = 1_000_000.0
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 class RunOneTest(unittest.TestCase):
+    def setUp(self):
+        clock = Clock()
+        for name in ("time", "sleep"):
+            patcher = mock.patch.object(merge_lane.time, name, getattr(clock, name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def writes(self, gh):
         return [(m, p.split("/", 4)[-1]) for m, p in gh.calls]
 
@@ -162,9 +186,22 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
 
     def test_brings_main_in_then_merges(self):
-        gh = FakeGitHub([pr(status="BEHIND"), pr()])
+        gh = FakeGitHub([pr(status="BEHIND"), pr(head="def")])
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(self.writes(gh), [("PUT", "7/update-branch"), ("PUT", "7/merge")])
+
+    def test_a_lagging_behind_after_the_update_is_waited_out(self):
+        # GitHub still shows the old commit, still BEHIND, for a few looks: no second update
+        gh = FakeGitHub([pr(status="BEHIND"), pr(status="BEHIND"), pr(status="BEHIND"), pr(head="def")])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh), [("PUT", "7/update-branch"), ("PUT", "7/merge")])
+
+    def test_an_update_that_never_shows_leaves_the_lane(self):
+        gh = FakeGitHub([pr(status="BEHIND")])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh)[0], ("PUT", "7/update-branch"))
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+        self.assertEqual(sum(w == ("PUT", "7/update-branch") for w in self.writes(gh)), 1)
 
     def test_an_update_error_is_retried_then_drops(self):
         gh = FakeGitHub([pr(status="BEHIND")], fail={"update-branch": 422})
@@ -172,12 +209,20 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual([w for w in self.writes(gh) if w[1] == "7/update-branch"], [("PUT", "7/update-branch")] * 3)
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
 
-    def test_update_errors_count_only_in_a_row(self):
-        calls = {"n": 0}
-        gh = FakeGitHub([pr(status="BEHIND")] * 5 + [pr()])
-        real = gh.call
+    def test_an_outage_while_bringing_main_in_is_not_the_prs_fault(self):
+        gh = FakeGitHub([pr(status="BEHIND")], fail={"update-branch": 502})
+        with self.assertRaises(urllib.error.HTTPError):
+            run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertNotIn(("DELETE", "7/labels/ready-to-merge"), self.writes(gh))
 
-        def flaky(path, method="GET", body=None):  # fail, succeed, fail, succeed: never 3 in a row
+    def test_update_errors_count_only_in_a_row(self):
+        # fail, succeed (new commit, still behind), fail, succeed: never 3 failures in a row
+        looks = [pr(status="BEHIND"), pr(status="BEHIND"), pr(status="BEHIND", head="b"),
+                 pr(status="BEHIND", head="b"), pr(head="c")]
+        gh = FakeGitHub(looks)
+        calls, real = {"n": 0}, gh.call
+
+        def flaky(path, method="GET", body=None):
             if path.endswith("update-branch"):
                 calls["n"] += 1
                 if calls["n"] % 2:
@@ -189,7 +234,7 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual(self.writes(gh)[-1], ("PUT", "7/merge"))
 
     def test_main_moving_again_and_again_drops(self):
-        gh = FakeGitHub([pr(status="BEHIND")])
+        gh = FakeGitHub([pr(status="BEHIND", head=h) for h in "abcd"])
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(sum(w == ("PUT", "7/update-branch") for w in self.writes(gh)), 3)
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
@@ -199,11 +244,20 @@ class RunOneTest(unittest.TestCase):
         run_one(first, 7, REQUIRED, float("inf"))
         said = "<!-- merge-lane -->\n@someone Taken out of the merge lane: it is a draft. " \
                "Label it `ready-to-merge` again when it's ready (design 6.2)."
+        labelled = {"__typename": "LabeledEvent", "label": {"name": "ready-to-merge"}}
+        comment = {"__typename": "IssueComment", "body": said}
+        # the comment went up but the label couldn't come off: only the label is taken off now
         again = pr(draft=True)
-        again["comments"] = {"nodes": [{"body": said}]}
+        again["timelineItems"] = {"nodes": [labelled, comment]}
         gh = FakeGitHub([again])
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(self.writes(gh), [("DELETE", "7/labels/ready-to-merge")])
+        # labelled again without fixing it: the author is told again
+        relabelled = pr(draft=True)
+        relabelled["timelineItems"] = {"nodes": [labelled, comment, labelled]}
+        gh = FakeGitHub([relabelled])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh)[0], ("POST", "7/comments"))
 
     def test_a_failed_check_leaves_before_main_is_brought_in(self):
         gh = FakeGitHub([pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code")],
@@ -229,6 +283,23 @@ class RunOneTest(unittest.TestCase):
         gh = FakeGitHub([running])
         self.assertEqual(run_one(gh, 7, REQUIRED, 0), "paused")
         self.assertEqual(self.writes(gh), [])
+
+class MainTest(unittest.TestCase):
+    def test_an_outage_stops_the_run_and_leaves_every_label_on(self):
+        class Down(FakeGitHub):
+            def required_checks(self):
+                return REQUIRED
+
+            def graphql(self, query, **variables):
+                if "pullRequests(" in query:  # the queue reads fine; then GitHub goes down
+                    return {"pullRequests": {"nodes": [{"number": 7, "timelineItems": {"nodes": []}}]}}
+                raise urllib.error.HTTPError("graphql", 502, "bad gateway", {}, None)
+        gh = Down([pr()])
+        with mock.patch.object(merge_lane, "GitHub", lambda token, repo: gh), \
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "Akenon-Studio/x"}):
+            with self.assertRaises(urllib.error.HTTPError):
+                merge_lane.main()
+        self.assertEqual(gh.calls, [])  # no comment, no label taken off
 
 if __name__ == "__main__":
     unittest.main()

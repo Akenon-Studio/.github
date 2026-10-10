@@ -9,10 +9,14 @@ a draft) gets a comment saying why and loses the label, and the lane goes on to 
 bypasses the rules: GitHub refuses a merge they don't allow.
 
 It logs in as the Akenon Studio Merge Lane app: a branch update made with the workflow's own token
-would start no workflows, so the checks would never run on it. One run at a time per repo (the
-workflow's concurrency group); every run works through the whole queue, so a run that GitHub drops
-while another is going loses nothing. A run stops starting work at its deadline and exits with
-MORE_LEFT, and the workflow starts a fresh run for the rest.
+would start no workflows, so the checks would never run on it. The app's token lasts an hour, so a
+run stops at DEADLINE and exits with MORE_LEFT, and the workflow starts a fresh run (a fresh token)
+for the rest. One run at a time per repo (the workflow's concurrency group); every run works
+through the whole queue, so a run that GitHub drops while another is going loses nothing.
+
+Only the PR's own state takes it out of the lane. An error that isn't about the PR (GitHub down
+after the retries, a rate limit, an expired token) stops the run and fails it, leaving every label
+on: GitHub tells whoever labelled it that the run failed, and the next label or run carries on.
 
 Usage: scripts/merge_lane.py   (in Actions, as the reusable merge-lane workflow; reads GITHUB_TOKEN
 (the app's), GITHUB_REPOSITORY)
@@ -33,7 +37,8 @@ NEVER_RAN = 10 * 60       # a required check the lane has seen with no run for t
 BLOCKED_LOOKS = 4         # green but BLOCKED this many looks in a row (GitHub lags a few seconds)
 MAX_UPDATES = 3           # main moved under it this many times: someone else keeps merging
 MAX_REFUSALS = 3          # GitHub refused the merge this many times in a row: it won't change
-DEADLINE = 90 * 60        # a run starts no new wait after this (the job's timeout is 120 minutes)
+DEADLINE = 45 * 60        # a run stops after this: the app's token expires at 60 minutes
+UPDATE_LAG = 3 * 60       # after bringing main in, the longest GitHub may take to show the new commit
 MORE_LEFT = 3             # exit code: PRs are still labelled; start another run
 PASSING = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 MERGEABLE = {"CLEAN", "UNSTABLE", "HAS_HOOKS"}  # UNSTABLE: only a check that isn't required failed
@@ -53,13 +58,16 @@ PR = """query($owner: String!, $name: String!, $number: Int!) {
       author { login }
       labels(first: 100) { nodes { name } }
       reviewThreads(first: 100) { nodes { isResolved } }
-      comments(last: 20) { nodes { body } }
+      timelineItems(itemTypes: [ISSUE_COMMENT, LABELED_EVENT], last: 30) { nodes {
+        __typename
+        ... on IssueComment { body }
+        ... on LabeledEvent { label { name } } } }
       commits(last: 1) { nodes { commit { oid
         statusCheckRollup { contexts(first: 100) {
           pageInfo { hasNextPage }
           nodes {
             __typename
-            ... on CheckRun { name status conclusion startedAt isRequired(pullRequestNumber: $number) }
+            ... on CheckRun { name status conclusion startedAt completedAt isRequired(pullRequestNumber: $number) }
             ... on StatusContext { context state createdAt isRequired(pullRequestNumber: $number) }
           } } } } } } } } }"""
 
@@ -121,7 +129,8 @@ def check_states(pr, required):
     latest = {}  # {name: (started, state)}: a re-run leaves the old run in the list; the newest counts
     for c in contexts:
         if c["__typename"] == "CheckRun":
-            name, started = c["name"], c.get("startedAt") or ""
+            # a run still queued has no start time yet, and is the newest
+            name, started = c["name"], c.get("startedAt") or ("" if c["status"] == "COMPLETED" else "~")
             state = ("PENDING" if c["status"] != "COMPLETED"
                      else "PASS" if c["conclusion"] in PASSING else "FAIL")
         else:
@@ -188,14 +197,23 @@ def people_needed(pr):
     return ", ".join(why)
 
 
+def already_said(pr, body):
+    """True if the lane's last word on the PR is this comment, with no labelling since: a run that
+    commented but couldn't take the label off. After a new labelling it is said again."""
+    for item in reversed(((pr.get("timelineItems") or {}).get("nodes")) or []):
+        if item.get("__typename") == "LabeledEvent" and (item.get("label") or {}).get("name") == LABEL:
+            return False
+        if item.get("__typename") == "IssueComment" and (item.get("body") or "").startswith("<!-- merge-lane -->"):
+            return item["body"] == body
+    return False
+
+
 def drop(gh, pr, reason):
-    """Say why, then take the label off (so a failed comment never leaves a silent drop). The same
-    reason isn't said twice: a run that commented but couldn't take the label off says it once."""
+    """Say why, then take the label off (so a failed comment never leaves a silent drop)."""
     who = (pr.get("author") or {}).get("login")
     body = (f"<!-- merge-lane -->\n{'@' + who + ' ' if who else ''}Taken out of the merge lane: {reason}. "
             f"Label it `{LABEL}` again when it's ready (design 6.2).")
-    said = [c["body"] for c in (pr.get("comments") or {}).get("nodes", [])]
-    if not said or said[-1] != body:
+    if not already_said(pr, body):
         gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": body})
     try:
         gh.call(f"repos/{gh.repo}/issues/{pr['number']}/labels/{LABEL}", "DELETE")
@@ -217,13 +235,27 @@ def run_one(gh, number, required, deadline):
     """Take one PR through the lane. Returns "done" once it is merged, dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front)."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
+    updated_from = None  # (head before the update, when): until GitHub shows the new commit
     while True:
         pr = gh.graphql(PR, number=number)["pullRequest"]
+        if pr is None:
+            print(f"#{number}: gone (deleted?)")
+            return "done"
         head = pr["headRefOid"]
         missing = "MISSING" in check_states(pr, required).values()
         if missing:
             missing_since.setdefault(head, time.time())
         action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0)
+        if updated_from and head != updated_from[0]:
+            updated_from = None
+        if updated_from and action not in ("gone", "drop"):
+            # main was brought in, but GitHub still shows the old commit (and may still say BEHIND):
+            # deciding on that would update twice or merge the old head
+            if time.time() - updated_from[1] > UPDATE_LAG:
+                drop(gh, pr, f"main was brought in, but the new commit didn't appear within "
+                             f"{UPDATE_LAG // 60} minutes: bring main in by hand")
+                return "done"
+            action = "wait"
         blocked_looks = blocked_looks + 1 if action == "blocked" else 0
         if action == "gone":
             print(f"#{number}: {reason}")
@@ -240,10 +272,14 @@ def run_one(gh, number, required, deadline):
                 gh.call(f"repos/{gh.repo}/pulls/{number}/update-branch", "PUT",
                         {"expected_head_sha": head})
                 updates, update_errors = updates + 1, 0  # only failures in a row count
+                updated_from = (head, time.time())
                 print(f"#{number}: brought main in; waiting for its checks")
             except urllib.error.HTTPError as e:
-                # 422: the head moved (an update already landing) or a conflict GitHub hasn't
-                # flagged yet: look again, and give up only if it keeps failing
+                # 422 is about this PR: the head moved (an update already landing) or a conflict
+                # GitHub hasn't flagged yet. Look again, and give up only if it keeps failing.
+                # Anything else is GitHub's or the lane's, and stops the run (see the top).
+                if e.code != 422:
+                    raise
                 update_errors += 1
                 if update_errors >= 3:
                     drop(gh, pr, f"main couldn't be brought in (GitHub said {e.code}): merge it in by hand")
@@ -279,30 +315,21 @@ def main():
     gh = GitHub(os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"])
     required = gh.required_checks()
     deadline = time.time() + DEADLINE
-    done, failed = set(), []
+    done = set()
     while True:
         waiting = [n for n in queue(gh.graphql(QUEUE, label=LABEL)) if n not in done]
         if not waiting:
-            print("The lane is empty." if not failed else f"Done; errors on {failed}: see above.")
-            return 1 if failed else 0
+            print("The lane is empty.")
+            return 0
         if time.time() > deadline:
             print(f"Time is up with {len(waiting)} PR(s) still labelled; starting a new run.")
             return MORE_LEFT
         print(f"Lane: {', '.join(f'#{n}' for n in waiting)}")
         number = waiting[0]
-        try:
-            if run_one(gh, number, required, deadline) == "paused":
-                return MORE_LEFT
-        except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
-            # One PR's error doesn't stop the others. It leaves the lane, saying so, rather than stay
-            # labelled and hit the same error in every later run with no one told.
-            print(f"::error::#{number}: {e!r}")
-            failed.append(number)
-            try:
-                pr = gh.graphql(PR, number=number)["pullRequest"]
-                drop(gh, pr, f"the lane hit an error ({e!r:.200}); see the merge-lane run's log")
-            except Exception as again:  # noqa: BLE001 -- best effort; the log above has the cause
-                print(f"::error::#{number}: couldn't say so on the PR either: {again!r}")
+        # An error here stops the run with every label left on (see the top): it is GitHub's or the
+        # lane's, not the PR's, so no author is told to relabel.
+        if run_one(gh, number, required, deadline) == "paused":
+            return MORE_LEFT
         done.add(number)
 
 
