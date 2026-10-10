@@ -221,8 +221,8 @@ class GeneratedFilesTest(unittest.TestCase):
         # .github#114: the review called a changed pnpm-lock.yaml missing
         diff = ("diff --git a/package.json b/package.json\n+x\n"
                 "diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n+y\n"
-                "diff --git a/apps/x/dist/a.js b/apps/x/dist/a.js\n+z\n")
-        self.assertEqual(ai_review.generated_paths(diff), ["pnpm-lock.yaml", "apps/x/dist/a.js"])
+                "diff --git a/apps/x/dist/a.js b/apps/x/dist/a.js\ndeleted file mode 100644\n-z\n")
+        self.assertEqual(ai_review.generated_paths(diff), ["pnpm-lock.yaml", "apps/x/dist/a.js (deleted)"])
         self.assertEqual(ai_review.generated_paths(None), [])
         _, user = ai_review.request("", "", "t", "", {}, "d", generated=["pnpm-lock.yaml"])
         self.assertIn("<generated_files>\npnpm-lock.yaml\n</generated_files>", user)
@@ -324,6 +324,16 @@ class MainTest(unittest.TestCase):
         self.assertNotIn(ai_review.OUTCOME_ASK, body)
         self.assertTrue(body.rstrip().endswith("-->"))
         self.assertRegex(body.split("ai-review-usage")[-1], ai_review.DIFF_MARKER)
+
+    def test_the_request_names_the_generated_files(self):
+        seen = {}
+
+        def answer(system, user):
+            seen["user"] = user
+            return {"summary": "Fine.", "comments": []}, None
+        ai_review.ask_claude = answer  # DIFF changes pnpm-lock.yaml, which isn't shown
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertIn("<generated_files>\npnpm-lock.yaml\n</generated_files>", seen["user"])
 
     def test_a_finished_review_records_its_fingerprint_and_says_the_design_is_missing(self):
         seen = {}

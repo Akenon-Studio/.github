@@ -79,7 +79,7 @@ You get the repo's CLAUDE.md, the design sections that govern this repo, the PR'
 description, every changed file in full as the PR leaves it (any left out for size are listed in
 <files_omitted>: judge those from the diff alone), and the diff. Changed files that are generated
 (lockfiles, build output) are not shown but are listed in <generated_files>: they did change, so
-never report one as missing. The design is private and some
+never report one as missing (unless it is marked deleted). The design is private and some
 repos are public: cite design sections by number only, never quote the design's text.
 
 Look for:
@@ -172,9 +172,16 @@ def split_diff(diff):
 
 def generated_paths(diff):
     """The changed paths split_diff leaves out (lockfiles, build output), so the model knows they
-    changed (.github#114)."""
-    return [line.rstrip().split(" b/", 1)[-1] for line in (diff or "").splitlines()
-            if line.startswith("diff --git ") and SKIP_PATH.search(line.rstrip().split(" b/", 1)[-1])]
+    changed (.github#114); a deleted one says so."""
+    out, path, deleted = [], None, False
+    for line in (diff or "").splitlines() + ["diff --git a/ b/"]:
+        if line.startswith("diff --git "):
+            if path and SKIP_PATH.search(path):
+                out.append(f"{path} (deleted)" if deleted else path)
+            path, deleted = line.rstrip().split(" b/", 1)[-1], False
+        elif line.startswith("deleted file mode"):
+            deleted = True
+    return out
 
 
 def added_lines(file_diff):
@@ -572,7 +579,7 @@ def main(argv):
         used = len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
         whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated_paths(since if since is not None else diff))
+                               omitted, history, generated_paths(diff))  # the whole PR's, every round
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:
