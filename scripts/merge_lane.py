@@ -105,11 +105,15 @@ class GitHub:
             raise RuntimeError(f"GraphQL: {out['errors']}")
         return out["data"]["repository"]
 
-    def required_checks(self):
-        """The required status checks on main, from the repo's rules."""
+    def main_rules(self):
+        """(required status checks, whether conversations must be resolved) on main, from the
+        repo's rules."""
         rules = self.call(f"repos/{self.repo}/rules/branches/main") or []
-        return {c["context"] for r in rules if r["type"] == "required_status_checks"
-                for c in r["parameters"]["required_status_checks"]}
+        checks = {c["context"] for r in rules if r["type"] == "required_status_checks"
+                  for c in r["parameters"]["required_status_checks"]}
+        threads = any(r["type"] == "pull_request"
+                      and r["parameters"].get("required_review_thread_resolution") for r in rules)
+        return checks, threads
 
 
 def queue(repo_data):
@@ -151,7 +155,7 @@ def too_many_checks(pr):
             or {}).get("hasNextPage", False)
 
 
-def decide(pr, required, missing_for):
+def decide(pr, required, missing_for, threads_required=True):
     """What to do with the PR at the front of the lane: (action, reason).
     action: merge, update (bring main in), wait, blocked (green, but the rules block it: dropped
     once it stays so), drop (leave the lane), gone (no longer in it).
@@ -171,7 +175,7 @@ def decide(pr, required, missing_for):
     failed = sorted(n for n, s in states.items() if s == "FAIL")
     if failed:
         return "drop", "required checks failed: " + ", ".join(failed)
-    waiting_on = people_needed(pr)
+    waiting_on = people_needed(pr, threads_required)
     if waiting_on:
         return "blocked", "the rules block it: " + waiting_on
     if pr["mergeStateStatus"] == "BEHIND":
@@ -189,9 +193,10 @@ def decide(pr, required, missing_for):
     return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']})"
 
 
-def people_needed(pr):
-    """What a person still has to do before it can merge: unresolved conversations, an approval."""
-    unresolved = sum(not t["isResolved"] for t in pr["reviewThreads"]["nodes"])
+def people_needed(pr, threads_required=True):
+    """What a person still has to do before it can merge: unresolved conversations (where the rules
+    require them resolved), an approval (GitHub's reviewDecision follows the rules)."""
+    unresolved = sum(not t["isResolved"] for t in pr["reviewThreads"]["nodes"]) if threads_required else 0
     why = [f"{unresolved} unresolved conversation(s)"] if unresolved else []
     if pr["reviewDecision"] == "REVIEW_REQUIRED":
         why.append("it needs an approval")
@@ -217,7 +222,9 @@ def drop(gh, pr, reason):
     body = (f"<!-- merge-lane -->\n{'@' + who + ' ' if who else ''}Taken out of the merge lane: {reason}. "
             f"Label it `{LABEL}` again when it's ready (design 6.2).")
     if not already_said(pr, body):
-        gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": body})
+        # not retried: a POST that went through but timed out would post twice; a failure stops
+        # the run with the label still on, and the next run says it
+        gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": body}, tries=1)
     try:
         gh.call(f"repos/{gh.repo}/issues/{pr['number']}/labels/{LABEL}", "DELETE")
     except urllib.error.HTTPError as e:
@@ -234,7 +241,7 @@ def github_message(error):
         return str(error.code)
 
 
-def run_one(gh, number, required, deadline):
+def run_one(gh, number, required, deadline, threads_required=True):
     """Take one PR through the lane. Returns "done" once it is merged, dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front)."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
@@ -248,7 +255,8 @@ def run_one(gh, number, required, deadline):
         missing = "MISSING" in check_states(pr, required).values()
         if missing:
             missing_since.setdefault(head, time.time())
-        action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0)
+        action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0,
+                                threads_required)
         if updated_from and head != updated_from[0]:
             updated_from = None
         if updated_from and action not in ("gone", "drop"):
@@ -316,7 +324,7 @@ def run_one(gh, number, required, deadline):
 
 def main():
     gh = GitHub(os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"])
-    required = gh.required_checks()
+    required, threads_required = gh.main_rules()
     deadline = time.time() + DEADLINE
     done = set()
     while True:
@@ -331,7 +339,7 @@ def main():
         number = waiting[0]
         # An error here stops the run with every label left on (see the top): it is GitHub's or the
         # lane's, not the PR's, so no author is told to relabel.
-        if run_one(gh, number, required, deadline) == "paused":
+        if run_one(gh, number, required, deadline, threads_required) == "paused":
             return MORE_LEFT
         done.add(number)
 

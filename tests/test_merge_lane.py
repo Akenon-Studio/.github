@@ -102,6 +102,11 @@ class DecideTest(unittest.TestCase):
         p["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["pageInfo"] = {"hasNextPage": True}
         self.assertEqual(self.action(p), "drop")
 
+    def test_open_conversations_count_only_where_the_rules_say(self):
+        p = pr(threads=(False,))
+        self.assertEqual(decide(p, REQUIRED, 0, threads_required=True)[0], "blocked")
+        self.assertEqual(decide(p, REQUIRED, 0, threads_required=False)[0], "merge")
+
     def test_unknown_waits(self):
         self.assertEqual(self.action(pr(mergeable="UNKNOWN", status="UNKNOWN")), "wait")
 
@@ -151,7 +156,7 @@ class FakeGitHub:
     def graphql(self, query, **variables):
         return {"pullRequest": self.looks.pop(0) if len(self.looks) > 1 else self.looks[0]}
 
-    def call(self, path, method="GET", body=None):
+    def call(self, path, method="GET", body=None, tries=4):
         self.calls.append((method, path))
         code = self.fail.get(path.rsplit("/", 1)[-1])
         if code:
@@ -234,13 +239,13 @@ class RunOneTest(unittest.TestCase):
         gh = FakeGitHub(looks)
         calls, real = {"n": 0}, gh.call
 
-        def flaky(path, method="GET", body=None):
+        def flaky(path, method="GET", body=None, tries=4):
             if path.endswith("update-branch"):
                 calls["n"] += 1
                 if calls["n"] % 2:
                     gh.calls.append((method, path))
                     raise urllib.error.HTTPError(path, 422, "moved", {}, None)
-            return real(path, method, body)
+            return real(path, method, body, tries)
         gh.call = flaky
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(self.writes(gh)[-1], ("PUT", "7/merge"))
@@ -299,8 +304,8 @@ class RunOneTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def test_an_outage_stops_the_run_and_leaves_every_label_on(self):
         class Down(FakeGitHub):
-            def required_checks(self):
-                return REQUIRED
+            def main_rules(self):
+                return REQUIRED, True
 
             def graphql(self, query, **variables):
                 if "pullRequests(" in query:  # the queue reads fine; then GitHub goes down
