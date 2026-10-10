@@ -7,7 +7,8 @@ adds. Uses the Claude API directly, not Claude Code: the plan's monthly API cred
 but not Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
 A push that leaves the PR's diff as it was (bringing `main` in without conflicts) gets no new
-review: each review records the diff's `git patch-id`, which ignores line numbers, with the repo's
+review: each review records the diff's `git patch-id --verbatim`, which ignores line numbers but not
+whitespace (indentation is code in Python and YAML), with the repo's
 CLAUDE.md, so a new rule brought in from `main` does get a review (design 6.4).
 
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
@@ -144,15 +145,25 @@ def to_github(review, files, left_out, already=frozenset()):
 
 
 def fingerprint(files, claude_md=""):
-    """What the review read, as 40 hex digits: the `git patch-id --stable` of the reviewed files'
-    diff (the same when only line numbers moved, as when `main` is brought in) and the repo's
-    CLAUDE.md. None if git can't tell."""
+    """What the review read, as 40 hex digits: the `git patch-id --verbatim` of the reviewed files'
+    diff (the same when only line numbers moved, as when `main` is brought in; whitespace counts)
+    and the repo's CLAUDE.md. None if git can't tell."""
     try:
-        out = subprocess.run(["git", "patch-id", "--stable"], input="".join(files.values()),
+        out = subprocess.run(["git", "patch-id", "--verbatim"], input="".join(files.values()),
                              capture_output=True, text=True, timeout=60).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return None
     return hashlib.sha1(f"{out[0]}\n{claude_md}".encode()).hexdigest() if out else None
+
+
+def strip_markers(text):
+    """Text without fingerprint markers, removed until none is left (one pass could join the halves
+    of a marker split around another into a new one)."""
+    while True:
+        stripped = DIFF_MARKER.sub("", text)
+        if stripped == text:
+            return text
+        text = stripped
 
 
 def last_fingerprint(reviews):
@@ -280,7 +291,7 @@ def main(argv):
         review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
                            left_out, earlier_comments(repo, number, token))
     # The model's text can be steered by the diff: it must not carry a marker that skips a later push.
-    review["body"] = DIFF_MARKER.sub("", review["body"])
+    review["body"] = strip_markers(review["body"])
     if fp:
         review["body"] += f"\n\n<!-- ai-review-diff: {fp} -->"
     post = {**review, "commit_id": pr["head"]["sha"]}

@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 from ai_review import (added_lines, fingerprint, last_fingerprint, review_input, split_diff,  # noqa: E402
-                       to_github)
+                       strip_markers, to_github)
 
 DIFF = """diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts
@@ -85,6 +85,16 @@ class FingerprintTest(unittest.TestCase):
     def test_a_changed_line_changes_it(self):
         self.assertNotEqual(fingerprint(split_diff(DIFF)),
                             fingerprint(split_diff(DIFF.replace("const c = 4;", "const c = 5;"))))
+
+    def test_a_whitespace_change_changes_it(self):
+        # indentation is code in Python and YAML
+        self.assertNotEqual(fingerprint(split_diff(DIFF)),
+                            fingerprint(split_diff(DIFF.replace("+const c = 4;", "+  const c = 4;"))))
+
+    def test_a_marker_split_around_another_is_stripped(self):
+        inner = f"<!-- ai-review-diff: {'a' * 40} -->"
+        nested = f"<!-- ai-review-diff: {'b' * 20}{inner}{'b' * 20} -->"
+        self.assertEqual(strip_markers(f"x {nested} y"), "x  y")
 
     def test_a_new_claude_md_changes_it(self):
         self.assertNotEqual(fingerprint(split_diff(DIFF), "rules"), fingerprint(split_diff(DIFF), "new rules"))
