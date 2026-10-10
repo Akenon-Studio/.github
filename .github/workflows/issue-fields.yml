@@ -4,11 +4,13 @@
 # (design 6.6, 6.8; scripts/issue_fields.py). Changes no event reports here (board Status, links,
 # assignees, closing a parent early) are caught by the issue-sweep workflow. On a PR event it sets
 # the issues the PR closes to In review, and back when it closes unmerged or turns into a draft
-# (scripts/pr_status.py).
+# (scripts/pr_status.py). On a new comment, a `Waiting on` line sets Waiting for human and a later
+# comment without one takes it back (scripts/comment_status.py).
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
 #
 #   on: { issues: { types: [opened, edited, reopened, typed, untyped] },
-#         pull_request_target: { types: [opened, reopened, edited, ready_for_review, converted_to_draft, closed] } }
+#         pull_request_target: { types: [opened, reopened, edited, ready_for_review, converted_to_draft, closed] },
+#         issue_comment: { types: [created] } }
 #   jobs: { issue-fields: { uses: akenon-studio/.github/.github/workflows/issue-fields.yml@main,
 #                           secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
 #
@@ -53,7 +55,7 @@ jobs:
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
-      - name: Sync the issue to the board, or the issues a PR closes
+      - name: Sync the issue to the board, the issues a PR closes, or a comment's status
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
@@ -63,6 +65,8 @@ jobs:
           pip install --quiet pyyaml
           if [ "$EVENT" = pull_request_target ]; then
             python3 scripts/pr_status.py "$GITHUB_EVENT_PATH"
+          elif [ "$EVENT" = issue_comment ]; then
+            python3 scripts/comment_status.py "$GITHUB_EVENT_PATH"
           else
             python3 scripts/issue_fields.py "$REPO" "$NUMBER"
           fi

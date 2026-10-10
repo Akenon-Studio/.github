@@ -7,6 +7,9 @@ on:
   # workflow with the app key even for a PR whose branch changed it, and checks out no PR code.
   pull_request_target:
     types: [opened, reopened, edited, ready_for_review, converted_to_draft, closed]
+  # A `Waiting on` line sets Waiting for human; a later comment takes it back (comment_status.py).
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
