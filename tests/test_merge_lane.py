@@ -6,7 +6,11 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from merge_lane import NEVER_RAN, check_states, decide, queue  # noqa: E402
+import urllib.error  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import merge_lane  # noqa: E402
+from merge_lane import BLOCKED_LOOKS, NEVER_RAN, check_states, decide, queue, run_one  # noqa: E402
 
 REQUIRED = {"pr-title / checks", "security-scan / code"}
 
@@ -74,11 +78,18 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(self.action(pr(state="MERGED")), "gone")
 
     def test_green_but_blocked_says_why(self):
+        # "blocked", not "drop": GitHub's merge state lags the checks by a few seconds, so the lane
+        # drops it only once it stays blocked (BLOCKED_LOOKS)
         action, reason = decide(pr(status="BLOCKED", threads=(False, True), review="REVIEW_REQUIRED"),
                                 REQUIRED, 0)
-        self.assertEqual(action, "drop")
+        self.assertEqual(action, "blocked")
         self.assertIn("1 unresolved conversation", reason)
         self.assertIn("approval", reason)
+
+    def test_more_checks_than_it_reads_leaves_the_lane(self):
+        p = pr()
+        p["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["pageInfo"] = {"hasNextPage": True}
+        self.assertEqual(self.action(p), "drop")
 
     def test_unknown_waits(self):
         self.assertEqual(self.action(pr(mergeable="UNKNOWN", status="UNKNOWN")), "wait")
@@ -105,6 +116,68 @@ class CheckStatesTest(unittest.TestCase):
                           "isRequired": True}])
         self.assertEqual(check_states(p, REQUIRED)["security-scan / code"], "PENDING")
 
+
+class FakeGitHub:
+    """Serves a list of PR states, one per look, and records every write."""
+    repo = "Akenon-Studio/x"
+
+    def __init__(self, looks, fail=None):
+        self.looks, self.calls, self.fail = list(looks), [], fail or {}
+
+    def graphql(self, query, **variables):
+        return {"pullRequest": self.looks.pop(0) if len(self.looks) > 1 else self.looks[0]}
+
+    def call(self, path, method="GET", body=None):
+        self.calls.append((method, path))
+        code = self.fail.get(path.rsplit("/", 1)[-1])
+        if code:
+            raise urllib.error.HTTPError(path, code, "no", {}, None)
+
+
+@mock.patch.object(merge_lane.time, "sleep", lambda s: None)
+class RunOneTest(unittest.TestCase):
+    def writes(self, gh):
+        return [(m, p.split("/", 4)[-1]) for m, p in gh.calls]
+
+    def test_says_why_before_taking_the_label_off(self):
+        gh = FakeGitHub([pr(draft=True)])
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf")), "done")
+        self.assertEqual(self.writes(gh), [("POST", "7/comments"), ("DELETE", "7/labels/ready-to-merge")])
+
+    def test_a_blocked_look_or_two_is_waited_out(self):
+        blocked = pr(status="BLOCKED")
+        gh = FakeGitHub([blocked, blocked, pr()])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh), [("PUT", "7/merge")])
+
+    def test_staying_blocked_leaves_the_lane(self):
+        gh = FakeGitHub([pr(status="BLOCKED")] * BLOCKED_LOOKS)
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_brings_main_in_then_merges(self):
+        gh = FakeGitHub([pr(status="BEHIND"), pr()])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh), [("PUT", "7/update-branch"), ("PUT", "7/merge")])
+
+    def test_an_update_error_is_retried_then_drops(self):
+        gh = FakeGitHub([pr(status="BEHIND")], fail={"update-branch": 422})
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual([w for w in self.writes(gh) if w[1] == "7/update-branch"], [("PUT", "7/update-branch")] * 3)
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_main_moving_again_and_again_drops(self):
+        gh = FakeGitHub([pr(status="BEHIND")])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(sum(w == ("PUT", "7/update-branch") for w in self.writes(gh)), 3)
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_the_deadline_pauses_without_dropping(self):
+        running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
+                               run("security-scan / code")], status="BLOCKED")
+        gh = FakeGitHub([running])
+        self.assertEqual(run_one(gh, 7, REQUIRED, 0), "paused")
+        self.assertEqual(self.writes(gh), [])
 
 if __name__ == "__main__":
     unittest.main()

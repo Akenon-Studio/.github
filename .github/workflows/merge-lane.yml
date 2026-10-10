@@ -8,7 +8,9 @@
 # pull_request_target runs main's workflow, not the PR's, so a PR can't change what runs with the
 # app's key; the key is in each repo's `merge-lane` environment, which only main can use. It never
 # checks out PR code. One run at a time per repo, never cancelled (a run may be mid-merge); every
-# run works through the whole queue, so a pending run GitHub replaces loses nothing.
+# run works through the whole queue, so a pending run GitHub replaces loses nothing. A run that
+# reaches its deadline with PRs still labelled starts a fresh one (workflow_dispatch, which the
+# workflow's own token may start), so a long queue never dies at the job's timeout.
 name: merge-lane
 
 on:
@@ -16,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: write # to start the next run when this one runs out of time
 
 jobs:
   lane:
@@ -44,4 +47,12 @@ jobs:
       - name: Merge the labelled PRs, one at a time
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
-        run: python3 .akenon-github/scripts/merge_lane.py
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          python3 .akenon-github/scripts/merge_lane.py || status=$?
+          if [ "$status" = 3 ]; then  # MORE_LEFT: out of time with PRs still labelled
+            gh workflow run merge-lane-caller.yml -R "$GITHUB_REPOSITORY" --ref main
+            exit 0
+          fi
+          exit "$status"
