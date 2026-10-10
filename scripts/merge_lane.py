@@ -16,7 +16,9 @@ through the whole queue, so a run that GitHub drops while another is going loses
 
 After a merge it closes the PR's closing issues itself (`Closes #n`): GitHub doesn't when an app
 merges. It reads and closes them with a second token, limited to issues (and reading PRs) but for
-every repo, since a PR may close an issue in another repo.
+every repo, since a PR may close an issue in another repo. It closes an issue only in a repo the
+PR's author can write to (a bot author: only the PR's own repo); any it won't or can't close are
+listed, and the run fails so a person closes them.
 
 Only the PR's own state takes it out of the lane. An error that isn't about the PR (GitHub down
 after the retries, a rate limit, an expired token) stops the run and fails it, leaving every label
@@ -60,7 +62,7 @@ PR = """query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number state isDraft mergeable mergeStateStatus reviewDecision headRefOid baseRefName
-      author { login }
+      author { __typename login }
       labels(first: 100) { nodes { name } }
       reviewThreads(first: 100) { nodes { isResolved } }
       timelineItems(itemTypes: [ISSUE_COMMENT, LABELED_EVENT], last: 30) { nodes {
@@ -327,7 +329,7 @@ def run_one(gh, number, required, deadline, threads_required=True):
                 gh.call(f"repos/{gh.repo}/pulls/{number}/merge", "PUT",
                         {"merge_method": "squash", "sha": head})
                 print(f"#{number}: merged")
-                return "merged", (pr.get("author") or {}).get("login")
+                return "merged", pr.get("author") or {}
             except urllib.error.HTTPError as e:
                 if e.code not in (405, 409):  # 405: not mergeable right now; 409: head moved
                     raise
@@ -361,7 +363,7 @@ def can_write(issues_gh, repo, login, cache):
     return cache[(repo, login)]
 
 
-def close_issues(issues_gh, number, author):
+def close_issues(issues_gh, number, author):  # author: {"__typename", "login"}
     """Close the merged PR's open closing issues, then say which PR closed them. Only issues in
     repos the PR's author can write to: the `Closes` text is theirs, and this token reaches every
     repo. Returns what couldn't be closed, for a person to do by hand (the PR is merged either way).
@@ -374,18 +376,22 @@ def close_issues(issues_gh, number, author):
         print(f"::error::#{number} merged, but its closing issues couldn't be read ({e!r})")
         return [f"the issues {pr_ref} closes (couldn't read them)"]
     failed, cache = [], {}
+    bot, login = author.get("__typename") == "Bot", author.get("login")
     for issue in refs:
         if issue["state"] != "OPEN":
             continue
         repo, n = issue["repository"]["nameWithOwner"], issue["number"]
         try:
-            if not author or not can_write(issues_gh, repo, author, cache):
-                print(f"::warning::#{number}: not closing {repo}#{n}: {author} can't write to {repo}")
-                failed.append(f"{repo}#{n} ({author} can't write there)")
+            # a bot's REST login differs ("x[bot]"), and it only opens PRs where it is installed
+            allowed = (repo == issues_gh.repo if bot
+                       else bool(login) and can_write(issues_gh, repo, login, cache))
+            if not allowed:
+                print(f"::warning::#{number}: not closing {repo}#{n}: {login} can't write to {repo}")
+                failed.append(f"{repo}#{n} ({login} can't write there)")
                 continue
             issues_gh.call(f"repos/{repo}/issues/{n}", "PATCH", {"state": "closed", "state_reason": "completed"})
             print(f"#{number}: closed {repo}#{n}")
-        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as e:
+        except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
             print(f"::error::#{number} merged, but {repo}#{n} couldn't be closed ({e!r}): close it by hand")
             failed.append(f"{repo}#{n}")
             continue

@@ -26,7 +26,7 @@ def pr(contexts=None, state="OPEN", draft=False, mergeable="MERGEABLE", status="
         contexts = [run("pr-title / checks"), run("security-scan / code")]
     return {"number": 7, "state": state, "isDraft": draft, "mergeable": mergeable,
             "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head, "baseRefName": "main",
-            "author": {"login": "someone"}, "labels": {"nodes": [{"name": n} for n in labels]},
+            "author": {"__typename": "User", "login": "someone"}, "labels": {"nodes": [{"name": n} for n in labels]},
             "reviewThreads": {"nodes": [{"isResolved": r} for r in threads]},
             "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
                 "contexts": {"nodes": contexts}}}}]}}
@@ -203,7 +203,7 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
 
     def test_a_merge_returns_the_author_for_closing_issues(self):
-        self.assertEqual(run_one(FakeGitHub([pr()]), 7, REQUIRED, float("inf")), ("merged", "someone"))
+        self.assertEqual(run_one(FakeGitHub([pr()]), 7, REQUIRED, float("inf")), ("merged", {"__typename": "User", "login": "someone"}))
 
     def test_brings_main_in_then_merges(self):
         gh = FakeGitHub([pr(status="BEHIND"), pr(head="def")])
@@ -360,7 +360,7 @@ class CloseIssuesTest(unittest.TestCase):
 
     def test_says_which_pr_then_closes_each_open_one_in_any_repo(self):
         gh = self.Issues([self.ref(4), self.ref(93, "Akenon-Studio/.github"), self.ref(5, state="CLOSED")])
-        self.assertEqual(close_issues(gh, 7, "someone"), [])
+        self.assertEqual(close_issues(gh, 7, {"__typename": "User", "login": "someone"}), [])
         self.assertEqual(gh.calls, [
             ("PATCH", "repos/Akenon-Studio/x/issues/4"), ("POST", "repos/Akenon-Studio/x/issues/4/comments"),
             ("PATCH", "repos/Akenon-Studio/.github/issues/93"),
@@ -368,17 +368,24 @@ class CloseIssuesTest(unittest.TestCase):
 
     def test_never_closes_an_issue_where_the_author_cant_write(self):
         gh = self.Issues([self.ref(1, "Akenon-Studio/secret")], writers=("Akenon-Studio/x",))
-        self.assertEqual(close_issues(gh, 7, "someone"), ["Akenon-Studio/secret#1 (someone can't write there)"])
+        self.assertEqual(close_issues(gh, 7, {"__typename": "User", "login": "someone"}), ["Akenon-Studio/secret#1 (someone can't write there)"])
         self.assertEqual(gh.calls, [])
+
+    def test_a_bot_closes_only_in_its_own_repo(self):
+        gh = self.Issues([self.ref(4), self.ref(93, "Akenon-Studio/.github")])
+        failed = close_issues(gh, 7, {"__typename": "Bot", "login": "renovate"})
+        self.assertEqual(failed, ["Akenon-Studio/.github#93 (renovate can't write there)"])
+        self.assertIn(("PATCH", "repos/Akenon-Studio/x/issues/4"), gh.calls)
+        self.assertFalse(any("permission" in path for _, path in gh.calls))
 
     def test_a_failed_lookup_is_reported(self):
         gh = self.Issues([])
         gh.graphql = mock.Mock(side_effect=urllib.error.URLError("down"))
-        self.assertEqual(len(close_issues(gh, 7, "someone")), 1)
+        self.assertEqual(len(close_issues(gh, 7, {"__typename": "User", "login": "someone"})), 1)
 
     def test_one_that_cant_be_closed_is_reported_and_the_rest_go_on(self):
         gh = self.Issues([self.ref(4), self.ref(6)], fail={"4": 403})
-        self.assertEqual(close_issues(gh, 7, "someone"), ["Akenon-Studio/x#4"])
+        self.assertEqual(close_issues(gh, 7, {"__typename": "User", "login": "someone"}), ["Akenon-Studio/x#4"])
         self.assertIn(("PATCH", "repos/Akenon-Studio/x/issues/6"), gh.calls)
 
 if __name__ == "__main__":
