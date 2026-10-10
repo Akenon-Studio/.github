@@ -344,13 +344,15 @@ class CloseIssuesTest(unittest.TestCase):
     class Issues(FakeGitHub):
         def __init__(self, refs, fail=None, writers=("Akenon-Studio/x", "Akenon-Studio/.github")):
             super().__init__([None], fail)
-            self.refs, self.writers = refs, writers
+            self.refs, self.writers, self.lookups = refs, writers, []
 
         def graphql(self, query, **variables):
-            return {"pullRequest": {"closingIssuesReferences": {"nodes": self.refs}}}
+            return {"pullRequest": {"closingIssuesReferences": {
+                "nodes": self.refs, "pageInfo": {"hasNextPage": len(self.refs) > 50}}}}
 
         def call(self, path, method="GET", body=None, tries=4):
             if path.endswith("/permission"):
+                self.lookups.append(path)
                 repo = path.split("/collaborators/")[0].removeprefix("repos/")
                 return {"permission": "write" if repo in self.writers else "read"}
             return super().call(path, method, body, tries)
@@ -376,7 +378,7 @@ class CloseIssuesTest(unittest.TestCase):
         failed = close_issues(gh, 7, {"__typename": "Bot", "login": "renovate"})
         self.assertEqual(failed, ["Akenon-Studio/.github#93 (renovate can't write there)"])
         self.assertIn(("PATCH", "repos/Akenon-Studio/x/issues/4"), gh.calls)
-        self.assertFalse(any("permission" in path for _, path in gh.calls))
+        self.assertEqual(gh.lookups, [])  # a bot's login isn't a REST login: never looked up
 
     def test_a_failed_lookup_is_reported(self):
         gh = self.Issues([])

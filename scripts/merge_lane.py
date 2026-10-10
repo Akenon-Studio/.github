@@ -82,7 +82,9 @@ PR = """query($owner: String!, $name: String!, $number: Int!) {
 CLOSING = """query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      closingIssuesReferences(first: 50) { nodes { number state repository { nameWithOwner } } } } } }"""
+      closingIssuesReferences(first: 50) {
+        pageInfo { hasNextPage }
+        nodes { number state repository { nameWithOwner } } } } } }"""
 
 
 class GitHub:
@@ -372,10 +374,11 @@ def close_issues(issues_gh, number, author):  # author: {"__typename", "login"}
     try:
         pr = issues_gh.graphql(CLOSING, number=number)["pullRequest"]
         refs = pr["closingIssuesReferences"]["nodes"]
+        more = pr["closingIssuesReferences"]["pageInfo"]["hasNextPage"]
     except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
         print(f"::error::#{number} merged, but its closing issues couldn't be read ({e!r})")
         return [f"the issues {pr_ref} closes (couldn't read them)"]
-    failed, cache = [], {}
+    failed, cache = ([f"the issues {pr_ref} closes beyond the first 50"] if more else []), {}
     bot, login = author.get("__typename") == "Bot", author.get("login")
     for issue in refs:
         if issue["state"] != "OPEN":
@@ -417,6 +420,17 @@ def main():
     gh = GitHub(os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"])
     issues_gh = GitHub(os.environ["ISSUES_TOKEN"], os.environ["GITHUB_REPOSITORY"])
     unclosed = []
+    try:
+        return work(gh, issues_gh, unclosed)
+    except BaseException:
+        # the run stops on an error with labels left on; still list what a person must close
+        if unclosed:
+            print(f"::error::Merged, but close these by hand: {', '.join(unclosed)}")
+        raise
+
+
+def work(gh, issues_gh, unclosed):
+    """The lane's loop; `unclosed` collects the issues merged PRs left open."""
     required, threads_required = gh.main_rules()
     deadline = time.time() + DEADLINE
     done = set()
