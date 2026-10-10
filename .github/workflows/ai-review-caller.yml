@@ -13,5 +13,3 @@ jobs:
   ai-review:
     # The main copy, not ./: the sign-in trusts only ai-review.yml on main (see ai-review.yml).
     uses: akenon-studio/.github/.github/workflows/ai-review.yml@main
-    secrets:
-      AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }}  # reads the design (ai-review.yml)
