@@ -5,7 +5,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from ai_review import added_lines, review_input, split_diff, to_github  # noqa: E402
+from ai_review import (added_lines, fingerprint, last_fingerprint, review_input, split_diff,  # noqa: E402
+                       to_github)
 
 DIFF = """diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts
@@ -74,6 +75,28 @@ class PayloadTest(unittest.TestCase):
     def test_it_never_approves(self):
         self.assertEqual(to_github({"summary": "fine", "comments": []}, {}, [])["event"], "COMMENT")
 
+
+class FingerprintTest(unittest.TestCase):
+    def test_moved_lines_keep_the_fingerprint(self):
+        # bringing main in shifts the PR's hunks; the diff itself is the same
+        moved = DIFF.replace("@@ -1,3 +1,4 @@", "@@ -40,3 +40,4 @@")
+        self.assertEqual(fingerprint(split_diff(DIFF)), fingerprint(split_diff(moved)))
+
+    def test_a_changed_line_changes_it(self):
+        self.assertNotEqual(fingerprint(split_diff(DIFF)),
+                            fingerprint(split_diff(DIFF.replace("const c = 4;", "const c = 5;"))))
+
+    def test_the_latest_own_review_counts(self):
+        fp = "a" * 40
+        bot = {"login": "github-actions[bot]"}
+        reviews = [{"user": bot, "body": f"<!-- ai-review-diff: {'b' * 40} -->"},
+                   {"user": bot, "body": f"<!-- ai-review-diff: {fp} -->"},
+                   {"user": bot, "body": "a review with no fingerprint"}]
+        self.assertEqual(last_fingerprint(reviews), fp)
+
+    def test_a_marker_from_anyone_else_is_ignored(self):
+        reviews = [{"user": {"login": "someone"}, "body": f"<!-- ai-review-diff: {'a' * 40} -->"}]
+        self.assertIsNone(last_fingerprint(reviews))
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,9 @@ posts them as one GitHub review with event COMMENT: a summary plus inline commen
 adds. Uses the Claude API directly, not Claude Code: the plan's monthly API credits cover the API
 but not Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
+A push that leaves the PR's diff as it was (bringing `main` in without conflicts) gets no new
+review: each review records the diff's `git patch-id`, which ignores line numbers (design 6.4).
+
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
 (GitHub's tokens are single-use there), so no API key exists anywhere.
 
@@ -21,6 +24,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -28,6 +32,8 @@ import urllib.request
 
 MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-sonnet-5-5")
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
+REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
+DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 MAX_DIFF_CHARS = 200_000
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
 SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js$|(^|/)pnpm-lock\.yaml$"
@@ -135,6 +141,39 @@ def to_github(review, files, left_out, already=frozenset()):
     return {"event": "COMMENT", "body": body, "comments": inline}
 
 
+def fingerprint(files):
+    """The `git patch-id --stable` of the reviewed files' diff: the same when only line numbers
+    moved, as when `main` is brought in. None if git can't tell."""
+    try:
+        out = subprocess.run(["git", "patch-id", "--stable"], input="".join(files.values()),
+                             capture_output=True, text=True, timeout=60).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out[0] if out else None
+
+
+def last_fingerprint(reviews):
+    """The diff fingerprint in the latest of these reviews (oldest first) that has one. Only this
+    workflow's own reviews count, so no one can silence the next review by posting the marker."""
+    for review in reversed(reviews):
+        if (review.get("user") or {}).get("login") != REVIEWER:
+            continue
+        m = DIFF_MARKER.search(review.get("body") or "")
+        if m:
+            return m.group(1)
+    return None
+
+
+def all_reviews(repo, number, token):
+    reviews, page = [], 1
+    while True:
+        batch = github(f"repos/{repo}/pulls/{number}/reviews?per_page=100&page={page}", token) or []
+        reviews += batch
+        if len(batch) < 100:
+            return reviews
+        page += 1
+
+
 def github(path, token, method="GET", body=None, accept="application/vnd.github+json"):
     req = urllib.request.Request(f"https://api.github.com/{path}", method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
@@ -222,6 +261,10 @@ def main(argv):
     if diff is not None and not files:
         print("Nothing to review: the PR changes only generated or lock files.")
         return 0
+    fp = fingerprint(files) if files else None
+    if fp and fp == last_fingerprint(all_reviews(repo, number, token)):
+        print(f"The diff is unchanged since the last review (patch-id {fp}); nothing new to review.")
+        return 0
     text, left_out = review_input(files)
     if not text:
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
@@ -233,6 +276,8 @@ def main(argv):
             claude_md = ""
         review = to_github(ask_claude(claude_md, pr["title"], pr.get("body") or "", text), files,
                            left_out, earlier_comments(repo, number, token))
+    if fp:
+        review["body"] += f"\n\n<!-- ai-review-diff: {fp} -->"
     post = {**review, "commit_id": pr["head"]["sha"]}
     try:
         github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body=post)

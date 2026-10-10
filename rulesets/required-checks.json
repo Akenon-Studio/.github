@@ -1,17 +1,9 @@
 {
   "_comment": "Required status checks on main. 'all' applies to every managed repo; a repo's own list is added to it. Add a repo's CI checks here once its CI exists, never before (a required check that never runs blocks every merge). A check from a reusable workflow in this repo is named '<caller job> / <job>' and goes in 'all' once every repo has the caller (rulesets/repo-lists.json, required_files).",
   "all": [
-    "pr-title / check",
-    "pr-title / closes-issue",
-    "pr-title / claude-md",
-    "pr-title / author-assigned",
-    "pr-title / stacked",
-    "pr-title / gaming",
-    "pr-title / docs",
-    "security-scan / secrets",
-    "security-scan / dependencies",
+    "pr-title / checks",
     "security-scan / code",
-    "security-scan / licences"
+    "security-scan / dependencies"
   ],
   ".github": [
     "unit"

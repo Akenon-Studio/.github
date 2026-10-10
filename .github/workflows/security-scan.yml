@@ -4,18 +4,22 @@
 #   on: { pull_request: {}, push: { branches: [main] } }
 #   jobs: { security-scan: { uses: akenon-studio/.github/.github/workflows/security-scan.yml@main } }
 #
-# Its jobs are the status checks "security-scan / secrets" (gitleaks over the full history, so a
-# key committed and then deleted still fails) and "security-scan / dependencies" (`pnpm audit` for
-# high and critical advisories in a repo with a pnpm-lock.yaml; Node from its .nvmrc). In a repo
-# without a lockfile the dependencies job passes with nothing to audit; it always runs, so it can
-# be required everywhere and starts auditing the day a lockfile is committed. A gitleaks false
-# positive is allowed in that repo's .gitleaks.toml or with a `gitleaks:allow` comment.
-# "security-scan / code" is Semgrep community edition with its default rules (design 6.4). It fails
-# on ERROR findings; every finding, warnings included, is listed in the job summary. A false
-# positive is allowed with a `nosemgrep: <rule id>` comment on the line, saying why.
-# "security-scan / licences" checks every dependency's licence against rulesets/licences.json in
-# this repo (scripts/licence_check.py, design 6.4); like the dependency scan, it passes with
-# nothing to check in a repo without a pnpm-lock.yaml.
+# Two jobs, one step per scan (design 6.3: billing rounds every job up to a minute). Every step runs
+# even when an earlier one fails; the last step fails the job if any did (scripts/step_results.py).
+# "security-scan / code" is the scans that read only the repo:
+#   secrets: gitleaks over the full history, so a key committed and then deleted still fails. A
+#     false positive is allowed in that repo's .gitleaks.toml or with a `gitleaks:allow` comment.
+#   semgrep: Semgrep community edition with its default rules (design 6.4). It fails on ERROR
+#     findings; every finding, warnings included, is listed in the job summary. A false positive is
+#     allowed with a `nosemgrep: <rule id>` comment on the line, saying why.
+# "security-scan / dependencies" is the scans that need the lockfile:
+#   audit: `pnpm audit` for high and critical advisories (Node from the repo's .nvmrc).
+#   licences: every dependency's licence against rulesets/licences.json in this repo
+#     (scripts/licence_check.py, design 6.4).
+#   In a repo without a pnpm-lock.yaml both pass with nothing to check; the job always runs, so it
+#   can be required everywhere and starts checking the day a lockfile is committed.
+# The repo is checked out under repo/ in the code job, so the scans don't read the scripts' copy.
+# A new push cancels the PR's run still going.
 name: security-scan
 
 on:
@@ -25,92 +29,51 @@ permissions:
   contents: read
 
 jobs:
-  secrets:
+  code:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    concurrency:
+      group: security-scan-code-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
         with:
+          path: repo
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Get the scripts
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the scripts; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: .akenon-github
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Secret scan (full history)
+        id: secrets
+        continue-on-error: true
+        working-directory: repo
         env:
           GITLEAKS_VERSION: 8.30.1
         run: |
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .
 
-  dependencies:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Nothing to audit without a pnpm-lock.yaml
-        if: hashFiles('pnpm-lock.yaml') == ''
-        run: echo "No pnpm-lock.yaml in this repo; no dependencies to audit."
-      - uses: pnpm/action-setup@v4
-        if: hashFiles('pnpm-lock.yaml') != ''
-      - uses: actions/setup-node@v4
-        if: hashFiles('pnpm-lock.yaml') != ''
-        with:
-          node-version-file: .nvmrc
-          # No cache: this job doesn't install packages, so there would be nothing to save.
-      - name: Dependency scan (high and critical)
-        if: hashFiles('pnpm-lock.yaml') != ''
-        run: pnpm audit --audit-level high
-
-  licences:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Nothing to check without a pnpm-lock.yaml
-        if: hashFiles('pnpm-lock.yaml') == ''
-        run: echo "No pnpm-lock.yaml in this repo; no dependency licences to check."
-      - name: Get the allowed-licence list and the check
-        if: hashFiles('pnpm-lock.yaml') != ''
-        uses: actions/checkout@v4
-        with:
-          repository: akenon-studio/.github
-          ref: main
-          path: .akenon-licences
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-        if: hashFiles('pnpm-lock.yaml') != ''
-      - uses: actions/setup-node@v4
-        if: hashFiles('pnpm-lock.yaml') != ''
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - name: Install (no install scripts; only the packages are needed)
-        if: hashFiles('pnpm-lock.yaml') != ''
-        run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Dependency licences
-        if: hashFiles('pnpm-lock.yaml') != ''
-        run: pnpm licenses list --json | python3 .akenon-licences/scripts/licence_check.py
-
-  code:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Semgrep
+      - name: Insecure code (Semgrep)
+        id: semgrep
+        continue-on-error: true
+        working-directory: repo
         env:
           SEMGREP_VERSION: 1.180.0
-        run: pip install --quiet "semgrep==${SEMGREP_VERSION}"
-      - name: Insecure code (Semgrep)
-        env:
           SEMGREP_SEND_METRICS: "off"
         run: |
+          pip install --quiet "semgrep==${SEMGREP_VERSION}"
           semgrep scan --config p/default --metrics off --quiet --json --output "$RUNNER_TEMP/semgrep.json"
           python3 - "$RUNNER_TEMP/semgrep.json" <<'PY'
           import json, os, sys
@@ -127,3 +90,69 @@ jobs:
               print(f"::error file={r['path']},line={r['start']['line']}::{r['check_id']}: {msg}")
           sys.exit(1 if errors else 0)
           PY
+
+      - name: Result
+        env:
+          OUTCOMES: secrets=${{ steps.secrets.outcome }} semgrep=${{ steps.semgrep.outcome }}
+        run: python3 .akenon-github/scripts/step_results.py
+
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: security-scan-dependencies-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Nothing to check without a pnpm-lock.yaml
+        if: hashFiles('pnpm-lock.yaml') == ''
+        run: echo "No pnpm-lock.yaml in this repo; no dependencies to audit or licences to check."
+
+      - name: Get the allowed-licence list and the scripts
+        uses: actions/checkout@v4
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the scripts; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: .akenon-github
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('pnpm-lock.yaml') != ''
+
+      - uses: actions/setup-node@v4
+        if: hashFiles('pnpm-lock.yaml') != ''
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Dependency scan (high and critical)
+        id: audit
+        if: hashFiles('pnpm-lock.yaml') != ''
+        continue-on-error: true
+        run: pnpm audit --audit-level high
+
+      - name: Install (no install scripts; only the packages are needed)
+        id: install
+        if: hashFiles('pnpm-lock.yaml') != ''
+        continue-on-error: true
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Dependency licences
+        id: licences
+        if: hashFiles('pnpm-lock.yaml') != ''
+        continue-on-error: true
+        run: |
+          [ "${{ steps.install.outcome }}" = success ] || { echo "::error::The install failed, so the licences weren't checked"; exit 1; }
+          pnpm licenses list --json | python3 .akenon-github/scripts/licence_check.py
+
+      - name: Result
+        env:
+          # Without a lockfile both steps are skipped, which is a pass here.
+          OUTCOMES: >-
+            audit=${{ hashFiles('pnpm-lock.yaml') == '' && 'success' || steps.audit.outcome }}
+            licences=${{ hashFiles('pnpm-lock.yaml') == '' && 'success' || steps.licences.outcome }}
+        run: python3 .akenon-github/scripts/step_results.py
