@@ -13,7 +13,8 @@
     {"name": "deferred", "color": "c5def5", "description": "Audit finding deferred to a later phase, with the reason on the issue"},
     {"name": "needs-fields", "color": "d93f0b", "description": "Missing or invalid form answers; kept out of planning views"},
     {"name": "dependencies", "color": "0366d6", "description": "Source label: a dependency update or alert, from Renovate or the automation (design 6.8)"},
-    {"name": "peras", "color": "5319e7", "description": "Source label: opened by Peras (design 6.8)"}
+    {"name": "peras", "color": "5319e7", "description": "Source label: opened by Peras (design 6.8)"},
+    {"name": "ready-to-merge", "color": "0e8a16", "description": "Approved and green: the merge lane merges it in turn (design 6.2)"}
   ],
   ".github": [
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},

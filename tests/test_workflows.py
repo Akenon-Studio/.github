@@ -30,7 +30,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
                 self.assertNotIn("if", job, f"{name}: job {job_id}")
 
     # ai-review is called from main even here: its sign-in trusts only the main copy (ai-review.yml).
-    FROM_MAIN = {"ai-review.yml"}
+    # merge-lane too: it holds the Merge Lane app's key, so only main's copy runs (merge-lane.yml).
+    FROM_MAIN = {"ai-review.yml", "merge-lane.yml"}
 
     def test_this_repo_calls_each_one_from_its_own_copy(self):
         for name in REUSABLE:
@@ -69,6 +70,17 @@ class ReusableWorkflowsTest(unittest.TestCase):
             for job_id, job in REUSABLE[name]["jobs"].items():
                 self.assertTrue(job["concurrency"]["cancel-in-progress"], f"{name}: {job_id}")
                 self.assertIn("github.ref", job["concurrency"]["group"])
+
+    def test_the_merge_lane_runs_only_mains_code_one_at_a_time(self):
+        caller = load("merge-lane-caller.yml")
+        self.assertEqual(caller["on"]["pull_request_target"]["types"], ["labeled"])
+        self.assertIn("ready-to-merge", caller["jobs"]["merge-lane"]["if"])
+        job = REUSABLE["merge-lane.yml"]["jobs"]["lane"]
+        self.assertEqual(job["environment"], "merge-lane")
+        self.assertIs(job["concurrency"]["cancel-in-progress"], False)
+        for step in job["steps"]:  # never the PR's code: only the scripts from main
+            if "checkout" in step.get("uses", ""):
+                self.assertEqual(step["with"]["ref"], "main")
 
 if __name__ == "__main__":
     unittest.main()
