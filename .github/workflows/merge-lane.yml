@@ -1,0 +1,64 @@
+# Reusable: the merge lane (design 6.2; scripts/merge_lane.py). Every repo (this one included) calls
+# it from a file named exactly `.github/workflows/merge-lane-caller.yml` (the lane restarts itself
+# by that name), with:
+#
+#   on: { pull_request_target: { types: [labeled] }, workflow_dispatch: {} }
+#   permissions: { contents: read, actions: write }
+#   jobs: { merge-lane: { if: <the label is ready-to-merge, or not a label event>,
+#                         uses: akenon-studio/.github/.github/workflows/merge-lane.yml@main } }
+#
+# A called workflow gets no more permission than its caller grants, so the caller must grant both.
+#
+# pull_request_target runs main's workflow, not the PR's, so a PR can't change what runs with the
+# app's key; the key is in each repo's `merge-lane` environment, which only main can use. It never
+# checks out PR code. One run at a time per repo, never cancelled (a run may be mid-merge); every
+# run works through the whole queue, so a pending run GitHub replaces loses nothing, and no push to
+# main needs to start one (each would cost a billed minute to find the queue empty). A run that
+# reaches its deadline with PRs still labelled starts a fresh one (workflow_dispatch, which the
+# workflow's own token may start), so a long queue never dies at the job's timeout.
+name: merge-lane
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: write # to start the next run when this one runs out of time
+
+jobs:
+  lane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: merge-lane
+    concurrency:
+      group: merge-lane-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Log in as the Merge Lane app
+        id: app
+        # pinned to a commit: this step holds the app's key (Renovate bumps it)
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.MERGE_LANE_APP_ID }}
+          private-key: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
+
+      - name: Get the script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          path: .akenon-github
+          persist-credentials: false
+
+      - name: Merge the labelled PRs, one at a time
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          python3 .akenon-github/scripts/merge_lane.py || status=$?
+          if [ "$status" = 3 ]; then  # MORE_LEFT: out of time with PRs still labelled
+            gh workflow run merge-lane-caller.yml -R "$GITHUB_REPOSITORY" --ref main
+            exit 0
+          fi
+          exit "$status"

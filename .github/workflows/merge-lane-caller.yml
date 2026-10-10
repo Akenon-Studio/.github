@@ -1,0 +1,16 @@
+name: merge-lane-caller
+
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # the lane starts its next run when one runs out of time
+
+jobs:
+  merge-lane:
+    # Only the lane's own label starts it from a label event (other labels would cost a run each).
+    if: github.event_name != 'pull_request_target' || github.event.label.name == 'ready-to-merge'
+    uses: akenon-studio/.github/.github/workflows/merge-lane.yml@main
