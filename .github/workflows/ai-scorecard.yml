@@ -1,0 +1,64 @@
+# Monthly: the AI review scorecard (design 6.4). Reads the AI review's threads and their outcome
+# replies on every PR merged last month, and files one issue for the month: late catches, false
+# alarms, rounds and cost per PR (scripts/ai_scorecard.py). Run it by hand with a month to report
+# another one (a re-run updates that month's issue).
+#
+# Reads every repo's PRs and files (to tell whether a late finding's line was there in round one)
+# as the automation app (org AKENON_APP_ID / AKENON_APP_PRIVATE_KEY), read-only; files the issue as
+# the same app, so the issue-fields workflow puts it on the board.
+name: ai-scorecard
+
+on:
+  schedule:
+    - cron: "0 21 1 * *"  # 21:00 UTC on the 1st: the morning of the 2nd in Australia
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Month to report, YYYY-MM (default: last month)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-scorecard
+  cancel-in-progress: false
+
+jobs:
+  scorecard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in as the automation app, every repo, read-only
+        id: read
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-pull-requests: read
+          permission-contents: read
+
+      - name: Collect the month's reviews
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          MONTH: ${{ inputs.month }}
+        run: python3 scripts/ai_scorecard.py collect scorecard.json $MONTH
+
+      - name: Log in as the automation app
+        id: automation
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: .github
+
+      - name: File the month's issue
+        env:
+          GH_TOKEN: ${{ steps.automation.outputs.token }}
+        run: python3 scripts/ai_scorecard.py report scorecard.json
