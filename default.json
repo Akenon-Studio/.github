@@ -38,9 +38,9 @@
       "enabled": false
     },
     {
-      "description": "dependency-cruiser 16 supports TypeScript <6; stay on 5 until it is upgraded (platform#53).",
+      "description": "dependency-cruiser 18 supports TypeScript <7, so stay below 7 until it supports 7 (platform#196).",
       "matchPackageNames": ["typescript"],
-      "allowedVersions": "<6"
+      "allowedVersions": "<7"
     }
   ]
 }
