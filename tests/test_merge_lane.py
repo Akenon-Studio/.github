@@ -10,7 +10,7 @@ import urllib.error  # noqa: E402
 from unittest import mock  # noqa: E402
 
 import merge_lane  # noqa: E402
-from merge_lane import BLOCKED_LOOKS, NEVER_RAN, check_states, decide, queue, run_one  # noqa: E402
+from merge_lane import BLOCKED_LOOKS, NEVER_RAN, check_states, close_issues, decide, queue, run_one  # noqa: E402
 
 REQUIRED = {"pr-title / checks", "security-scan / code"}
 
@@ -331,10 +331,36 @@ class MainTest(unittest.TestCase):
                 raise urllib.error.HTTPError("graphql", 502, "bad gateway", {}, None)
         gh = Down([pr()])
         with mock.patch.object(merge_lane, "GitHub", lambda token, repo: gh), \
-                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "Akenon-Studio/x"}):
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "t", "ISSUES_TOKEN": "i",
+                                                 "GITHUB_REPOSITORY": "Akenon-Studio/x"}):
             with self.assertRaises(urllib.error.HTTPError):
                 merge_lane.main()
         self.assertEqual(gh.calls, [])  # no comment, no label taken off
+
+class CloseIssuesTest(unittest.TestCase):
+    class Issues(FakeGitHub):
+        def __init__(self, refs, fail=None):
+            super().__init__([None], fail)
+            self.refs = refs
+
+        def graphql(self, query, **variables):
+            return {"pullRequest": {"closingIssuesReferences": {"nodes": self.refs}}}
+
+    def ref(self, n, repo="Akenon-Studio/x", state="OPEN"):
+        return {"number": n, "state": state, "repository": {"nameWithOwner": repo}}
+
+    def test_says_which_pr_then_closes_each_open_one_in_any_repo(self):
+        gh = self.Issues([self.ref(4), self.ref(93, "Akenon-Studio/.github"), self.ref(5, state="CLOSED")])
+        self.assertEqual(close_issues(gh, 7), [])
+        self.assertEqual(gh.calls, [
+            ("POST", "repos/Akenon-Studio/x/issues/4/comments"), ("PATCH", "repos/Akenon-Studio/x/issues/4"),
+            ("POST", "repos/Akenon-Studio/.github/issues/93/comments"),
+            ("PATCH", "repos/Akenon-Studio/.github/issues/93")])
+
+    def test_one_that_cant_be_closed_is_reported_and_the_rest_go_on(self):
+        gh = self.Issues([self.ref(4), self.ref(6)], fail={"4": 403})
+        self.assertEqual(close_issues(gh, 7), ["Akenon-Studio/x#4"])
+        self.assertIn(("PATCH", "repos/Akenon-Studio/x/issues/6"), gh.calls)
 
 if __name__ == "__main__":
     unittest.main()

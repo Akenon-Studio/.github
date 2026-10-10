@@ -54,6 +54,17 @@ jobs:
           app-id: ${{ vars.MERGE_LANE_APP_ID }}
           private-key: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
 
+      - name: Log in again for issues in every repo (a PR may close one elsewhere)
+        id: issues
+        # pinned to a commit: this step holds the app's key (Renovate bumps it)
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.MERGE_LANE_APP_ID }}
+          private-key: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-issues: write
+          permission-pull-requests: read
+
       - name: Get the script
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -65,6 +76,7 @@ jobs:
       - name: Merge the labelled PRs, one at a time
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUES_TOKEN: ${{ steps.issues.outputs.token }}
           GH_TOKEN: ${{ github.token }}
         run: |
           status=0
