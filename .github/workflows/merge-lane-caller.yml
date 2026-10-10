@@ -3,8 +3,6 @@ name: merge-lane-caller
 on:
   pull_request_target:
     types: [labeled]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

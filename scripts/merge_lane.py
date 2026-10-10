@@ -32,6 +32,7 @@ CHECKS_TIMEOUT = 40 * 60  # the longest one PR may stay at the front before it l
 NEVER_RAN = 10 * 60       # a required check the lane has seen with no run for this long never will
 BLOCKED_LOOKS = 4         # green but BLOCKED this many looks in a row (GitHub lags a few seconds)
 MAX_UPDATES = 3           # main moved under it this many times: someone else keeps merging
+MAX_REFUSALS = 3          # GitHub refused the merge this many times in a row: it won't change
 DEADLINE = 90 * 60        # a run starts no new wait after this (the job's timeout is 120 minutes)
 MORE_LEFT = 3             # exit code: PRs are still labelled; start another run
 PASSING = {"SUCCESS", "NEUTRAL", "SKIPPED"}
@@ -52,6 +53,7 @@ PR = """query($owner: String!, $name: String!, $number: Int!) {
       author { login }
       labels(first: 100) { nodes { name } }
       reviewThreads(first: 100) { nodes { isResolved } }
+      comments(last: 20) { nodes { body } }
       commits(last: 1) { nodes { commit { oid
         statusCheckRollup { contexts(first: 100) {
           pageInfo { hasNextPage }
@@ -150,16 +152,20 @@ def decide(pr, required, missing_for):
         return "drop", "it is a draft"
     if pr["mergeable"] == "CONFLICTING" or pr["mergeStateStatus"] == "DIRTY":
         return "drop", "it conflicts with main: merge main in and resolve, then label it again"
-    if pr["mergeStateStatus"] == "BEHIND":
-        return "update", "behind main"
-    if pr["mergeable"] == "UNKNOWN" or pr["mergeStateStatus"] == "UNKNOWN":
-        return "wait", "GitHub is still working out whether it can merge"
     if too_many_checks(pr):
         return "drop", "it has over 100 checks, more than the lane reads: merge it by hand"
+    # Before bringing main in: a PR that can't merge anyway isn't worth a CI run.
     states = check_states(pr, required)
     failed = sorted(n for n, s in states.items() if s == "FAIL")
     if failed:
         return "drop", "required checks failed: " + ", ".join(failed)
+    waiting_on = people_needed(pr)
+    if waiting_on:
+        return "blocked", "the rules block it: " + waiting_on + ". Fix that, then label it again"
+    if pr["mergeStateStatus"] == "BEHIND":
+        return "update", "behind main"
+    if pr["mergeable"] == "UNKNOWN" or pr["mergeStateStatus"] == "UNKNOWN":
+        return "wait", "GitHub is still working out whether it can merge"
     missing = sorted(n for n, s in states.items() if s == "MISSING")
     if missing and missing_for > NEVER_RAN:
         return "drop", ("required checks never ran on its last commit: " + ", ".join(missing)
@@ -168,23 +174,29 @@ def decide(pr, required, missing_for):
         return "wait", "required checks still running"
     if pr["mergeStateStatus"] in MERGEABLE:
         return "merge", "approved and green"
+    return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']}). Fix that, then label it again"
+
+
+def people_needed(pr):
+    """What a person still has to do before it can merge: unresolved conversations, an approval."""
     unresolved = sum(not t["isResolved"] for t in pr["reviewThreads"]["nodes"])
-    why = []
-    if unresolved:
-        why.append(f"{unresolved} unresolved conversation(s)")
-    if pr["reviewDecision"] in ("REVIEW_REQUIRED", "CHANGES_REQUESTED"):
-        why.append("it needs an approval" if pr["reviewDecision"] == "REVIEW_REQUIRED"
-                   else "changes were requested")
-    return "blocked", ("the rules block it: " + (", ".join(why) or f"GitHub says {pr['mergeStateStatus']}")
-                       + ". Fix that, then label it again")
+    why = [f"{unresolved} unresolved conversation(s)"] if unresolved else []
+    if pr["reviewDecision"] == "REVIEW_REQUIRED":
+        why.append("it needs an approval")
+    elif pr["reviewDecision"] == "CHANGES_REQUESTED":
+        why.append("changes were requested")
+    return ", ".join(why)
 
 
 def drop(gh, pr, reason):
-    """Say why, then take the label off (so a failed comment never leaves a silent drop)."""
+    """Say why, then take the label off (so a failed comment never leaves a silent drop). The same
+    reason isn't said twice: a run that commented but couldn't take the label off says it once."""
     who = (pr.get("author") or {}).get("login")
-    gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": (
-        f"<!-- merge-lane -->\n{'@' + who + ' ' if who else ''}Taken out of the merge lane: {reason}. "
-        f"Label it `{LABEL}` again when it's ready (design 6.2).")})
+    body = (f"<!-- merge-lane -->\n{'@' + who + ' ' if who else ''}Taken out of the merge lane: {reason}. "
+            f"Label it `{LABEL}` again when it's ready (design 6.2).")
+    said = [c["body"] for c in (pr.get("comments") or {}).get("nodes", [])]
+    if not said or said[-1] != body:
+        gh.call(f"repos/{gh.repo}/issues/{pr['number']}/comments", "POST", {"body": body})
     try:
         gh.call(f"repos/{gh.repo}/issues/{pr['number']}/labels/{LABEL}", "DELETE")
     except urllib.error.HTTPError as e:
@@ -193,10 +205,18 @@ def drop(gh, pr, reason):
     print(f"#{pr['number']}: left the lane ({reason})")
 
 
+def github_message(error):
+    """GitHub's own message from an error response, for the author."""
+    try:
+        return json.loads(error.read().decode()).get("message", "") or str(error.code)
+    except (ValueError, AttributeError, OSError):
+        return str(error.code)
+
+
 def run_one(gh, number, required, deadline):
     """Take one PR through the lane. Returns "done" once it is merged, dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front)."""
-    started, missing_since, blocked_looks, updates, update_errors = time.time(), {}, 0, 0, 0
+    started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
     while True:
         pr = gh.graphql(PR, number=number)["pullRequest"]
         head = pr["headRefOid"]
@@ -238,7 +258,14 @@ def run_one(gh, number, required, deadline):
             except urllib.error.HTTPError as e:
                 if e.code not in (405, 409):  # 405: not mergeable right now; 409: head moved
                     raise
-                print(f"#{number}: GitHub refused the merge ({e.code}); looking again")
+                said = github_message(e)
+                refusals += 1
+                if refusals >= MAX_REFUSALS:
+                    drop(gh, pr, f"GitHub refused the merge {refusals} times ({e.code}: {said})")
+                    return "done"
+                print(f"#{number}: GitHub refused the merge ({e.code}: {said}); looking again")
+        else:
+            refusals = 0
         if time.time() - started > CHECKS_TIMEOUT:
             drop(gh, pr, f"it stayed at the front for over {CHECKS_TIMEOUT // 60} minutes without merging")
             return "done"
@@ -267,9 +294,15 @@ def main():
             if run_one(gh, number, required, deadline) == "paused":
                 return MORE_LEFT
         except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
-            # one PR's error doesn't stop the others; it stays labelled for the next run
+            # One PR's error doesn't stop the others. It leaves the lane, saying so, rather than stay
+            # labelled and hit the same error in every later run with no one told.
             print(f"::error::#{number}: {e!r}")
             failed.append(number)
+            try:
+                pr = gh.graphql(PR, number=number)["pullRequest"]
+                drop(gh, pr, f"the lane hit an error ({e!r:.200}); see the merge-lane run's log")
+            except Exception as again:  # noqa: BLE001 -- best effort; the log above has the cause
+                print(f"::error::#{number}: couldn't say so on the PR either: {again!r}")
         done.add(number)
 
 

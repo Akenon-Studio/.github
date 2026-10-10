@@ -194,6 +194,35 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual(sum(w == ("PUT", "7/update-branch") for w in self.writes(gh)), 3)
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
 
+    def test_the_same_reason_is_not_said_twice(self):
+        first = FakeGitHub([pr(draft=True)])
+        run_one(first, 7, REQUIRED, float("inf"))
+        said = "<!-- merge-lane -->\n@someone Taken out of the merge lane: it is a draft. " \
+               "Label it `ready-to-merge` again when it's ready (design 6.2)."
+        again = pr(draft=True)
+        again["comments"] = {"nodes": [{"body": said}]}
+        gh = FakeGitHub([again])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(self.writes(gh), [("DELETE", "7/labels/ready-to-merge")])
+
+    def test_a_failed_check_leaves_before_main_is_brought_in(self):
+        gh = FakeGitHub([pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code")],
+                            status="BEHIND")])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertNotIn(("PUT", "7/update-branch"), self.writes(gh))
+
+    def test_a_missing_approval_leaves_before_main_is_brought_in(self):
+        gh = FakeGitHub([pr(status="BEHIND", review="REVIEW_REQUIRED")])
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertNotIn(("PUT", "7/update-branch"), self.writes(gh))
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_repeated_merge_refusals_leave_the_lane(self):
+        gh = FakeGitHub([pr()], fail={"merge": 405})
+        run_one(gh, 7, REQUIRED, float("inf"))
+        self.assertEqual(sum(w == ("PUT", "7/merge") for w in self.writes(gh)), 3)
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
     def test_the_deadline_pauses_without_dropping(self):
         running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
                                run("security-scan / code")], status="BLOCKED")
