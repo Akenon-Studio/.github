@@ -360,7 +360,7 @@ class CloseIssuesTest(unittest.TestCase):
     def ref(self, n, repo="Akenon-Studio/x", state="OPEN"):
         return {"number": n, "state": state, "repository": {"nameWithOwner": repo}}
 
-    def test_says_which_pr_then_closes_each_open_one_in_any_repo(self):
+    def test_closes_each_open_one_in_any_repo_then_says_which_pr(self):
         gh = self.Issues([self.ref(4), self.ref(93, "Akenon-Studio/.github"), self.ref(5, state="CLOSED")])
         self.assertEqual(close_issues(gh, 7, {"__typename": "User", "login": "someone"}), [])
         self.assertEqual(gh.calls, [

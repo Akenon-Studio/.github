@@ -402,7 +402,7 @@ def close_issues(issues_gh, number, author):  # author: {"__typename", "login"}
             issues_gh.call(f"repos/{repo}/issues/{n}/comments", "POST", {"body": (
                 f"<!-- merge-lane -->\nClosed by {pr_ref}, which the merge lane merged (GitHub doesn't "
                 "close a PR's issues when an app merges it; design 6.2).")}, tries=1)
-        except (OSError, http.client.HTTPException) as e:
+        except (OSError, http.client.HTTPException, ValueError, RuntimeError, KeyError, TypeError) as e:
             print(f"::warning::#{number}: closed {repo}#{n}, but couldn't say why ({e!r})")
     return failed
 
