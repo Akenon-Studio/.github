@@ -17,11 +17,13 @@
     {"name": "release", "color": "5319e7", "description": "Source label: release-please's Release PR, from the Akenon Studio Release app (design 6.3)"},
     {"name": "ready-to-merge", "color": "0e8a16", "description": "Approved and green: the merge lane merges it in turn (design 6.2)"}
   ],
+  ".github-private": [
+    {"name": "automation-failures", "color": "b60205", "description": "Automation that failed with no one told: scheduled runs, Renovate, the merge lane, secrets (design 6.8)"}
+  ],
   ".github": [
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},
     {"name": "claude-md-drift", "color": "b60205", "description": "A CLAUDE.md names a design section that no longer exists"},
     {"name": "peras-tests-broken", "color": "b60205", "description": "A change to .github's main broke peras's agent-hook tests"},
-    {"name": "ai-scorecard", "color": "1d76db", "description": "The monthly AI review scorecard (design 6.4)"},
-    {"name": "automation-failures", "color": "b60205", "description": "Automation that failed with no one told: scheduled runs, Renovate, the merge lane, secrets (design 6.8)"}
+    {"name": "ai-scorecard", "color": "1d76db", "description": "The monthly AI review scorecard (design 6.4)"}
   ]
 }

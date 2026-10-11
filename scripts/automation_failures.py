@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Keep one issue listing what failed in the automation without anyone being told (design 6.8,
-"Automation failures reach a person"): one Task issue in this repo with the `automation-failures`
-source label, opened, updated or closed like the settings-drift report (scripts/one_issue.py).
-It lists:
+"Automation failures reach a person"): one Task issue with the `automation-failures` source label,
+opened, updated or closed like the settings-drift report (scripts/one_issue.py). It goes in the
+private .github-private repo, members only: it names open secret alerts and private repos' Renovate
+errors, which the public .github repo must not. It lists:
 
-- **Scheduled workflow runs** whose latest run failed, in every managed repo: GitHub emails one
-  person at most.
+- **Scheduled workflow runs** whose latest finished run failed, for every active workflow in every
+  managed repo: GitHub emails one person at most.
 - **Renovate problems**, which Mend-hosted Renovate shows only on Mend's site and has no API for:
   each repo's dashboard issue (its "Repository problems" section), any config-error issue Renovate
   opened, a repo with no dashboard, and a dashboard whose run-again box is still ticked. The report
   ticks that box on each run, so Renovate runs again and clears it; still ticked a day later means
   Renovate isn't running there.
-- **PRs the merge lane took out** with no activity since (design 6.2): the lane's comment is still
-  the last word and no commit came after it, LANE_IDLE_DAYS on.
+- **PRs the merge lane took out** with no activity since (design 6.2): no person commented or
+  reviewed, and nothing was pushed, after the lane's comment, LANE_IDLE_DAYS on. Other bots'
+  comments (the conflict notice that follows a conflict) don't count as activity.
 - **Open secret-scanning alerts** (GitHub's secret scanning runs on the public repos).
 - Anything the check couldn't read, so a missing permission shows instead of an empty list.
 
@@ -33,7 +35,7 @@ from board import graphql
 from one_issue import keep
 from rules import ORG, gh, load, managed_repos, read_file, try_gh
 
-REPO = f"{ORG}/.github"
+REPO = f"{ORG}/.github-private"
 LABEL = "automation-failures"
 TITLE = "Automation failures"
 FAILED = {"failure", "timed_out", "startup_failure"}
@@ -50,24 +52,34 @@ def renovate_pages():
 
 # --- collect, as the settings app ---------------------------------------------------------------
 
-def failed_schedules(runs):
-    """The latest scheduled run of each workflow, from one repo's runs (newest first, as GitHub
-    lists them), where it failed."""
-    latest = {}
-    for run in runs:
-        latest.setdefault(run["workflow_id"], run)
-    return [{"workflow": r["name"], "conclusion": r["conclusion"], "url": r["html_url"],
-             "at": r["created_at"]} for r in latest.values() if r.get("conclusion") in FAILED]
+def failed_schedule(run):
+    """The workflow's latest finished scheduled run as a report line's data, if it failed, else
+    None. Asked for per workflow, finished runs only, so a run going now (this one) or a frequent
+    workflow's many runs can't hide another's failure."""
+    if not run or run.get("conclusion") not in FAILED:
+        return None
+    return {"workflow": run["name"], "conclusion": run["conclusion"], "url": run["html_url"],
+            "at": run["created_at"]}
 
 
 def collect(path):
     state = {"runs": [], "secrets": [], "unread": []}
     for repo in managed_repos():
-        found = try_gh(f"repos/{ORG}/{repo}/actions/runs?event=schedule&per_page=100")
-        if found is None:
+        workflows = try_gh(f"repos/{ORG}/{repo}/actions/workflows?per_page=100")
+        if workflows is None:
             state["unread"].append(f"scheduled runs in {repo} (the settings app needs Actions: read)")
             continue
-        state["runs"] += [{"repo": repo, **r} for r in failed_schedules(found["workflow_runs"])]
+        for w in workflows["workflows"]:
+            if w["state"] != "active":
+                continue
+            runs = try_gh(f"repos/{ORG}/{repo}/actions/workflows/{w['id']}/runs"
+                          "?event=schedule&status=completed&per_page=1")
+            if runs is None:
+                state["unread"].append(f"scheduled runs of {w['name']} in {repo}")
+                continue
+            found = failed_schedule((runs["workflow_runs"] or [None])[0])
+            if found:
+                state["runs"].append({"repo": repo, **found})
     alerts = try_gh("--paginate", "--slurp", f"orgs/{ORG}/secret-scanning/alerts?state=open&per_page=100")
     if alerts is None:
         state["unread"].append("secret-scanning alerts (the settings app needs Secret scanning "
@@ -102,7 +114,8 @@ def run_again(body):
 
 
 def renovate_problems(repo, issues, pages):
-    """(problems, the dashboard to tick or None) for one repo, from Renovate's open issues there.
+    """(problems, the number of the dashboard to tick, or None) for one repo, from Renovate's open
+    issues there.
     `pages` is renovate_pages(): [dashboard title, config-error title]."""
     dashboard_title, config_title = pages
     mine = [i for i in issues if (i.get("user") or {}).get("login") == RENOVATE
@@ -122,29 +135,40 @@ def renovate_problems(repo, issues, pages):
         problems.append(f"{repo}: Renovate hasn't run since yesterday's check: its run-again box is "
                         f"still ticked ({link}; Mend's site has its logs)")
         return problems, None
-    return problems, (dashboard["number"], box[1])
+    return problems, dashboard["number"]
 
 
 LANE_PRS = """query($q: String!, $after: String) { search(type: ISSUE, query: $q, first: 50, after: $after) {
   pageInfo { hasNextPage endCursor }
   nodes { ... on PullRequest { number url title repository { name owner { login } }
     labels(first: 20) { nodes { name } }
-    comments(last: 1) { nodes { body createdAt } }
-    commits(last: 1) { nodes { commit { committedDate } } } } } } }"""
+    comments(last: 30) { nodes { body createdAt author { __typename } } }
+    reviews(last: 5) { nodes { createdAt author { __typename } } }
+    commits(last: 1) { nodes { commit { committedDate
+      checkSuites(first: 1) { nodes { createdAt } } } } } } } } }"""
+
+
+def when(stamp):
+    return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
 def lane_idle(pr, now, days=LANE_IDLE_DAYS):
-    """True for a PR the merge lane took out (its comment is still the last word, and no commit came
-    after it) at least `days` ago, and not labelled for the lane again."""
-    last = (pr["comments"]["nodes"] or [None])[-1]
-    if not last or not last["body"].startswith(LANE_MARKER) or "Taken out of the merge lane" not in last["body"]:
-        return False
+    """True for a PR the merge lane took out at least `days` ago with no activity since: no
+    person's comment or review, and no push (the head commit's date, or when its first checks
+    started, which is when it was pushed), and not labelled for the lane again."""
     if "ready-to-merge" in {l["name"] for l in pr["labels"]["nodes"]}:
         return False
-    said = datetime.datetime.fromisoformat(last["createdAt"].replace("Z", "+00:00"))
+    lane = [c for c in pr["comments"]["nodes"]
+            if c["body"].startswith(LANE_MARKER) and "Taken out of the merge lane" in c["body"]]
+    if not lane:
+        return False
+    said = when(lane[-1]["createdAt"])
+    people = [c["createdAt"] for c in pr["comments"]["nodes"] + pr["reviews"]["nodes"]
+              if (c.get("author") or {}).get("__typename") == "User"]
     commit = (pr["commits"]["nodes"] or [{}])[-1].get("commit") or {}
-    pushed = commit.get("committedDate")
-    if pushed and datetime.datetime.fromisoformat(pushed.replace("Z", "+00:00")) > said:
+    pushed = [commit.get("committedDate")] + [s["createdAt"] for s in
+                                               (commit.get("checkSuites") or {}).get("nodes", [])]
+    if any(when(t) > said for t in people + [p for p in pushed if p]):
         return False
     return now - said >= datetime.timedelta(days=days)
 
@@ -226,14 +250,18 @@ def report(path, now=None):
         problems, dashboard = renovate_problems(repo, issues, pages)
         renovate += problems
         if dashboard:
-            tick.append((repo, *dashboard))
+            tick.append((repo, dashboard))
     lane = lane_prs(now, set(managed))
     print(keep(REPO, LABEL, TITLE, body(sections(state, renovate, lane)),
                passed="Nothing failed unseen any more. Closing."))
     # After the report, so a failed edit can't stop it: Renovate runs again and unticks the box.
-    for repo, number, text in tick:
-        gh(f"repos/{ORG}/{repo}/issues/{number}", "-X", "PATCH", body={"body": text})
-        print(f"{repo}: ticked the Renovate dashboard's run-again box")
+    # Re-read first, so a dashboard Renovate rewrote meanwhile isn't overwritten with the old text.
+    for repo, number in tick:
+        fresh = gh(f"repos/{ORG}/{repo}/issues/{number}")
+        box = run_again(fresh["body"])
+        if box and not box[0]:
+            gh(f"repos/{ORG}/{repo}/issues/{number}", "-X", "PATCH", body={"body": box[1]})
+            print(f"{repo}: ticked the Renovate dashboard's run-again box")
 
 
 def main():

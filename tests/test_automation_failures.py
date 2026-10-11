@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from automation_failures import (body, failed_schedules, lane_idle, renovate_pages,  # noqa: E402
+from automation_failures import (REPO, body, failed_schedule, lane_idle, renovate_pages,  # noqa: E402
                                  renovate_problems, repository_problems, run_again, sections)
 from issue_fields import check, load_forms  # noqa: E402
 from rules import status_page  # noqa: E402
@@ -32,9 +32,9 @@ These problems occurred while renovating this repository. [View logs](https://de
 """
 
 
-def run(workflow, conclusion, created):
-    return {"workflow_id": workflow, "name": f"wf{workflow}", "conclusion": conclusion,
-            "html_url": "https://x", "created_at": created}
+def run(conclusion):
+    return {"name": "issue-sweep", "conclusion": conclusion, "html_url": "https://x",
+            "created_at": "2026-10-20T00:00:00Z"}
 
 
 def issue(title, body="", login="renovate[bot]"):
@@ -43,11 +43,15 @@ def issue(title, body="", login="renovate[bot]"):
 
 
 class ScheduledRunsTest(unittest.TestCase):
-    def test_only_a_workflows_latest_run_counts(self):
-        runs = [run(1, "success", "2026-10-20"), run(1, "failure", "2026-10-19"),
-                run(2, "failure", "2026-10-20"), run(3, "timed_out", "2026-10-20"),
-                run(4, None, "2026-10-20")]  # still running
-        self.assertEqual([r["workflow"] for r in failed_schedules(runs)], ["wf2", "wf3"])
+    def test_a_failed_latest_finished_run(self):
+        for bad in ("failure", "timed_out", "startup_failure"):
+            self.assertEqual(failed_schedule(run(bad))["conclusion"], bad)
+        for fine in ("success", "cancelled", "skipped"):
+            self.assertIsNone(failed_schedule(run(fine)))
+        self.assertIsNone(failed_schedule(None))  # never ran
+
+    def test_the_report_is_private(self):
+        self.assertEqual(REPO, "akenon-studio/.github-private")
 
 
 class RenovateTest(unittest.TestCase):
@@ -68,7 +72,7 @@ class RenovateTest(unittest.TestCase):
         problems, tick = renovate_problems("platform", [issue(PAGES[0], DASHBOARD)], PAGES)
         self.assertEqual(len(problems), 1)
         self.assertIn("isBranchModified", problems[0])
-        self.assertEqual(tick[0], 9)
+        self.assertEqual(tick, 9)
 
     def test_a_box_still_ticked_means_renovate_isnt_running(self):
         problems, tick = renovate_problems("platform", [issue(PAGES[0], run_again(DASHBOARD)[1])], PAGES)
@@ -94,9 +98,15 @@ class RenovateTest(unittest.TestCase):
         self.assertFalse(status_page({"__typename": "User", "login": "renovate"}, PAGES[0]))
 
 
-def pr(comment, said="2026-10-15T00:00:00Z", pushed="2026-10-14T00:00:00Z", labels=()):
-    return {"comments": {"nodes": [{"body": comment, "createdAt": said}]},
-            "commits": {"nodes": [{"commit": {"committedDate": pushed}}]},
+def pr(comment, said="2026-10-15T00:00:00Z", pushed="2026-10-14T00:00:00Z", labels=(),
+       later=(), reviews=(), checks="2026-10-14T00:00:00Z"):
+    """`later`: (author type, body, time) comments after the lane's."""
+    comments = [{"body": comment, "createdAt": said, "author": {"__typename": "Bot"}}]
+    comments += [{"body": b, "createdAt": at, "author": {"__typename": who}} for who, b, at in later]
+    return {"comments": {"nodes": comments},
+            "reviews": {"nodes": [{"createdAt": at, "author": {"__typename": "User"}} for at in reviews]},
+            "commits": {"nodes": [{"commit": {"committedDate": pushed,
+                                              "checkSuites": {"nodes": [{"createdAt": checks}]}}}]},
             "labels": {"nodes": [{"name": l} for l in labels]}}
 
 
@@ -112,6 +122,14 @@ class LaneTest(unittest.TestCase):
         self.assertFalse(lane_idle(pr(DROPPED, pushed="2026-10-16T00:00:00Z"), NOW))
         self.assertFalse(lane_idle(pr(DROPPED, labels=["ready-to-merge"]), NOW))
         self.assertFalse(lane_idle(pr("Looking at it."), NOW))
+        self.assertFalse(lane_idle(pr(DROPPED, later=[("User", "On it", "2026-10-16T00:00:00Z")]), NOW))
+        self.assertFalse(lane_idle(pr(DROPPED, reviews=["2026-10-16T00:00:00Z"]), NOW))
+        # an old commit pushed after the comment: its checks started then
+        self.assertFalse(lane_idle(pr(DROPPED, checks="2026-10-16T00:00:00Z"), NOW))
+
+    def test_a_bots_comment_after_it_isnt_activity(self):
+        notice = ("Bot", "<!-- pr-conflicts -->\n@x This PR conflicts", "2026-10-15T00:10:00Z")
+        self.assertTrue(lane_idle(pr(DROPPED, later=[notice]), NOW))
 
 
 class BodyTest(unittest.TestCase):
