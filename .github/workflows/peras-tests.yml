@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 10
     environment: settings-check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dot-github
           persist-credentials: false
@@ -45,7 +45,7 @@ jobs:
           repositories: peras
 
       - name: Get peras
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ github.repository_owner }}/peras
           token: ${{ steps.settings.outputs.token }}

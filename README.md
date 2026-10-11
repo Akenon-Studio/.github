@@ -11,6 +11,7 @@ never code, secrets or product plans.
 | `.github/workflows/pr-title.yml` | Reusable PR checks: conventional-commit title, the body closes whole issues, every `CLAUDE.md` passes, and a PR a person opens has its author assigned |
 | `.github/workflows/issue-fields.yml` | Reusable: puts each issue on the board with fields from its form answers; flags gaps, missing links and missing assignees with `needs-fields`; on a PR event, sets the issues it closes to In review (`scripts/pr_status.py`) |
 | `scripts/issue_fields.py` | What that workflow runs; the forms are its only definition of what is required |
+| `scripts/reason.py` | The board's Reason field: why an item waits on a person, which groups the Needs a human view |
 | `tests/` | Unit tests (`python3 -m unittest discover tests`), run by `.github/workflows/tests.yml` |
 | `rulesets/` | Branch and tag rules, repo merge settings, labels, issue types, teams (`teams.json`: the automation owners and engineers), and which repos they apply to |
 | `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only) |
@@ -21,7 +22,7 @@ never code, secrets or product plans.
 | `scripts/issue_sweep.py` | Every 15 minutes: re-checks issues, and posts one comment on each open PR that conflicts with its base branch |
 | `scripts/ai_review.py` | The advisory AI review on every PR (`.github/workflows/ai-review.yml`, design 6.4) |
 | `.github/workflows/ai-scorecard.yml` | Monthly: `scripts/ai_scorecard.py` reports the AI review's late catches, false alarms, rounds and cost per PR as one `ai-scorecard` issue |
-| `scripts/bot_pr_review.py` | Run by the issue sweep: asks the automation owners to review each bot's open PR |
+| `scripts/bot_pr_review.py` | Run by the issue sweep: asks the automation owners to review each bot's open PR, and puts one that closes no issue on the board in In review |
 | `profile/README.md` | The public org profile |
 | `SECURITY.md`, `CONTRIBUTING.md` | Org-wide security policy and contribution rules |
 
