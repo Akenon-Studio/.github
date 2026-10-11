@@ -42,7 +42,8 @@ jobs:
     # (design 6.8). The titles are rulesets/bots.json's `status_pages`; tests/test_workflows.py
     # checks they match.
     if: >-
-      !(github.event.issue.user.login == 'renovate[bot]' &&
+      !((github.event.issue.user.login == 'renovate[bot]' ||
+         github.event.issue.user.login == 'akenon-studio-renovate[bot]') &&
         (github.event.issue.title == 'Dependency Dashboard' ||
          github.event.issue.title == 'Action Required: Fix Renovate Configuration'))
     runs-on: ubuntu-latest

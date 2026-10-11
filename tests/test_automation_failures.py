@@ -89,6 +89,22 @@ class RenovateTest(unittest.TestCase):
         self.assertIn("config is broken", problems[0])
         self.assertIn("no Renovate dashboard", problems[1])
 
+    def test_our_own_renovates_dashboard_counts_too(self):
+        ours = issue(PAGES[0], DASHBOARD, login="akenon-studio-renovate[bot]")
+        problems, tick = renovate_problems("platform", [ours], PAGES)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("isBranchModified", problems[0])
+        self.assertIsNone(tick)  # its box, if it had one, isn't Mend's: never ticked, never "not running"
+        problems, _ = renovate_problems("platform", [issue(PAGES[0], run_again(DASHBOARD)[1],
+                                                           login="akenon-studio-renovate[bot]")], PAGES)
+        self.assertFalse([p for p in problems if "hasn't run" in p])
+
+    def test_two_renovates_on_one_repo(self):
+        both = [issue(PAGES[0], DASHBOARD), issue(PAGES[0], "## Open\n", login="akenon-studio-renovate[bot]")]
+        problems, tick = renovate_problems("platform", both, PAGES)
+        self.assertIn("two Renovates", problems[0])
+        self.assertIsNone(tick)  # ours is read, so Mend's stale page isn't ticked
+
     def test_someone_elses_issue_with_the_title_doesnt_count(self):
         problems, _ = renovate_problems("x", [issue(PAGES[0], DASHBOARD, login="someone")], PAGES)
         self.assertIn("no Renovate dashboard", problems[0])
@@ -207,7 +223,7 @@ class ReportTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(state, f)
         with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform", "peras"],
-                                 try_gh=lambda p: issues.get(p.split("/")[2]),
+                                 try_gh=lambda p: issues.get(p.split("/")[2]) if "creator=renovate[bot]" in p else ([] if issues.get(p.split("/")[2]) is not None else None),
                                  keep=lambda repo, label, title, text, passed=None: calls.append(
                                      ("keep", repo, text)),
                                  gh=lambda *a, **k: self.fail("nothing to tick")):
@@ -229,7 +245,7 @@ class ReportTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(state, f)
         with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform", "peras"],
-                                 try_gh=lambda p: issues.get(p.split("/")[2]), keep=keep, gh=gh,
+                                 try_gh=lambda p: issues.get(p.split("/")[2]) if "creator=renovate[bot]" in p else ([] if issues.get(p.split("/")[2]) is not None else None), keep=keep, gh=gh,
                                  lane_prs=lambda now, managed: []):
             automation_failures.report(f.name, NOW)
         return calls
@@ -252,6 +268,21 @@ class ReportTest(unittest.TestCase):
         with mock.patch.object(automation_failures, "lane_prs", boom):
             calls = self.run_report_unpatched_lane({"platform": [], "peras": []})
         self.assertIn("PRs the merge lane took out (the search failed)", calls[0][2])
+
+    def test_our_own_renovates_issues_are_read_too(self):
+        calls = []
+        state = {"runs": [], "secrets": [], "unread": [], "renovate": ["platform"]}
+        ours = issue(PAGES[0], DASHBOARD, login="akenon-studio-renovate[bot]")
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(state, f)
+        with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform"],
+                                 try_gh=lambda p: [ours] if "creator=akenon-studio-renovate[bot]" in p else [],
+                                 keep=lambda repo, label, title, text, passed=None: calls.append(text),
+                                 gh=lambda *a, **k: self.fail("nothing to tick"),
+                                 lane_prs=lambda now, managed: []):
+            automation_failures.report(f.name, NOW)
+        self.assertIn("isBranchModified", calls[0])
+        self.assertNotIn("no Renovate dashboard", calls[0])
 
     def test_no_tick_if_renovate_ticked_meanwhile(self):
         calls = self.run_report({"platform": [issue(PAGES[0], DASHBOARD)], "peras": []},
