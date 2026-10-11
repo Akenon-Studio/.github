@@ -7,6 +7,10 @@ the managed repos and syncs only those whose `needs-fields` label or comment is 
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
 or a Process failure whose prevention is not decided yet.
 
+A bot's status page (Renovate's dashboard or config-error issue, design 6.8) is never checked, but
+one still carrying the label, a board item or the checks' comment from before its bot was known is
+synced, which cleans it up.
+
 It also checks every open PR in the managed repos for a conflict with its base branch, which
 GitHub tells nobody about (design 6.8, "Every hand-off goes to an assigned human"). A conflicting
 PR gets one comment, found again by PR_MARKER, that mentions its assignees (for a bot's PR with

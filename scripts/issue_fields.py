@@ -601,10 +601,13 @@ STATUS_PAGE_TEXT = (f"{MARKER}\nThis is a bot's status page, not work (design 6.
 
 def flagged_status_page(issue, board_id):
     """True for a status page that still carries what the checks put on it before they knew its
-    bot: the `needs-fields` label, or an item on the board."""
+    bot: the `needs-fields` label, an item on the board, or (when the issue was read with its
+    comments, as the sweep does) the checks' old comment."""
+    comments = [c["body"] for c in (issue.get("comments") or {}).get("nodes", [])]
     return (status_page(issue.get("author"), issue.get("title"))
             and (LABEL in {l["name"] for l in issue["labels"]["nodes"]}
-                 or any(i["project"]["id"] == board_id for i in issue["projectItems"]["nodes"])))
+                 or any(i["project"]["id"] == board_id for i in issue["projectItems"]["nodes"])
+                 or any(c.startswith(MARKER) and c != STATUS_PAGE_TEXT for c in comments)))
 
 
 def clean_status_page(repo, number, issue, board):
