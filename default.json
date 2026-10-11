@@ -15,6 +15,7 @@
   "prConcurrentLimit": 5,
   "rebaseWhen": "conflicted",
   "minimumReleaseAge": "3 days",
+  "env": { "PNPM_WORKERS": "1", "PNPM_MAX_WORKERS": "1" },
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "description": "Security fixes open at once, whatever the schedule.",
@@ -47,6 +48,14 @@
       "matchRepositories": ["Akenon-Studio/platform"],
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<7"
+    },
+    {
+      "description": "platform's grouped update, in one lockfile pass, ran out of Mend's 3 GB (.github#123): there each app and package gets its own branch; the root and the workflows stay in one.",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchFileNames": ["apps/**", "packages/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "additionalBranchPrefix": "{{parentDir}}-",
+      "commitMessageSuffix": "({{parentDir}})"
     }
   ]
 }
