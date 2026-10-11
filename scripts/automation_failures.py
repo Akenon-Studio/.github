@@ -33,16 +33,21 @@ import sys
 
 from board import graphql
 from one_issue import keep
-from rules import ORG, gh, load, managed_repos, read_file, try_gh
+from rules import ORG, gh, load, managed_repos, repo_files, try_gh
 
 REPO = f"{ORG}/.github-private"
 LABEL = "automation-failures"
 TITLE = "Automation failures"
 FAILED = {"failure", "timed_out", "startup_failure"}
+RECENT = datetime.timedelta(days=40)  # a monthly workflow's last run is in range; a cron removed long ago isn't
 LANE_MARKER = "<!-- merge-lane -->"
 LANE_IDLE_DAYS = 2
 RENOVATE = "renovate[bot]"
 RUN_AGAIN = re.compile(r"^(\s*- \[)([ xX])(\] <!-- manual job -->)", re.M)
+
+
+def when(stamp):
+    return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
 def renovate_pages():
@@ -52,24 +57,34 @@ def renovate_pages():
 
 # --- collect, as the settings app ---------------------------------------------------------------
 
-def failed_schedule(run):
-    """The workflow's latest finished scheduled run as a report line's data, if it failed, else
-    None. Asked for per workflow, finished runs only, so a run going now (this one) or a frequent
-    workflow's many runs can't hide another's failure."""
-    if not run or run.get("conclusion") not in FAILED:
+def failed_schedule(run, now):
+    """The workflow's latest finished scheduled run as a report line's data, if it failed in the
+    last RECENT days, else None. Asked for per workflow, finished runs only, so a run going now
+    (this one) or a frequent workflow's many runs can't hide another's failure."""
+    if not run or run.get("conclusion") not in FAILED or now - when(run["created_at"]) > RECENT:
         return None
     return {"workflow": run["name"], "conclusion": run["conclusion"], "url": run["html_url"],
             "at": run["created_at"]}
 
 
-def collect(path):
-    state = {"runs": [], "secrets": [], "unread": []}
+def collect(path, now=None):
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    state = {"runs": [], "secrets": [], "unread": [], "renovate": []}
     for repo in managed_repos():
+        files = repo_files(repo)
+        if files is None:
+            state["unread"].append(f"whether Renovate is set up in {repo}")
+        elif "renovate.json" in files:
+            state["renovate"].append(repo)
         workflows = try_gh(f"repos/{ORG}/{repo}/actions/workflows?per_page=100")
         if workflows is None:
             state["unread"].append(f"scheduled runs in {repo} (the settings app needs Actions: read)")
             continue
         for w in workflows["workflows"]:
+            if w["state"] == "disabled_inactivity":  # GitHub stops schedules after 60 quiet days
+                state["runs"].append({"repo": repo, "workflow": w["name"], "url": w["html_url"],
+                                      "conclusion": "disabled by GitHub for inactivity",
+                                      "at": w["updated_at"]})
             if w["state"] != "active":
                 continue
             runs = try_gh(f"repos/{ORG}/{repo}/actions/workflows/{w['id']}/runs"
@@ -77,7 +92,7 @@ def collect(path):
             if runs is None:
                 state["unread"].append(f"scheduled runs of {w['name']} in {repo}")
                 continue
-            found = failed_schedule((runs["workflow_runs"] or [None])[0])
+            found = failed_schedule((runs["workflow_runs"] or [None])[0], now)
             if found:
                 state["runs"].append({"repo": repo, **found})
     alerts = try_gh("--paginate", "--slurp", f"orgs/{ORG}/secret-scanning/alerts?state=open&per_page=100")
@@ -146,10 +161,6 @@ LANE_PRS = """query($q: String!, $after: String) { search(type: ISSUE, query: $q
     reviews(last: 5) { nodes { createdAt author { __typename } } }
     commits(last: 1) { nodes { commit { committedDate
       checkSuites(first: 1) { nodes { createdAt } } } } } } } } }"""
-
-
-def when(stamp):
-    return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
 def lane_idle(pr, now, days=LANE_IDLE_DAYS):
@@ -240,9 +251,7 @@ def report(path, now=None):
     state = json.load(open(path))
     now = now or datetime.datetime.now(datetime.timezone.utc)
     managed, pages, renovate, tick = managed_repos(), renovate_pages(), [], []
-    for repo in managed:
-        if read_file(repo, "renovate.json") is None:
-            continue
+    for repo in state["renovate"]:  # collect() saw renovate.json there
         issues = try_gh(f"repos/{ORG}/{repo}/issues?creator={RENOVATE}&state=open&per_page=100")
         if issues is None:
             state["unread"].append(f"Renovate's issues in {repo}")

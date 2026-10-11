@@ -1,12 +1,16 @@
 """Tests for scripts/automation_failures.py (design 6.8). Run: python3 -m unittest discover tests"""
 
 import datetime
+import json
 import pathlib
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from automation_failures import (REPO, body, failed_schedule, lane_idle, renovate_pages,  # noqa: E402
+import automation_failures  # noqa: E402
+from automation_failures import (body, failed_schedule, lane_idle, renovate_pages,  # noqa: E402
                                  renovate_problems, repository_problems, run_again, sections)
 from issue_fields import check, load_forms  # noqa: E402
 from rules import status_page  # noqa: E402
@@ -45,13 +49,12 @@ def issue(title, body="", login="renovate[bot]"):
 class ScheduledRunsTest(unittest.TestCase):
     def test_a_failed_latest_finished_run(self):
         for bad in ("failure", "timed_out", "startup_failure"):
-            self.assertEqual(failed_schedule(run(bad))["conclusion"], bad)
+            self.assertEqual(failed_schedule(run(bad), NOW)["conclusion"], bad)
         for fine in ("success", "cancelled", "skipped"):
-            self.assertIsNone(failed_schedule(run(fine)))
-        self.assertIsNone(failed_schedule(None))  # never ran
-
-    def test_the_report_is_private(self):
-        self.assertEqual(REPO, "akenon-studio/.github-private")
+            self.assertIsNone(failed_schedule(run(fine), NOW))
+        self.assertIsNone(failed_schedule(None, NOW))  # never ran
+        old = {**run("failure"), "created_at": "2026-08-01T00:00:00Z"}  # its cron is long gone
+        self.assertIsNone(failed_schedule(old, NOW))
 
 
 class RenovateTest(unittest.TestCase):
@@ -146,6 +149,80 @@ class BodyTest(unittest.TestCase):
         self.assertIn("**Scheduled runs that failed**", text)
         self.assertIn("**Couldn't check**", text)
         self.assertNotIn("merge lane", text.split("### Why")[0])
+
+
+class CollectTest(unittest.TestCase):
+    def test_renovate_repos_unreadable_repos_and_disabled_schedules(self):
+        def try_gh(*args):
+            path = args[-1]
+            if path.endswith("/actions/workflows?per_page=100"):
+                return {"workflows": [
+                    {"id": 1, "name": "sweep", "state": "active", "html_url": "u", "updated_at": "t"},
+                    {"id": 2, "name": "scorecard", "state": "disabled_inactivity", "html_url": "u",
+                     "updated_at": "2026-10-01T00:00:00Z"}]}
+            if "/runs?" in path:
+                return {"workflow_runs": [run("failure")]}
+            return [[]]  # secret alerts: none
+        files = {"a": {"renovate.json"}, "b": set(), "c": None}
+        with mock.patch.multiple(automation_failures, managed_repos=lambda: ["a", "b", "c"],
+                                 repo_files=lambda r: files[r], try_gh=try_gh), \
+                tempfile.NamedTemporaryFile(suffix=".json") as f:
+            automation_failures.collect(f.name, NOW)
+            state = json.load(open(f.name))
+        self.assertEqual(state["renovate"], ["a"])
+        self.assertEqual(state["unread"], ["whether Renovate is set up in c"])
+        self.assertEqual(sorted(r["conclusion"] for r in state["runs"] if r["repo"] == "a"),
+                         ["disabled by GitHub for inactivity", "failure"])
+
+
+class ReportTest(unittest.TestCase):
+    def run_report(self, issues, fresh_body):
+        calls = []
+        state = {"runs": [], "secrets": [], "unread": [], "renovate": ["platform", "peras"]}
+
+        def keep(repo, label, title, text, passed=None):
+            calls.append(("keep", repo, text))
+            return "kept"
+
+        def gh(path, *args, body=None):
+            calls.append(("gh", path, args, body))
+            return {"body": fresh_body}
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(state, f)
+        with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform", "peras"],
+                                 try_gh=lambda p: issues.get(p.split("/")[2]), keep=keep, gh=gh,
+                                 lane_prs=lambda now, managed: []):
+            automation_failures.report(f.name, NOW)
+        return calls
+
+    def test_reports_then_ticks_a_fresh_copy(self):
+        calls = self.run_report({"platform": [issue(PAGES[0], DASHBOARD)], "peras": None},
+                                DASHBOARD + "\nnewer")
+        self.assertEqual(calls[0][0], "keep")  # the report comes first
+        self.assertEqual(calls[0][1], "akenon-studio/.github-private")
+        self.assertIn("Renovate's issues in peras", calls[0][2])  # couldn't check
+        self.assertIn("isBranchModified", calls[0][2])
+        patch = [c for c in calls if c[0] == "gh" and "PATCH" in c[2]]
+        self.assertEqual(len(patch), 1)
+        self.assertIn("newer", patch[0][3]["body"])  # ticked in the copy read just now
+        self.assertIn("- [x] <!-- manual job -->", patch[0][3]["body"])
+
+    def test_no_tick_if_renovate_ticked_meanwhile(self):
+        calls = self.run_report({"platform": [issue(PAGES[0], DASHBOARD)], "peras": []},
+                                run_again(DASHBOARD)[1])
+        self.assertFalse([c for c in calls if c[0] == "gh" and "PATCH" in c[2]])
+
+
+class WorkflowTest(unittest.TestCase):
+    def test_the_report_step_uses_an_every_repo_token(self):
+        import yaml
+        wf = yaml.safe_load((pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
+                             / "settings-check.yml").read_text())
+        steps = {s.get("id") or s.get("name"): s for s in wf["jobs"]["check"]["steps"]}
+        step = steps["Open, update or close the automation failures issue"]
+        self.assertEqual(step["env"]["GH_TOKEN"], "${{ steps.failures-app.outputs.token }}")
+        self.assertNotIn("repositories", steps["failures-app"]["with"])
 
 
 if __name__ == "__main__":
