@@ -21,7 +21,8 @@ board that stops qualifying (now a draft, or closing an issue) has its Reason cl
 removed, so it leaves Needs a human.
 
 The review requests run first: they are the hand-off notice, so a board error must not stop them.
-An error on one PR's board item is reported and the rest carry on.
+An error on one PR's board item is reported and the rest carry on. Nothing goes on the board until
+it has the Reason field.
 
 Usage: scripts/bot_pr_review.py [--dry-run]
 """
@@ -154,7 +155,12 @@ def board_pass(prs, managed, sources, dry_run):
                 l["name"] for l in pr["labels"]["nodes"]}:
             continue
         try:
-            board = board or find_board_fields(spec()["title"])
+            if board is None:
+                board = find_board_fields(spec()["title"])
+                if reason.FIELD not in {f.get("name") for f in board["fields"]["nodes"]}:
+                    print(f"The board has no {reason.FIELD} field yet (scripts/apply-board.py "
+                          "creates it): bot PRs stay off the board until then.")
+                    return failed
             done = (put_on_board(pr, board, sources, dry_run) if qualifies
                     else take_off(pr, board, dry_run))
         except (SystemExit, Exception) as e:  # gh() and graphql() exit on an API error

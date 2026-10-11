@@ -40,12 +40,13 @@ jobs:
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
+      - name: Install PyYAML (both scripts read the issue forms)
+        run: pip install --quiet pyyaml
+
       - name: Re-check issues and conflicting PRs
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          pip install --quiet pyyaml
-          python3 scripts/issue_sweep.py
+        run: python3 scripts/issue_sweep.py
 
       - name: Ask the automation owners to review bot PRs, and put them on the board
         if: ${{ !cancelled() }}

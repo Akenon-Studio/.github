@@ -94,7 +94,7 @@ class BoardPassTest(unittest.TestCase):
         self.saved = {k: getattr(bot_pr_review, k) for k in
                       ("find_board_fields", "report", "set_field", "set_reason", "graphql")}
         self.calls = []
-        bot_pr_review.find_board_fields = lambda title: {"id": "B"}
+        bot_pr_review.find_board_fields = lambda title: {"id": "B", "fields": {"nodes": [{"name": "Reason"}]}}
         bot_pr_review.report = lambda repo, n, p, problems, what: self.calls.append(("report", n, problems))
         bot_pr_review.set_field = lambda board, item, f, v: self.calls.append((f, v))
         bot_pr_review.set_reason = lambda board, item, cur, want: self.calls.append(("Reason", cur, want))
@@ -121,6 +121,11 @@ class BoardPassTest(unittest.TestCase):
         bot_pr_review.board_pass([p], MANAGED, SOURCES, False)
         self.assertEqual(len(self.calls[0][2]), 1)  # report() got the problem
         self.assertEqual(self.calls[-1], ("Reason", None, "Needs fields"))
+
+    def test_nothing_until_the_board_has_the_field(self):
+        bot_pr_review.find_board_fields = lambda title: {"id": "B", "fields": {"nodes": []}}
+        self.assertEqual(bot_pr_review.board_pass([self.bot_pr()], MANAGED, SOURCES, False), 0)
+        self.assertEqual(self.calls, [])
 
     def test_one_already_right_is_left_alone(self):
         bot_pr_review.board_pass([self.bot_pr(items=[item("In review", "Review")])], MANAGED, SOURCES, False)
