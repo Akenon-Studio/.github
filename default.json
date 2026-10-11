@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own. The schedule is \"at any time\" only for the first run (#118); #119 puts it back to before 9am on monday (design 6.4).",
+  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own. The schedule is \"at any time\" only for the first run (#118); #119 puts it back to before 9am on monday (design 6.4). `env` caps pnpm at one worker so platform's lockfile updates fit Mend-hosted Renovate's 3 GB (.github#123); Mend allows the name (`global:safeEnv`).",
   "extends": [
     "config:recommended",
     ":semanticCommits",
@@ -12,9 +12,10 @@
   "labels": ["dependencies"],
   "automerge": false,
   "platformAutomerge": false,
-  "prConcurrentLimit": 5,
+  "prConcurrentLimit": 10,
   "rebaseWhen": "conflicted",
   "minimumReleaseAge": "3 days",
+  "env": { "PNPM_MAX_WORKERS": "1" },
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "description": "Security fixes open at once, whatever the schedule.",
@@ -27,7 +28,7 @@
   },
   "packageRules": [
     {
-      "description": "Minor and patch updates in one weekly PR per repo, to keep CI minutes down.",
+      "description": "Minor and patch updates grouped weekly, to keep CI minutes down: one PR per repo (platform: a few, below).",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "groupName": "non-major dependencies",
       "groupSlug": "non-major"
@@ -47,6 +48,37 @@
       "matchRepositories": ["Akenon-Studio/platform"],
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<7"
+    },
+    {
+      "description": "platform's single grouped update ran out of Mend-hosted Renovate's 3 GB in one lockfile pass (.github#123), so it is split: one branch per app, one for the packages, one for the root and workflows, and one for workspace-wide dependencies (below).",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchFileNames": ["apps/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "additionalBranchPrefix": "{{parentDir}}-",
+      "commitMessageSuffix": "({{parentDir}})"
+    },
+    {
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchFileNames": ["packages/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "non-major dependencies (packages)",
+      "groupSlug": "non-major-packages"
+    },
+    {
+      "description": "Tools, and every dependency more than one platform package declares (checked 2026-10-11), move together in one PR, so the workspace never runs two versions of one. Add a dependency here when a second package declares it.",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchPackageNames": ["typescript", "vitest", "@vitest/**", "vite", "@vitejs/**", "react", "react-dom", "@types/react", "@types/react-dom", "@types/node", "@webgpu/types", "eslint", "@eslint/**", "eslint-plugin-*", "eslint-config-*", "!eslint-config-next", "typescript-eslint", "@typescript-eslint/**", "turbo", "prettier", "knip", "dependency-cruiser", "@stryker-mutator/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "workspace-wide",
+      "groupSlug": "workspace-wide",
+      "additionalBranchPrefix": "",
+      "commitMessageSuffix": ""
+    },
+    {
+      "description": "Lock-file maintenance rebuilds platform's whole lockfile in one pass, more than Mend's 3 GB allows: off there until it fits (.github#124).",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "enabled": false
     }
   ]
 }
