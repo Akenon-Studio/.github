@@ -234,5 +234,34 @@ class StatusPageTest(unittest.TestCase):
         self.assertTrue(in_managed_repo({**dash, "title": "chore(deps): x"}, {"handbook"}))
 
 
+class StatusPageSweepTest(unittest.TestCase):
+    def run_sweep(self, issues):
+        import issue_sweep
+        from unittest import mock
+        synced = []
+        with mock.patch.multiple(issue_sweep, search=lambda q, fields=None: issues if "is:issue is:open" in q else [],
+                                 managed_repos=lambda: ["platform"], load_forms=lambda: {},
+                                 find_board_fields=lambda title: {"id": BOARD, "fields": {"nodes": []}},
+                                 check_prs=lambda managed, dry: [],
+                                 sync=lambda repo, n, forms, board: synced.append(f"{repo}#{n}") or {}):
+            with mock.patch("sys.argv", ["issue_sweep.py"]), mock.patch("builtins.print"):
+                issue_sweep.main()
+        return synced
+
+    def dash(self, repo="Akenon-Studio/platform", labels=(), title="Dependency Dashboard"):
+        return {"number": 221, "title": title, "repository": {"nameWithOwner": repo},
+                "author": {"__typename": "Bot", "login": "akenon-studio-renovate"},
+                "labels": {"nodes": [{"name": l} for l in labels]}, "projectItems": {"nodes": []},
+                "comments": {"nodes": []}}
+
+    def test_a_flagged_dashboard_in_a_managed_repo_is_synced(self):
+        self.assertEqual(self.run_sweep([self.dash(labels=["needs-fields"])]), ["Akenon-Studio/platform#221"])
+
+    def test_clean_or_unmanaged_ones_are_not(self):
+        self.assertEqual(self.run_sweep([self.dash()]), [])
+        self.assertEqual(self.run_sweep([self.dash(repo="Akenon-Studio/old", labels=["needs-fields"])]), [])
+        self.assertEqual(self.run_sweep([self.dash(repo="someone/platform", labels=["needs-fields"])]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

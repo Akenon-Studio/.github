@@ -471,15 +471,50 @@ class SyncReasonTest(unittest.TestCase):
 
 
 class StatusPageSyncTest(unittest.TestCase):
-    def test_sync_leaves_renovates_dashboard_alone(self):
+    DASH = {"title": "Dependency Dashboard", "author": {"__typename": "Bot", "login": "renovate"},
+            "labels": {"nodes": []}, "projectItems": {"nodes": []}}
+
+    def run_sync(self, dash, comment=None):
         import issue_fields
         from unittest import mock
-        dash = {"title": "Dependency Dashboard", "author": {"__typename": "Bot", "login": "renovate"}}
-        touch = mock.Mock(side_effect=AssertionError("touched"))
+        calls = []
+        touch = mock.Mock(side_effect=AssertionError("checked a status page"))
         with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=dash),
-                                 reopen_if_early=touch, board_item=touch, report=touch, set_field=touch):
-            result = issue_fields.sync("Akenon-Studio/handbook", 1, FORMS, {"id": "B"})
+                                 reopen_if_early=touch, board_item=touch, report=touch, set_field=touch,
+                                 our_comment=mock.Mock(return_value=comment),
+                                 gh=lambda path, *a, body=None: calls.append((path, a, body)),
+                                 graphql=lambda q, **v: calls.append(("graphql", v))):
+            result = issue_fields.sync("Akenon-Studio/platform", 221, FORMS, {"id": "B"})
+        return result, calls
+
+    def test_a_clean_status_page_is_left_alone(self):
+        result, calls = self.run_sync(self.DASH)
         self.assertIn("skipped", result)
+        self.assertEqual((result["cleaned"], calls), (False, []))
+
+    def test_one_flagged_before_its_bot_was_known_is_cleaned(self):
+        import issue_fields
+        dash = dict(self.DASH, labels={"nodes": [{"name": "needs-fields"}]},
+                    projectItems={"nodes": [{"id": "I", "project": {"id": "B"}},
+                                            {"id": "X", "project": {"id": "other"}}]})
+        result, calls = self.run_sync(dash, comment={"id": 5, "body": issue_fields.MARKER + "\nmissing"})
+        self.assertTrue(result["cleaned"])
+        self.assertEqual(calls[0][:2], ("repos/Akenon-Studio/platform/issues/221/labels/needs-fields", ("-X", "DELETE")))
+        self.assertEqual(calls[1][2], {"body": issue_fields.STATUS_PAGE_TEXT})
+        self.assertEqual(calls[2], ("graphql", {"p": "B", "i": "I"}))  # only our board's item
+
+    def test_the_sweep_finds_flagged_ones(self):
+        from issue_fields import flagged_status_page
+        self.assertFalse(flagged_status_page(self.DASH, "B"))
+        self.assertTrue(flagged_status_page(dict(self.DASH, labels={"nodes": [{"name": "needs-fields"}]}), "B"))
+        self.assertTrue(flagged_status_page(dict(self.DASH, projectItems={"nodes": [{"id": "I", "project": {"id": "B"}}]}), "B"))
+        import issue_fields
+        stale = dict(self.DASH, comments={"nodes": [{"body": issue_fields.MARKER + "\nmissing"}]})
+        self.assertTrue(flagged_status_page(stale, "B"))  # only the old comment is left
+        done = dict(self.DASH, comments={"nodes": [{"body": issue_fields.STATUS_PAGE_TEXT}]})
+        self.assertFalse(flagged_status_page(done, "B"))  # cleaned: not synced again on every sweep
+        self.assertFalse(flagged_status_page(dict(self.DASH, title="chore(deps): x",
+                                                  labels={"nodes": [{"name": "needs-fields"}]}), "B"))
 
 
 class SetReasonTest(unittest.TestCase):

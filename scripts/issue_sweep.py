@@ -7,6 +7,10 @@ the managed repos and syncs only those whose `needs-fields` label or comment is 
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
 or a Process failure whose prevention is not decided yet.
 
+A bot's status page (Renovate's dashboard or config-error issue, design 6.8) is never checked, but
+one still carrying the label, a board item or the checks' comment from before its bot was known is
+synced, which cleans it up.
+
 It also checks every open PR in the managed repos for a conflict with its base branch, which
 GitHub tells nobody about (design 6.8, "Every hand-off goes to an assigned human"). A conflicting
 PR gets one comment, found again by PR_MARKER, that mentions its assignees (for a bot's PR with
@@ -25,8 +29,8 @@ import sys
 
 from board import find_board_fields, graphql, spec
 from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early,
-                          epic_stale, load_forms, problems_text, reason_on, reclose_due, status_on,
-                          sync, want_reason)
+                          epic_stale, flagged_status_page, load_forms, problems_text, reason_on,
+                          reclose_due, status_on, sync, want_reason)
 from reason import FIELD as REASON_FIELD
 from rules import ORG, automation_owners, gh, managed_repos, status_page, try_gh
 
@@ -78,6 +82,13 @@ def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
     if bool(problems) != labelled:
         return True
     return bool(problems) and (not ours or ours[0] != problems_text(problems))
+
+
+def managed_status_page(issue, managed):
+    """True for a bot's status page in a managed repo, which in_managed_repo() leaves out."""
+    owner, name = issue["repository"]["nameWithOwner"].split("/")
+    return (owner.lower() == ORG and name in managed
+            and status_page(issue.get("author"), issue.get("title")))
 
 
 def in_managed_repo(issue, managed):
@@ -201,6 +212,8 @@ def main():
         if in_managed_repo(issue, managed) and out_of_date(
                 issue, forms, board["id"], epic_field, reason_field):
             results.append(issue_sync(issue, forms, board, dry_run))
+        elif managed_status_page(issue, managed) and flagged_status_page(issue, board["id"]):
+            results.append(issue_sync(issue, forms, board, dry_run))  # sync() cleans it
     since = (datetime.datetime.now(datetime.timezone.utc) - CLOSED_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     for issue in search(f"org:{ORG} is:issue is:closed closed:>={since}"):
         if in_managed_repo(issue, managed) and closed_too_early(issue):
