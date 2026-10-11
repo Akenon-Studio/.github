@@ -3,10 +3,11 @@
   "title": "Akenon Studio",
   "description": "All work across the org: one board, every repo. Fields come from the issue forms.",
   "reasons": {
-    "_comment": "The Reason rules that are not just a label or a Status (scripts/reason.py). report_authors: bots whose open issues are reports for a person (Report; they start in Waiting for human). exempt_labels: a bot's issue or PR with one of these needs no Reason (Peras renders plan sub-issues that wait on no one until Peras says so, design 7.13). new_bug: the label a bug report carries until it is triaged. Any other open bot issue, or bot PR that closes no issue, with no Reason is flagged needs-fields, so new bot output cannot miss Needs a human.",
+    "_comment": "The Reason rules that are not just a label or a Status (scripts/reason.py). report_authors: bots whose open issues are reports for a person (Report; they start in Waiting for human). exempt_labels: a bot's issue or PR with one of these needs no Reason (Peras renders plan sub-issues that wait on no one until Peras says so, design 7.13). new_bug: the label a bug report carries until it is triaged. release_authors: bots whose PR is the Release PR (Release, never Review: merging it cuts a release, design 6.3). Any other open bot issue, or bot PR that closes no issue, with no Reason is flagged needs-fields, so new bot output cannot miss Needs a human.",
     "report_authors": ["akenon-studio-automation"],
     "exempt_labels": ["peras"],
-    "new_bug": {"type": "Bug", "label": "triage"}
+    "new_bug": {"type": "Bug", "label": "triage"},
+    "release_authors": ["akenon-studio-release"]
   },
   "fields": [
     {
@@ -84,7 +85,7 @@
     {
       "name": "Reason",
       "type": "SINGLE_SELECT",
-      "_comment": "Why an open item waits on a person (design 6.6), set and cleared only by the automation (scripts/reason.py), never by hand. An item has the first that applies, in this order; the option descriptions say when each applies. Rules beyond the options are under 'reasons'.",
+      "_comment": "Why an open item waits on a person (design 6.6), set and cleared only by the automation (scripts/reason.py), never by hand. An item has the first that applies, in this order, except that Release is checked before Review (it is listed last so its group shows last); the option descriptions say when each applies. Rules beyond the options are under 'reasons'.",
       "options": [
         {
           "name": "Needs fields",
@@ -94,7 +95,7 @@
         {
           "name": "Review",
           "color": "PURPLE",
-          "description": "In review, or a bot's PR with no issue behind it"
+          "description": "In review, or a bot's PR with no issue (the Release PR aside)"
         },
         {
           "name": "Report",
@@ -110,6 +111,11 @@
           "name": "Waiting on",
           "color": "YELLOW",
           "description": "Anything else in Waiting for human"
+        },
+        {
+          "name": "Release",
+          "color": "GREEN",
+          "description": "The Release PR: merging it cuts a release, so only when you mean to"
         }
       ]
     },
@@ -253,7 +259,7 @@
         "Created",
         "ASC"
       ],
-      "_comment": "Everything waiting on a person, grouped by why (design 6.6): issues flagged needs-fields, issues In review and bot PRs, the automation's reports, untriaged bugs, and anything else in Waiting for human. The Reason field does the work, since a filter cannot OR across fields and a view cannot group by label."
+      "_comment": "Everything waiting on a person, grouped by why (design 6.6): issues flagged needs-fields, issues In review and bot PRs, the automation's reports, untriaged bugs, anything else in Waiting for human, and the Release PR in its own group. The Reason field does the work, since a filter cannot OR across fields and a view cannot group by label."
     },
     {
       "name": "My work",
