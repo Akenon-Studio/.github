@@ -93,13 +93,14 @@ def on_board(board_id, pr):
 
 def board_changes(pr, board_id, problems):
     """What a bot's issue-less PR needs on the board: (its item as on_board() reads it, or None to
-    add it; Status to set: In review when it has none, or Done from before it was reopened, else
-    None to keep one a person set, like Blocked; the Reason it should have). `problems` are
+    add it; Status to set: In review when it has none, or Done or Todo (from before it was
+    reopened, or the board's own reopen automation), else None to keep one a person set, like
+    Blocked; the Reason it should have). `problems` are
     reason.pr_problems()'s, which flag it."""
     found = on_board(board_id, pr)
     labels = {l["name"] for l in pr["labels"]["nodes"]} - {LABEL}
     want = reason.pr_reason(labels | ({LABEL} if problems else set()))
-    return found, ("In review" if not found or found[1] in (None, "Done") else None), want
+    return found, ("In review" if not found or found[1] in (None, "Todo", "Done") else None), want
 
 
 def put_on_board(pr, board, sources, dry_run):

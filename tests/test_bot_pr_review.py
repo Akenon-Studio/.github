@@ -81,6 +81,7 @@ class BoardChangesTest(unittest.TestCase):
         self.assertEqual((found, status, why), (("item", "In review", "Review"), None, "Review"))
         self.assertIsNone(self.changes([item("Blocked", "Review")])[1])
         self.assertEqual(self.changes([item("Done", "Review")])[1], "In review")  # reopened
+        self.assertEqual(self.changes([item("Todo", "Review")])[1], "In review")
         self.assertEqual(self.changes([item(None, None)])[1], "In review")
 
     def test_problems_make_it_needs_fields_and_fixing_them_clears_it(self):
@@ -113,6 +114,13 @@ class BoardPassTest(unittest.TestCase):
         self.assertEqual(bot_pr_review.board_pass([self.bot_pr()], MANAGED, SOURCES, False), 0)
         self.assertEqual(self.calls, [("report", 1, []), ("Status", "In review"),
                                       ("Reason", None, "Review")])
+
+    def test_an_unlisted_bots_pr_is_flagged(self):
+        p = self.bot_pr()
+        p["author"]["login"] = "someapp"
+        bot_pr_review.board_pass([p], MANAGED, SOURCES, False)
+        self.assertEqual(len(self.calls[0][2]), 1)  # report() got the problem
+        self.assertEqual(self.calls[-1], ("Reason", None, "Needs fields"))
 
     def test_one_already_right_is_left_alone(self):
         bot_pr_review.board_pass([self.bot_pr(items=[item("In review", "Review")])], MANAGED, SOURCES, False)
