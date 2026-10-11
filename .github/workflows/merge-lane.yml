@@ -49,7 +49,7 @@ jobs:
       - name: Log in as the Merge Lane app
         id: app
         # pinned to a commit: this step holds the app's key (Renovate bumps it)
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.MERGE_LANE_APP_ID }}
           private-key: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
@@ -59,7 +59,7 @@ jobs:
       - name: Log in again for issues in every repo
         id: issues
         # pinned to a commit: this step holds the app's key (Renovate bumps it)
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.MERGE_LANE_APP_ID }}
           private-key: ${{ secrets.MERGE_LANE_APP_PRIVATE_KEY }}
