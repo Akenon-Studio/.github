@@ -595,12 +595,46 @@ def report(repo, number, issue, problems, what="issue"):
         gh(f"repos/{repo}/issues/comments/{comment['id']}", "-X", "PATCH", body={"body": text})
 
 
+STATUS_PAGE_TEXT = (f"{MARKER}\nThis is a bot's status page, not work (design 6.8): the board and its "
+                    "checks leave it alone.")
+
+
+def flagged_status_page(issue, board_id):
+    """True for a status page that still carries what the checks put on it before they knew its
+    bot: the `needs-fields` label, or an item on the board."""
+    return (status_page(issue.get("author"), issue.get("title"))
+            and (LABEL in {l["name"] for l in issue["labels"]["nodes"]}
+                 or any(i["project"]["id"] == board_id for i in issue["projectItems"]["nodes"])))
+
+
+def clean_status_page(repo, number, issue, board):
+    """Take the label, the checks' comment and the board item off a status page (design 6.8).
+    True if anything changed."""
+    changed = False
+    if LABEL in {l["name"] for l in issue["labels"]["nodes"]}:
+        gh(f"repos/{repo}/issues/{number}/labels/{LABEL}", "-X", "DELETE")
+        changed = True
+    comment = our_comment(repo, number)
+    if comment and comment["body"] != STATUS_PAGE_TEXT:
+        gh(f"repos/{repo}/issues/comments/{comment['id']}", "-X", "PATCH",
+           body={"body": STATUS_PAGE_TEXT})
+        changed = True
+    for item in issue["projectItems"]["nodes"]:
+        if item["project"]["id"] == board["id"]:
+            graphql("""mutation($p: ID!, $i: ID!) { deleteProjectV2Item(
+                input: {projectId: $p, itemId: $i}) { deletedItemId } }""", p=board["id"], i=item["id"])
+            changed = True
+    return changed
+
+
 def sync(repo, number, forms, board):
     """Run every check on one issue and update the board, label and comment. Returns a summary.
-    A bot's status page (Renovate's dashboard) is left alone: it is not work (design 6.8)."""
+    A bot's status page (Renovate's dashboard) is not work (design 6.8): nothing is checked, and
+    anything the checks put on it before they knew its bot is taken off."""
     issue = load_issue(repo, number)
     if status_page(issue.get("author"), issue.get("title")):
-        return {"issue": f"{repo}#{number}", "skipped": "a bot's status page, not work"}
+        return {"issue": f"{repo}#{number}", "skipped": "a bot's status page, not work",
+                "cleaned": clean_status_page(repo, number, issue, board)}
     reopened = reopen_if_early(repo, number, issue)
     reclosed = not reopened and reclose_if_done(repo, number, issue)
     issue_type = (issue["issueType"] or {}).get("name")
