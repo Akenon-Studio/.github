@@ -25,7 +25,9 @@ import sys
 
 from board import find_board_fields, graphql, spec
 from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early,
-                          epic_stale, load_forms, problems_text, reclose_due, status_on, sync)
+                          epic_stale, load_forms, problems_text, reason_on, reclose_due, status_on,
+                          sync, want_reason)
+from reason import FIELD as REASON_FIELD
 from rules import ORG, automation_owners, gh, managed_repos, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
@@ -57,16 +59,20 @@ def search(query, fields=ISSUE_SEARCH):
         after = page["pageInfo"]["endCursor"]
 
 
-def out_of_date(issue, forms, board_id, epic_field=False):
-    """True if the issue's label or comment doesn't match what the checks find now, or (when the
+def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
+    """True if the issue's label or comment doesn't match what the checks find now, (when the
     board has an Epic field) its Epic value doesn't match its parents, e.g. after a part moved to
-    another epic, which sends the work under it no event, or it is a parent to close again
-    (reclose_due)."""
+    another epic, which sends the work under it no event, (when the board has a Reason field) its
+    Reason is out of step, e.g. after a Status set by hand or the triage label removed, or it is a
+    parent to close again (reclose_due)."""
     if reclose_due(issue):
         return True
     if epic_field and epic_stale(board_id, issue):
         return True
-    problems = all_problems(issue, forms, status_on(board_id, issue))
+    status = status_on(board_id, issue)
+    problems = all_problems(issue, forms, status)
+    if reason_field and reason_on(board_id, issue) != want_reason(issue, bool(problems), status):
+        return True
     labelled = LABEL in {l["name"] for l in issue["labels"]["nodes"]}
     ours = [c["body"] for c in issue["comments"]["nodes"] if c["body"].startswith(MARKER)]
     if bool(problems) != labelled:
@@ -186,10 +192,12 @@ def main():
     dry_run = "--dry-run" in sys.argv[1:]
     forms, managed = load_forms(), set(managed_repos())
     board = find_board_fields(spec()["title"])
-    epic_field = any(f.get("name") == EPIC_FIELD for f in board["fields"]["nodes"])
+    have = {f.get("name") for f in board["fields"]["nodes"]}
+    epic_field, reason_field = EPIC_FIELD in have, REASON_FIELD in have
     results = []
     for issue in search(f"org:{ORG} is:issue is:open"):
-        if in_managed_repo(issue, managed) and out_of_date(issue, forms, board["id"], epic_field):
+        if in_managed_repo(issue, managed) and out_of_date(
+                issue, forms, board["id"], epic_field, reason_field):
             results.append(issue_sync(issue, forms, board, dry_run))
     since = (datetime.datetime.now(datetime.timezone.utc) - CLOSED_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     for issue in search(f"org:{ORG} is:issue is:closed closed:>={since}"):

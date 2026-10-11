@@ -11,16 +11,29 @@ the team to review people's changes to the same files.
 It also adds a listed bot's source label (rulesets/bots.json) to its PR when the PR carries none of
 them, so every bot PR says where it came from (design 6.8).
 
+A bot's PR that closes no issue (Renovate's, release-please's Release PR) has no issue to carry it
+on the board, so it goes on the board itself: Status In review, Reason Review, so it shows in Needs
+a human (design 6.6, 6.8; scripts/reason.py). The board marks it Done when it merges or closes. One
+from a bot not listed with `no_issue` in rulesets/bots.json is flagged `needs-fields` with a comment
+saying what to fix, as issue_fields.py flags an issue, and gets Reason Needs fields. A PR with an
+exempt label (Peras's, which close their intent) is left off.
+
 Usage: scripts/bot_pr_review.py [--dry-run]
 """
 
 import sys
 
-from board import graphql
+import reason
+from board import find_board_fields, graphql, spec
+from issue_fields import LABEL, report, set_field, set_reason
 from rules import AUTOMATION_OWNERS, ORG, bot_login, bot_sources, gh, managed_repos
 
-PR_FIELDS = """number author { __typename login } repository { nameWithOwner }
+PR_FIELDS = """id number author { __typename login } repository { nameWithOwner }
   labels(first: 50) { nodes { name } }
+  closingIssuesReferences(first: 1) { totalCount }
+  projectItems(first: 20) { nodes { id project { id }
+    status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    reason: fieldValueByName(name: "Reason") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
   timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], first: 100) { nodes {
     ... on ReviewRequestedEvent { requestedReviewer { __typename ... on Team { slug } } } } }"""
 
@@ -64,11 +77,60 @@ def missing_source_label(pr, managed, sources):
     return source["labels"][0]
 
 
+def on_board(board_id, pr):
+    """(item id, Status, Reason) of the PR's board item, or None if it isn't on the board."""
+    for item in pr["projectItems"]["nodes"]:
+        if item["project"]["id"] == board_id:
+            return (item["id"], (item.get("status") or {}).get("name"),
+                    (item.get("reason") or {}).get("name"))
+    return None
+
+
+def board_changes(pr, board_id, problems):
+    """What a bot's issue-less PR needs on the board: (its item as on_board() reads it, or None to
+    add it; Status to set, or None to keep its own; the Reason it should have). `problems` are
+    reason.pr_problems()'s, which flag it."""
+    found = on_board(board_id, pr)
+    labels = {l["name"] for l in pr["labels"]["nodes"]} - {LABEL}
+    want = reason.pr_reason(labels | ({LABEL} if problems else set()))
+    return found, (None if found and found[1] else "In review"), want
+
+
+def put_on_board(pr, board, sources, dry_run):
+    """Put a bot's issue-less PR on the board in In review with its Reason, flagging it if no
+    listed bot opened it. Returns a line to print, or None if nothing changed."""
+    repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+    problems = reason.pr_problems(pr, sources)
+    found, status, want = board_changes(pr, board["id"], problems)
+    flagged = LABEL in {l["name"] for l in pr["labels"]["nodes"]}
+    if found and status is None and found[2] == want and flagged == bool(problems):
+        return None
+    if dry_run:
+        return f"{repo}#{n}: would put on the board ({status or 'Status kept'}, Reason {want})"
+    report(repo, n, pr, problems)
+    item = found[0] if found else graphql("""mutation($p: ID!, $c: ID!) { addProjectV2ItemById(
+        input: {projectId: $p, contentId: $c}) { item { id } } }""",
+                                          p=board["id"], c=pr["id"])["addProjectV2ItemById"]["item"]["id"]
+    if status:
+        set_field(board, item, "Status", status)
+    set_reason(board, item, found[2] if found else None, want)
+    return f"{repo}#{n}: on the board, {status or 'Status kept'}, Reason {want}"
+
+
 def main():
     dry_run = "--dry-run" in sys.argv[1:]
     managed = set(managed_repos())
     sources = bot_sources()
     prs = open_prs()
+    rule, board = reason.rules(), None
+    for pr in prs:
+        owner, name = pr["repository"]["nameWithOwner"].split("/")
+        if owner.lower() != ORG or name not in managed or not reason.pr_on_board(pr, rule):
+            continue
+        board = board or find_board_fields(spec()["title"])
+        done = put_on_board(pr, board, sources, dry_run)
+        if done:
+            print(done)
     for pr in prs:
         label = missing_source_label(pr, managed, sources)
         if label:

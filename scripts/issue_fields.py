@@ -6,8 +6,9 @@ answers must be one of the options, and a question labelled "(required when Kind
 required when that answer is given.
 
 Dropdowns whose label is also a board field (Discipline, Phase, Priority, Audit, Severity) are
-copied to the board. New items start in Todo; Decisions, bug reports and critical or high Audit
-findings in Waiting for human. An issue with problems gets the `needs-fields` label and one comment listing
+copied to the board. New items start in Todo; Decisions, bug reports, critical or high Audit
+findings and the reports the automation opens in Waiting for human. The board's Reason field (why
+the item waits on a person, scripts/reason.py) is set or cleared on every run. An issue with problems gets the `needs-fields` label and one comment listing
 them; once fixed, the label goes and the comment says so. The issue body is the source of truth: edit the answer there and the
 board follows.
 
@@ -48,6 +49,7 @@ import time
 
 import yaml
 
+import reason
 from board import find_board_fields, graphql, spec
 from rules import ROOT, bot_login, ensure_label, gh, source_labels
 
@@ -141,10 +143,14 @@ def needs_confirming(issue_type, text):
     return issue_type == "Audit finding" and parse_body(text).get("Severity") in NEEDS_CONFIRMING
 
 
-def start_status(issue_type, text):
-    """The board Status a new item starts in: Waiting for human for a Decision, a bug report and a
-    critical or high Audit finding (a person confirms it first), Todo for everything else."""
+def start_status(issue_type, text, author=None, rule=None):
+    """The board Status a new item starts in: Waiting for human for a Decision, a bug report, a
+    critical or high Audit finding (a person confirms it first) and a report the automation opened
+    (`author` is the GraphQL actor), Todo for everything else."""
     if needs_confirming(issue_type, text):
+        return "Waiting for human"
+    if reason.is_bot(author) and bot_login(author.get("login")) in (rule or reason.rules())[
+            "report_authors"]:
         return "Waiting for human"
     return START_STATUS.get(issue_type, "Todo")
 
@@ -339,7 +345,8 @@ ISSUE_FIELDS = """id number title state body author { __typename login } issueTy
     ... on LabeledEvent { label { name } actor { __typename login } } } }
   projectItems(first: 20) { nodes { id project { id }
     fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-    epic: fieldValueByName(name: "Epic") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
+    epic: fieldValueByName(name: "Epic") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    reason: fieldValueByName(name: "Reason") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
 ISSUE_FIELDS = ISSUE_FIELDS.replace("ANCESTORS", ancestors())
 
 
@@ -367,7 +374,7 @@ def source_problems(author, by_bot, labels, sources):
             "rulesets/bots.json in the .github repo (design 6.8)."]
 
 
-def all_problems(issue, forms, status, sources=None):
+def all_problems(issue, forms, status, sources=None, rule=None):
     issue_type = (issue["issueType"] or {}).get("name")
     author = issue["author"] or {}
     by_bot = author.get("__typename") == "Bot"
@@ -381,7 +388,9 @@ def all_problems(issue, forms, status, sources=None):
         author.get("login"), by_bot, *people_assigned(issue), status) + confirmation_problems(
         issue_type, issue["body"], confirmed) + source_problems(
         author.get("login"), by_bot, {l["name"] for l in issue["labels"]["nodes"]},
-        source_labels() if sources is None else sources)
+        source_labels() if sources is None else sources) + reason.issue_problems(
+        issue_type, {l["name"] for l in issue["labels"]["nodes"]}, status, author,
+        rule or reason.rules())
 
 
 def problems_text(problems):
@@ -447,6 +456,50 @@ def reclose_if_done(repo, number, issue):
     gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": RECLOSE_TEXT})
     issue["state"] = "CLOSED"
     return True
+
+
+# --- The Reason board field (design 6.6, scripts/reason.py) ------------------------------------
+
+def reason_on(board_id, issue):
+    """The issue's Reason on the board, or None."""
+    for item in issue["projectItems"]["nodes"]:
+        if item["project"]["id"] == board_id:
+            return (item.get("reason") or {}).get("name")
+    return None
+
+
+def want_reason(issue, flagged, status, rule=None):
+    """The Reason the issue should have once report() has run, which labels it `needs-fields`
+    exactly when `flagged` (it has problems)."""
+    if issue["state"] != "OPEN":
+        return None
+    labels = {l["name"] for l in issue["labels"]["nodes"]} - {LABEL}
+    if flagged:
+        labels.add(LABEL)
+    return reason.issue_reason((issue["issueType"] or {}).get("name"), labels, status,
+                               issue["author"] or {}, rule or reason.rules())
+
+
+def set_reason(board, item_id, current, want):
+    """Set the item's Reason to `want`, or clear it for None. Nothing until the board has the
+    field, or if it already matches."""
+    field = next((f for f in board["fields"]["nodes"] if f.get("name") == reason.FIELD), None)
+    if field is None or current == want:
+        return
+    if want is None:
+        graphql("""mutation($p: ID!, $i: ID!, $f: ID!) { clearProjectV2ItemFieldValue(
+            input: {projectId: $p, itemId: $i, fieldId: $f}) { clientMutationId } }""",
+                p=board["id"], i=item_id, f=field["id"])
+    else:
+        set_field(board, item_id, reason.FIELD, want)
+
+
+def sync_reason(board, item_id, issue, status):
+    """Bring the issue's Reason in step after its Status changed (pr_status.py, comment_status.py):
+    its labels are as loaded, since those scripts don't change them."""
+    labels = {l["name"] for l in issue["labels"]["nodes"]}
+    set_reason(board, item_id, reason_on(board["id"], issue),
+               want_reason(issue, LABEL in labels, status))
 
 
 def epic_on(board_id, issue):
@@ -550,12 +603,14 @@ def sync(repo, number, forms, board):
     names = {f.get("name") for f in board["fields"]["nodes"]}
     values = board_values(issue_type, issue["body"], forms, names)
     if status is None:
-        values["Status"] = start_status(issue_type, issue["body"])
+        values["Status"] = start_status(issue_type, issue["body"], issue["author"])
     for name, option in values.items():
         set_field(board, item_id, name, option)
     sync_epic(board, item_id, issue)
     problems = all_problems(issue, forms, values.get("Status", status))
     report(repo, number, issue, problems)
+    set_reason(board, item_id, reason_on(board["id"], issue),
+               want_reason(issue, bool(problems), values.get("Status", status)))
     want = epic_of(issue)
     return {"issue": f"{repo}#{number}", "type": issue_type, "set": values,
             "epic": want[1] if want else None,

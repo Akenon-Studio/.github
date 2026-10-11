@@ -11,6 +11,8 @@ Usage: scripts/pr_status.py <event.json>   (a pull_request_target event; issue-f
   removed in the Development sidebar sends no event, so it isn't seen.)
 - closed by a merge: nothing (the merge closes the issue, and the board sets Done).
 
+Each Status change also brings the issue's Reason board field in step (Review while In review).
+
 The issues are the PR's closing references (its `Closes #n` lines), only in repos the PR's author
 can write to: the text is theirs and the app's token reaches every repo. A fork's PR changes
 nothing. Runs as the org app.
@@ -20,7 +22,7 @@ import json
 import sys
 
 from board import find_board_fields
-from issue_fields import board_item, graphql, load_issue, set_field
+from issue_fields import board_item, graphql, load_issue, set_field, sync_reason
 from pr_closes_issue import CLOSES, refs as closes_in
 from rules import try_gh
 
@@ -117,6 +119,7 @@ def main(path):
         status_to = new_status(change, status, bool(issue["assignedActors"]["nodes"]))
         if status_to:
             set_field(board, item, "Status", status_to)
+            sync_reason(board, item, issue, status_to)
             print(f"{where}: {status} -> {status_to}")
         else:
             print(f"{where}: stays {status}")

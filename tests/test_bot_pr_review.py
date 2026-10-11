@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from bot_pr_review import missing_source_label, needs_review  # noqa: E402
+from bot_pr_review import board_changes, missing_source_label, needs_review  # noqa: E402
 
 MANAGED = {"platform", "handbook"}
 
@@ -56,6 +56,32 @@ class SourceLabelTest(unittest.TestCase):
     def test_unlisted_bots_and_people_are_left_alone(self):
         self.assertIsNone(missing_source_label(pr(login="someapp"), MANAGED, SOURCES))
         self.assertIsNone(missing_source_label(pr(author="User"), MANAGED, SOURCES))
+
+
+def item(status=None, why=None, board="B"):
+    return {"id": "item", "project": {"id": board}, "status": {"name": status} if status else None,
+            "reason": {"name": why} if why else None}
+
+
+class BoardChangesTest(unittest.TestCase):
+    def changes(self, items=(), labels=(), problems=()):
+        p = pr(labels=labels)
+        p["projectItems"] = {"nodes": list(items)}
+        return board_changes(p, "B", list(problems))
+
+    def test_a_new_pr_is_added_in_review_with_reason_review(self):
+        self.assertEqual(self.changes(), (None, "In review", "Review"))
+
+    def test_on_another_board_counts_as_not_on_ours(self):
+        self.assertEqual(self.changes([item("Todo", board="other")]), (None, "In review", "Review"))
+
+    def test_a_status_someone_set_is_kept(self):
+        found, status, why = self.changes([item("Done", "Review")])
+        self.assertEqual((found, status, why), (("item", "Done", "Review"), None, "Review"))
+
+    def test_problems_make_it_needs_fields_and_fixing_them_clears_it(self):
+        self.assertEqual(self.changes(problems=["x"])[2], "Needs fields")
+        self.assertEqual(self.changes([item("In review", "Needs fields")], ["needs-fields"])[2], "Review")
 
 
 if __name__ == "__main__":

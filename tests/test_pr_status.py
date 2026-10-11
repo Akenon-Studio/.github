@@ -50,7 +50,7 @@ class DecideTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(pr_status, k) for k in
-                      ("graphql", "find_board_fields", "load_issue", "board_item", "set_field", "try_gh")}
+                      ("graphql", "find_board_fields", "load_issue", "board_item", "set_field", "sync_reason", "try_gh")}
         self.set, self.other_prs = [], []
         refs = [{"number": 1, "state": "OPEN", "repository": {"nameWithOwner": REPO}},
                 {"number": 2, "state": "CLOSED", "repository": {"nameWithOwner": REPO}},
@@ -67,6 +67,8 @@ class MainTest(unittest.TestCase):
                                                 "assignedActors": {"nodes": [{"login": "x"}]}}
         pr_status.board_item = lambda board, issue: (issue["n"], self.status)
         pr_status.set_field = lambda board, item, field, value: self.set.append((item, field, value))
+        self.reasons = []
+        pr_status.sync_reason = lambda board, item, issue, status: self.reasons.append((item, status))
         # the author can write to platform, not handbook
         pr_status.try_gh = lambda path: {"permission": "write" if "/platform/" in path else "read"}
 

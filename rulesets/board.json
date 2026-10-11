@@ -2,6 +2,12 @@
   "_comment": "The org project board (design 6.6). apply-board.py creates the board, its fields, linked repos and views; verify-settings.py checks them. Owner is the built-in Assignees field; Type is the issue type, usable in filters but not as a column through the API. The API can set a view's name, layout, filter and columns but not its grouping, sorting or board column field: apply-board.py lists those as steps to do by hand, and verify-settings.py checks them. Single-select option names match the issue form answers exactly.",
   "title": "Akenon Studio",
   "description": "All work across the org: one board, every repo. Fields come from the issue forms.",
+  "reasons": {
+    "_comment": "The Reason rules that are not just a label or a Status (scripts/reason.py). report_authors: bots whose open issues are reports for a person (Report; they start in Waiting for human). exempt_labels: a bot's issue or PR with one of these needs no Reason (Peras renders plan sub-issues that wait on no one until Peras says so, design 7.13). new_bug: the label a bug report carries until it is triaged. Any other open bot issue, or bot PR that closes no issue, with no Reason is flagged needs-fields, so new bot output cannot miss Needs a human.",
+    "report_authors": ["akenon-studio-automation"],
+    "exempt_labels": ["peras"],
+    "new_bug": {"type": "Bug", "label": "triage"}
+  },
   "fields": [
     {
       "name": "Status",
@@ -72,6 +78,38 @@
           "name": "Legal and admin",
           "color": "GRAY",
           "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Reason",
+      "type": "SINGLE_SELECT",
+      "_comment": "Why an open item waits on a person (design 6.6), set and cleared only by the automation (scripts/reason.py), never by hand. An item has the first that applies, in this order; the option descriptions say when each applies. Rules beyond the options are under 'reasons'.",
+      "options": [
+        {
+          "name": "Needs fields",
+          "color": "RED",
+          "description": "Labelled needs-fields: its comment says what to fix"
+        },
+        {
+          "name": "Review",
+          "color": "PURPLE",
+          "description": "In review, or a bot's PR with no issue behind it"
+        },
+        {
+          "name": "Report",
+          "color": "BLUE",
+          "description": "An issue the automation opened for a person"
+        },
+        {
+          "name": "New bug",
+          "color": "ORANGE",
+          "description": "A bug report not yet triaged"
+        },
+        {
+          "name": "Waiting on",
+          "color": "YELLOW",
+          "description": "Anything else in Waiting for human"
         }
       ]
     },
@@ -199,37 +237,23 @@
     {
       "name": "Needs a human",
       "layout": "TABLE_LAYOUT",
-      "filter": "is:open -label:needs-fields status:\"Waiting for human\",\"In review\"",
+      "filter": "is:open has:reason",
       "fields": [
         "Title",
+        "Reason",
         "Status",
         "Assignees",
+        "Reviewers",
         "Repository",
         "Peras",
         "Linked pull requests"
       ],
-      "group_by": "Status",
+      "group_by": "Reason",
       "sort": [
         "Created",
         "ASC"
       ],
-      "_comment": "Filters cannot OR across fields, so this relies on Status: a new Decision or Bug starts in Waiting for human (form automation), an issue whose PR awaits review is In review, and Peras sets Waiting for human when a cycle pauses."
-    },
-    {
-      "name": "Needs fixing",
-      "_comment": "Issues the automation flagged (issue-fields, issue-sweep): each has one comment saying what to fix. Every other view but My work, Epics and Overview leaves them out, so this is where they show (design 6.6).",
-      "layout": "TABLE_LAYOUT",
-      "filter": "is:open label:needs-fields",
-      "fields": [
-        "Title",
-        "Status",
-        "Assignees",
-        "Repository"
-      ],
-      "sort": [
-        "Created",
-        "ASC"
-      ]
+      "_comment": "Everything waiting on a person, grouped by why (design 6.6): issues flagged needs-fields, issues In review and bot PRs, the automation's reports, untriaged bugs, and anything else in Waiting for human. The Reason field does the work, since a filter cannot OR across fields and a view cannot group by label."
     },
     {
       "name": "My work",
