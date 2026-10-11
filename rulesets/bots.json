@@ -1,5 +1,5 @@
 {
-  "_comment": "Bots and apps that open issues or PRs, and the source label each one's work carries (design 6.8). Logins without '[bot]'. issue_fields.py flags an issue a bot opened with no source label; bot_pr_review.py (issue-sweep) adds a listed bot's label to its PRs. 'no_issue' bots open PRs with no issue behind them (dependency updates, release-please's Release PR), so pr_closes_issue.py lets their PRs through without `Closes #n`; their label says where they came from. Peras is not one: its PRs close their intent. Every label here is in rulesets/labels.json.",
+  "_comment": "Bots and apps that open issues or PRs, and the source label each one's work carries (design 6.8). Logins without '[bot]'. issue_fields.py flags an issue a bot opened with no source label; bot_pr_review.py (issue-sweep) adds a listed bot's label to its PRs and puts a 'no_issue' bot's PRs on the board. 'no_issue' bots open PRs with no issue behind them (dependency updates, release-please's Release PR), so pr_closes_issue.py lets their PRs through without `Closes #n`; their label says where they came from. Peras is not one: its PRs close their intent. Every label here is in rulesets/labels.json.",
   "sources": {
     "renovate": {"labels": ["dependencies"], "no_issue": true},
     "akenon-studio-release": {"labels": ["release"], "no_issue": true},

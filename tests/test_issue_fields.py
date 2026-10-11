@@ -11,7 +11,8 @@ from issue_fields import (all_problems, assignee_problems, board_values, check, 
                           confirmation_problems, confirmed_by_person, finished_parent_problems,
                           link_problems, load_forms, reclose_due, source_problems,
                           open_sub_issues, parse_body, people_assigned, problems_text,
-                          reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options)
+                          reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options,
+                          want_reason)
 
 FORMS = load_forms()
 
@@ -331,6 +332,11 @@ class ConfirmationTest(unittest.TestCase):
         self.assertEqual(start_status("Bug", ""), "Waiting for human")  # a person triages it
         self.assertEqual(start_status("Task", body(**TASK)), "Todo")
 
+    def test_a_report_the_automation_opens_starts_waiting_for_a_human(self):
+        bot = {"__typename": "Bot", "login": "akenon-studio-automation"}
+        self.assertEqual(start_status("Task", "", bot), "Waiting for human")
+        self.assertEqual(start_status("Task", "", {"__typename": "Bot", "login": "someapp"}), "Todo")
+
     def test_unconfirmed_critical_finding_fails(self):
         problems = confirmation_problems("Audit finding", body(**AUDIT), False)
         self.assertEqual(len(problems), 1)
@@ -419,6 +425,81 @@ class CommentTest(unittest.TestCase):
 
     def test_no_problems(self):
         self.assertIn("All required answers are filled in", problems_text([]))
+
+
+class WantReasonTest(unittest.TestCase):
+    def issue(self, labels=(), state="OPEN", issue_type="Task"):
+        return {"state": state, "issueType": {"name": issue_type},
+                "labels": {"nodes": [{"name": l} for l in labels]},
+                "author": {"__typename": "User", "login": "someone"}}
+
+    def test_problems_found_now_decide_needs_fields(self):
+        self.assertEqual(want_reason(self.issue(), True, "Todo"), "Needs fields")
+        self.assertEqual(want_reason(self.issue(["needs-fields"]), False, "In review"), "Review")
+
+    def test_closed_issues_have_none(self):
+        self.assertIsNone(want_reason(self.issue(state="CLOSED"), True, "Waiting for human"))
+
+    def test_an_untriaged_bug(self):
+        self.assertEqual(want_reason(self.issue(["triage"], issue_type="Bug"), False,
+                                     "Waiting for human"), "New bug")
+
+
+class SyncReasonTest(unittest.TestCase):
+    def run_sync(self, problems, status):
+        import issue_fields
+        from unittest import mock
+        issue = {"state": "OPEN", "issueType": {"name": "Task"}, "body": body(**TASK),
+                 "labels": {"nodes": []}, "author": {"__typename": "User", "login": "someone"},
+                 "projectItems": {"nodes": [{"id": "item", "project": {"id": "B"},
+                                             "reason": {"name": "Waiting on"}}]}}
+        reasons = []
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=issue),
+                                 reopen_if_early=mock.Mock(return_value=False),
+                                 reclose_if_done=mock.Mock(return_value=False),
+                                 board_item=mock.Mock(return_value=("item", status)),
+                                 set_field=mock.Mock(), sync_epic=mock.Mock(), report=mock.Mock(),
+                                 epic_of=mock.Mock(return_value=None),
+                                 all_problems=mock.Mock(return_value=problems),
+                                 set_reason=lambda b, i, cur, want: reasons.append((cur, want))):
+            issue_fields.sync("Akenon-Studio/handbook", 1, FORMS, {"id": "B", "fields": {"nodes": []}})
+        return reasons
+
+    def test_sync_sets_the_reason_from_what_it_finds(self):
+        self.assertEqual(self.run_sync(["missing"], "Todo"), [("Waiting on", "Needs fields")])
+        self.assertEqual(self.run_sync([], "In progress"), [("Waiting on", None)])
+
+
+class SetReasonTest(unittest.TestCase):
+    BOARD = {"id": "B", "fields": {"nodes": [{"id": "F", "name": "Reason", "options": [
+        {"id": "o1", "name": "Review"}, {"id": "o2", "name": "Waiting on"}]}]}}
+
+    def run_set(self, current, want, board=None):
+        import issue_fields
+        from unittest import mock
+        calls = mock.Mock(return_value={})
+        with mock.patch.object(issue_fields, "graphql", calls):
+            issue_fields.set_reason(board or self.BOARD, "item", current, want)
+        return [(next(m for m in ("updateProjectV2ItemFieldValue", "clearProjectV2ItemFieldValue")
+                      if m in c.args[0]), c.kwargs) for c in calls.call_args_list]
+
+    def test_set_clear_and_no_ops(self):
+        self.assertEqual(self.run_set(None, "Review"),
+                         [("updateProjectV2ItemFieldValue", {"p": "B", "i": "item", "f": "F", "o": "o1"})])
+        self.assertEqual(self.run_set("Review", None),
+                         [("clearProjectV2ItemFieldValue", {"p": "B", "i": "item", "f": "F"})])
+        self.assertEqual(self.run_set("Review", "Review"), [])
+        self.assertEqual(self.run_set(None, "Review", {"id": "B", "fields": {"nodes": []}}), [])
+
+    def test_sync_reason_reads_the_labels_as_loaded(self):
+        import issue_fields
+        from unittest import mock
+        issue = {"state": "OPEN", "issueType": {"name": "Task"}, "author": {"__typename": "User"},
+                 "labels": {"nodes": [{"name": "needs-fields"}]},
+                 "projectItems": {"nodes": [{"project": {"id": "B"}, "reason": None}]}}
+        with mock.patch.object(issue_fields, "set_reason") as set_reason:
+            issue_fields.sync_reason(self.BOARD, "item", issue, "In review")
+        set_reason.assert_called_once_with(self.BOARD, "item", None, "Needs fields")
 
 
 if __name__ == "__main__":

@@ -20,9 +20,9 @@ BOARD = "PVT_board"
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User", assignees=("someone",), ever=("someone",), issue_type="Task", answers=None,
-          label_events=(), subs=(0, 0)):
+          label_events=(), subs=(0, 0), login="someone", reason=None):
     return {"number": 1, "state": "OPEN", "body": body(**(answers or TASK)), "issueType": {"name": issue_type},
-            "author": {"__typename": author, "login": "someone"},
+            "author": {"__typename": author, "login": login},
             "assignedActors": {"nodes": [{"__typename": "User", "login": a} for a in assignees]},
             "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": a}}
                                         for a in ever]},
@@ -33,7 +33,8 @@ def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo
             "subIssues": {"nodes": []}, "blockedBy": {"totalCount": blocked_by},
             "subIssuesSummary": {"total": subs[0], "completed": subs[1]},
             "projectItems": {"nodes": [{"id": "item", "project": {"id": BOARD},
-                                        "fieldValueByName": {"name": status}}]},
+                                        "fieldValueByName": {"name": status},
+                                        "reason": {"name": reason} if reason else None}]},
             "comments": {"nodes": [{"body": c} for c in comments]}}
 
 
@@ -96,8 +97,21 @@ class OutOfDateTest(unittest.TestCase):
         self.assertTrue(out_of_date(issue(labels=["needs-fields"]), FORMS, BOARD))
 
     def test_bot_opened_issue_without_a_parent_is_left_alone(self):
-        self.assertFalse(out_of_date(issue(parent=False, author="Bot", labels=["settings-drift"]),
-                                     FORMS, BOARD))
+        self.assertFalse(out_of_date(issue(parent=False, author="Bot", labels=["settings-drift"],
+                                           login="akenon-studio-automation"), FORMS, BOARD))
+
+    def test_a_reason_out_of_step_is_synced_once_the_board_has_the_field(self):
+        waiting = issue(status="Waiting for human")
+        self.assertFalse(out_of_date(waiting, FORMS, BOARD))
+        self.assertTrue(out_of_date(waiting, FORMS, BOARD, reason_field=True))
+        self.assertFalse(out_of_date(issue(status="Waiting for human", reason="Waiting on"),
+                                     FORMS, BOARD, reason_field=True))
+        self.assertTrue(out_of_date(issue(status="In progress", reason="Waiting on"),
+                                    FORMS, BOARD, reason_field=True))  # Status changed by hand
+
+    def test_a_bot_no_reason_applies_to_is_synced(self):
+        self.assertTrue(out_of_date(issue(parent=False, author="Bot", labels=["settings-drift"]),
+                                    FORMS, BOARD))
 
     def test_bot_opened_issue_without_a_source_label_is_synced(self):
         self.assertTrue(out_of_date(issue(parent=False, author="Bot"), FORMS, BOARD))

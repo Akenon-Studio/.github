@@ -50,7 +50,7 @@ class DecideTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(pr_status, k) for k in
-                      ("graphql", "find_board_fields", "load_issue", "board_item", "set_field", "try_gh")}
+                      ("graphql", "find_board_fields", "load_issue", "board_item", "set_field", "sync_reason", "try_gh")}
         self.set, self.other_prs = [], []
         refs = [{"number": 1, "state": "OPEN", "repository": {"nameWithOwner": REPO}},
                 {"number": 2, "state": "CLOSED", "repository": {"nameWithOwner": REPO}},
@@ -67,6 +67,8 @@ class MainTest(unittest.TestCase):
                                                 "assignedActors": {"nodes": [{"login": "x"}]}}
         pr_status.board_item = lambda board, issue: (issue["n"], self.status)
         pr_status.set_field = lambda board, item, field, value: self.set.append((item, field, value))
+        self.reasons = []
+        pr_status.sync_reason = lambda board, item, issue, status: self.reasons.append((item, status))
         # the author can write to platform, not handbook
         pr_status.try_gh = lambda path: {"permission": "write" if "/platform/" in path else "read"}
 
@@ -82,6 +84,7 @@ class MainTest(unittest.TestCase):
     def test_only_open_issues_where_the_author_can_write(self):
         self.assertEqual(self.run_event(event("opened")), 0)
         self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In review")])
+        self.assertEqual(self.reasons, [(f"{REPO}#1", "In review")])
 
     def test_a_bot_only_in_its_own_repo(self):
         pr_status.try_gh = lambda path: self.fail("a bot has no collaborator permission to ask about")
@@ -97,6 +100,7 @@ class MainTest(unittest.TestCase):
                           {"number": 7, "isDraft": False, "repository": {"nameWithOwner": REPO}}]  # this one
         self.run_event(event("closed"))
         self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In progress")])
+        self.assertEqual(self.reasons, [(f"{REPO}#1", "In progress")])
 
     def test_an_edit_that_stops_closing_an_issue_lets_it_go(self):
         self.status = "In review"
