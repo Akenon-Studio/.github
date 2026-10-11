@@ -291,7 +291,7 @@
     {
       "name": "Backlog",
       "layout": "TABLE_LAYOUT",
-      "filter": "is:open -label:needs-fields no:iteration -status:Done",
+      "filter": "is:issue is:open -label:needs-fields no:iteration -status:Done",
       "fields": [
         "Title",
         "Epic",

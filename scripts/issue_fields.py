@@ -393,13 +393,14 @@ def all_problems(issue, forms, status, sources=None, rule=None):
         rule or reason.rules())
 
 
-def problems_text(problems):
-    """The text of the issue's one comment for these problems."""
+def problems_text(problems, what="issue"):
+    """The text of the issue's (or, with what="PR", a bot PR's) one comment for these problems."""
     if not problems:
-        return f"{MARKER}\nAll required answers are filled in. Thanks."
-    return (f"{MARKER}\nThis issue is missing something the board needs, so it is labelled "
-            f"`{LABEL}` and kept out of planning views. To fix:\n\n"
-            + "\n".join(f"- {p}" for p in problems))
+        return (f"{MARKER}\nAll required answers are filled in. Thanks." if what == "issue"
+                else f"{MARKER}\nFixed: nothing is missing now. Thanks.")
+    return (f"{MARKER}\nThis {what} is missing something the board needs, so it is labelled "
+            f"`{LABEL}`" + (" and kept out of planning views" if what == "issue" else "")
+            + ". To fix:\n\n" + "\n".join(f"- {p}" for p in problems))
 
 
 def closed_too_early(issue):
@@ -574,10 +575,10 @@ def our_comment(repo, number):
     return None
 
 
-def report(repo, number, issue, problems):
+def report(repo, number, issue, problems, what="issue"):
     labels = {l["name"] for l in issue["labels"]["nodes"]}
     comment = our_comment(repo, number)
-    text = problems_text(problems)
+    text = problems_text(problems, what)
     if problems:
         if LABEL not in labels:
             ensure_label(repo, LABEL)

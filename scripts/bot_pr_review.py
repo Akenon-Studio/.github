@@ -16,7 +16,12 @@ on the board, so it goes on the board itself: Status In review, Reason Review, s
 a human (design 6.6, 6.8; scripts/reason.py). The board marks it Done when it merges or closes. One
 from a bot not listed with `no_issue` in rulesets/bots.json is flagged `needs-fields` with a comment
 saying what to fix, as issue_fields.py flags an issue, and gets Reason Needs fields. A PR with an
-exempt label (Peras's, which close their intent) is left off.
+exempt label (Peras's, which close their intent) is left off, and so is a draft. A bot PR on the
+board that stops qualifying (now a draft, or closing an issue) has its Reason cleared and its flag
+removed, so it leaves Needs a human.
+
+The review requests run first: they are the hand-off notice, so a board error must not stop them.
+An error on one PR's board item is reported and the rest carry on.
 
 Usage: scripts/bot_pr_review.py [--dry-run]
 """
@@ -28,7 +33,7 @@ from board import find_board_fields, graphql, spec
 from issue_fields import LABEL, report, set_field, set_reason
 from rules import AUTOMATION_OWNERS, ORG, bot_login, bot_sources, gh, managed_repos
 
-PR_FIELDS = """id number author { __typename login } repository { nameWithOwner }
+PR_FIELDS = """id number isDraft author { __typename login } repository { nameWithOwner }
   labels(first: 50) { nodes { name } }
   closingIssuesReferences(first: 1) { totalCount }
   projectItems(first: 20) { nodes { id project { id }
@@ -107,7 +112,7 @@ def put_on_board(pr, board, sources, dry_run):
         return None
     if dry_run:
         return f"{repo}#{n}: would put on the board ({status or 'Status kept'}, Reason {want})"
-    report(repo, n, pr, problems)
+    report(repo, n, pr, problems, "PR")
     item = found[0] if found else graphql("""mutation($p: ID!, $c: ID!) { addProjectV2ItemById(
         input: {projectId: $p, contentId: $c}) { item { id } } }""",
                                           p=board["id"], c=pr["id"])["addProjectV2ItemById"]["item"]["id"]
@@ -117,20 +122,53 @@ def put_on_board(pr, board, sources, dry_run):
     return f"{repo}#{n}: on the board, {status or 'Status kept'}, Reason {want}"
 
 
+def take_off(pr, board, dry_run):
+    """Clear the Reason of a bot PR on the board that no longer qualifies (pr_on_board), and remove
+    its flag. Returns a line to print, or None if there was nothing to clear."""
+    found = on_board(board["id"], pr)
+    flagged = LABEL in {l["name"] for l in pr["labels"]["nodes"]}
+    if not (found and found[2]) and not flagged:
+        return None
+    repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+    if dry_run:
+        return f"{repo}#{n}: would clear its Reason"
+    if flagged:
+        report(repo, n, pr, [], "PR")
+    if found:
+        set_reason(board, found[0], found[2], None)
+    return f"{repo}#{n}: no longer waits on a person; Reason cleared"
+
+
+def board_pass(prs, managed, sources, dry_run):
+    """Put each bot's issue-less PR on the board, and take off those that no longer qualify.
+    Returns how many PRs failed."""
+    rule, board, failed = reason.rules(), None, 0
+    for pr in prs:
+        owner, name = pr["repository"]["nameWithOwner"].split("/")
+        if owner.lower() != ORG or name not in managed or not reason.is_bot(pr["author"]):
+            continue
+        qualifies = reason.pr_on_board(pr, rule)
+        if not qualifies and not pr["projectItems"]["nodes"]:
+            continue
+        try:
+            board = board or find_board_fields(spec()["title"])
+            done = (put_on_board(pr, board, sources, dry_run) if qualifies
+                    else take_off(pr, board, dry_run))
+        except (SystemExit, Exception) as e:  # gh() and graphql() exit on an API error
+            failed += 1
+            print(f"::error::{pr['repository']['nameWithOwner']}#{pr['number']}: board update "
+                  f"failed: {e}")
+            continue
+        if done:
+            print(done)
+    return failed
+
+
 def main():
     dry_run = "--dry-run" in sys.argv[1:]
     managed = set(managed_repos())
     sources = bot_sources()
     prs = open_prs()
-    rule, board = reason.rules(), None
-    for pr in prs:
-        owner, name = pr["repository"]["nameWithOwner"].split("/")
-        if owner.lower() != ORG or name not in managed or not reason.pr_on_board(pr, rule):
-            continue
-        board = board or find_board_fields(spec()["title"])
-        done = put_on_board(pr, board, sources, dry_run)
-        if done:
-            print(done)
     for pr in prs:
         label = missing_source_label(pr, managed, sources)
         if label:
@@ -148,6 +186,8 @@ def main():
               f"{AUTOMATION_OWNERS} to review")
     if not todo:
         print("Every bot PR has had a review requested.")
+    if board_pass(prs, managed, sources, dry_run):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

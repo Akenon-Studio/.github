@@ -84,6 +84,7 @@ class MainTest(unittest.TestCase):
     def test_only_open_issues_where_the_author_can_write(self):
         self.assertEqual(self.run_event(event("opened")), 0)
         self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In review")])
+        self.assertEqual(self.reasons, [(f"{REPO}#1", "In review")])
 
     def test_a_bot_only_in_its_own_repo(self):
         pr_status.try_gh = lambda path: self.fail("a bot has no collaborator permission to ask about")
@@ -99,6 +100,7 @@ class MainTest(unittest.TestCase):
                           {"number": 7, "isDraft": False, "repository": {"nameWithOwner": REPO}}]  # this one
         self.run_event(event("closed"))
         self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In progress")])
+        self.assertEqual(self.reasons, [(f"{REPO}#1", "In progress")])
 
     def test_an_edit_that_stops_closing_an_issue_lets_it_go(self):
         self.status = "In review"

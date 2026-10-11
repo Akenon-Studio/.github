@@ -66,10 +66,10 @@ def issue_problems(issue_type, labels, status, author, rule):
 
 
 def pr_on_board(pr, rule):
-    """True for a bot's open PR that goes on the board itself: it closes no issue, so no issue
-    carries its Reason (design 6.8)."""
+    """True for a bot's open, ready PR that goes on the board itself: it closes no issue, so no
+    issue carries its Reason (design 6.8). A draft waits on no one yet (6.6)."""
     labels = {l["name"] for l in pr["labels"]["nodes"]}
-    return (is_bot(pr["author"]) and not exempt(labels, rule)
+    return (is_bot(pr["author"]) and not pr.get("isDraft") and not exempt(labels, rule)
             and not pr["closingIssuesReferences"]["totalCount"])
 
 

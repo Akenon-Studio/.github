@@ -93,6 +93,9 @@ class PrTest(unittest.TestCase):
         self.assertFalse(reason.pr_on_board(pr(closes=1), RULE))  # its issue carries it
         self.assertFalse(reason.pr_on_board(pr(author="User"), RULE))
         self.assertFalse(reason.pr_on_board(pr(labels=["peras"]), RULE))
+        draft = pr()
+        draft["isDraft"] = True
+        self.assertFalse(reason.pr_on_board(draft, RULE))
 
     def test_only_a_no_issue_bot_may_close_nothing(self):
         self.assertEqual(reason.pr_problems(pr(), self.SOURCES), [])

@@ -100,6 +100,15 @@ class OutOfDateTest(unittest.TestCase):
         self.assertFalse(out_of_date(issue(parent=False, author="Bot", labels=["settings-drift"],
                                            login="akenon-studio-automation"), FORMS, BOARD))
 
+    def test_a_reason_out_of_step_is_synced_once_the_board_has_the_field(self):
+        waiting = issue(status="Waiting for human")
+        self.assertFalse(out_of_date(waiting, FORMS, BOARD))
+        self.assertTrue(out_of_date(waiting, FORMS, BOARD, reason_field=True))
+        self.assertFalse(out_of_date(issue(status="Waiting for human", reason="Waiting on"),
+                                     FORMS, BOARD, reason_field=True))
+        self.assertTrue(out_of_date(issue(status="In progress", reason="Waiting on"),
+                                    FORMS, BOARD, reason_field=True))  # Status changed by hand
+
     def test_a_bot_no_reason_applies_to_is_synced(self):
         self.assertTrue(out_of_date(issue(parent=False, author="Bot", labels=["settings-drift"]),
                                     FORMS, BOARD))

@@ -7,6 +7,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
+import bot_pr_review  # noqa: E402
 from bot_pr_review import board_changes, missing_source_label, needs_review  # noqa: E402
 
 MANAGED = {"platform", "handbook"}
@@ -82,6 +83,50 @@ class BoardChangesTest(unittest.TestCase):
     def test_problems_make_it_needs_fields_and_fixing_them_clears_it(self):
         self.assertEqual(self.changes(problems=["x"])[2], "Needs fields")
         self.assertEqual(self.changes([item("In review", "Needs fields")], ["needs-fields"])[2], "Review")
+
+
+class BoardPassTest(unittest.TestCase):
+    def setUp(self):
+        self.saved = {k: getattr(bot_pr_review, k) for k in
+                      ("find_board_fields", "report", "set_field", "set_reason", "graphql")}
+        self.calls = []
+        bot_pr_review.find_board_fields = lambda title: {"id": "B"}
+        bot_pr_review.report = lambda repo, n, p, problems, what: self.calls.append(("report", n, problems))
+        bot_pr_review.set_field = lambda board, item, f, v: self.calls.append((f, v))
+        bot_pr_review.set_reason = lambda board, item, cur, want: self.calls.append(("Reason", cur, want))
+        bot_pr_review.graphql = lambda q, **v: {"addProjectV2ItemById": {"item": {"id": "new"}}}
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(bot_pr_review, k, v)
+
+    def bot_pr(self, n=1, closes=0, items=(), labels=(), draft=False):
+        p = pr(labels=labels)
+        p.update(number=n, id=f"PR{n}", isDraft=draft, projectItems={"nodes": list(items)},
+                 closingIssuesReferences={"totalCount": closes})
+        return p
+
+    def test_a_new_renovate_pr_goes_on_in_review(self):
+        self.assertEqual(bot_pr_review.board_pass([self.bot_pr()], MANAGED, SOURCES, False), 0)
+        self.assertEqual(self.calls, [("report", 1, []), ("Status", "In review"),
+                                      ("Reason", None, "Review")])
+
+    def test_one_already_right_is_left_alone(self):
+        bot_pr_review.board_pass([self.bot_pr(items=[item("In review", "Review")])], MANAGED, SOURCES, False)
+        self.assertEqual(self.calls, [])
+
+    def test_one_that_stops_qualifying_is_taken_off(self):
+        bot_pr_review.board_pass([self.bot_pr(draft=True, items=[item("In review", "Review")])],
+                                 MANAGED, SOURCES, False)
+        self.assertEqual(self.calls, [("Reason", "Review", None)])
+
+    def test_one_failure_doesnt_stop_the_rest(self):
+        def boom(*a):
+            raise SystemExit("GraphQL error")
+        bot_pr_review.report = lambda repo, n, p, problems, what: boom() if n == 1 else None
+        failed = bot_pr_review.board_pass([self.bot_pr(1), self.bot_pr(2)], MANAGED, SOURCES, False)
+        self.assertEqual(failed, 1)
+        self.assertIn(("Reason", None, "Review"), self.calls)
 
 
 if __name__ == "__main__":
