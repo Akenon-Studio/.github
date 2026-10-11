@@ -599,7 +599,7 @@ def sync(repo, number, forms, board):
     """Run every check on one issue and update the board, label and comment. Returns a summary.
     A bot's status page (Renovate's dashboard) is left alone: it is not work (design 6.8)."""
     issue = load_issue(repo, number)
-    if status_page(issue["author"], issue["title"]):
+    if status_page(issue.get("author"), issue.get("title")):
         return {"issue": f"{repo}#{number}", "skipped": "a bot's status page, not work"}
     reopened = reopen_if_early(repo, number, issue)
     reclosed = not reopened and reclose_if_done(repo, number, issue)
