@@ -340,6 +340,7 @@ def fingerprint(files, claude_md=""):
                              capture_output=True, text=True, timeout=60).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return None
+    # nosemgrep: insecure-hash-algorithm-sha1 -- an identity fingerprint compared with our own earlier one, not security
     return hashlib.sha1(f"{out[0]}\n{claude_md}".encode()).hexdigest() if out else None
 
 
