@@ -36,7 +36,7 @@ import sys
 
 from board import graphql
 from one_issue import keep
-from rules import ORG, gh, load, managed_repos, try_gh
+from rules import ORG, gh, load, managed_repos, renovate_logins, try_gh
 
 REPO = f"{ORG}/.github-private"
 LABEL = "automation-failures"
@@ -45,7 +45,6 @@ FAILED = {"failure", "timed_out", "startup_failure"}
 RECENT = datetime.timedelta(days=40)  # a monthly workflow's last run is in range; a cron removed long ago isn't
 LANE_MARKER = "<!-- merge-lane -->"
 LANE_IDLE_DAYS = 2
-RENOVATE = "renovate[bot]"
 # Where Renovate looks for a repo's config (the first it finds wins)
 RENOVATE_CONFIGS = ("renovate.json", "renovate.json5", ".github/renovate.json",
                     ".github/renovate.json5", ".gitlab/renovate.json", ".gitlab/renovate.json5",
@@ -165,7 +164,7 @@ def renovate_problems(repo, issues, pages):
     issues there.
     `pages` is renovate_pages(): [dashboard title, config-error title]."""
     dashboard_title, config_title = pages
-    mine = [i for i in issues if (i.get("user") or {}).get("login") == RENOVATE
+    mine = [i for i in issues if (i.get("user") or {}).get("login") in renovate_logins()
             and "pull_request" not in i]
     problems = [f"{repo}: Renovate's config is broken, so it has stopped here: [{i['title']}]"
                 f"({i['html_url']})" for i in mine if i["title"] == config_title]
@@ -288,7 +287,9 @@ def report(path, now=None):
     renovate += [f"{repo}: no Renovate config, so Renovate doesn't update it (every repo extends "
                  "the shared preset, design 6.4)" for repo in state.get("no_config", [])]
     for repo in state["renovate"]:  # collect() found a Renovate config there
-        issues = try_gh(f"repos/{ORG}/{repo}/issues?creator={RENOVATE}&state=open&per_page=100")
+        found = [try_gh(f"repos/{ORG}/{repo}/issues?creator={login}&state=open&per_page=100")
+                 for login in renovate_logins()]
+        issues = None if None in found else [i for f in found for i in f]
         if issues is None:
             state["unread"].append(f"Renovate's issues in {repo}")
             continue

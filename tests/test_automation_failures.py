@@ -89,6 +89,10 @@ class RenovateTest(unittest.TestCase):
         self.assertIn("config is broken", problems[0])
         self.assertIn("no Renovate dashboard", problems[1])
 
+    def test_our_own_renovates_dashboard_counts_too(self):
+        problems, tick = renovate_problems("platform", [issue(PAGES[0], "## Open\n", login="akenon-studio-renovate[bot]")], PAGES)
+        self.assertEqual((problems, tick), ([], None))  # no Mend box: nothing to tick, nothing wrong
+
     def test_someone_elses_issue_with_the_title_doesnt_count(self):
         problems, _ = renovate_problems("x", [issue(PAGES[0], DASHBOARD, login="someone")], PAGES)
         self.assertIn("no Renovate dashboard", problems[0])
@@ -207,7 +211,7 @@ class ReportTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(state, f)
         with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform", "peras"],
-                                 try_gh=lambda p: issues.get(p.split("/")[2]),
+                                 try_gh=lambda p: issues.get(p.split("/")[2]) if "creator=renovate[bot]" in p else ([] if issues.get(p.split("/")[2]) is not None else None),
                                  keep=lambda repo, label, title, text, passed=None: calls.append(
                                      ("keep", repo, text)),
                                  gh=lambda *a, **k: self.fail("nothing to tick")):
@@ -229,7 +233,7 @@ class ReportTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(state, f)
         with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform", "peras"],
-                                 try_gh=lambda p: issues.get(p.split("/")[2]), keep=keep, gh=gh,
+                                 try_gh=lambda p: issues.get(p.split("/")[2]) if "creator=renovate[bot]" in p else ([] if issues.get(p.split("/")[2]) is not None else None), keep=keep, gh=gh,
                                  lane_prs=lambda now, managed: []):
             automation_failures.report(f.name, NOW)
         return calls

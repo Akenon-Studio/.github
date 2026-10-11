@@ -211,6 +211,11 @@ def status_page(author, title):
     return title in (bot_sources().get(login) or {}).get("status_pages", [])
 
 
+def renovate_logins():
+    """The REST logins (with [bot]) of every Renovate in rulesets/bots.json (design 6.4)."""
+    return [f"{login}[bot]" for login, s in bot_sources().items() if s.get("renovate")]
+
+
 def source_labels():
     """Every source label any bot's work carries."""
     return {label for s in bot_sources().values() for label in s["labels"]}

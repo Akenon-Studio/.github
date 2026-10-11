@@ -38,7 +38,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
         import json
         bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
         condition = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["if"]
-        self.assertIn("github.event.issue.user.login == 'renovate[bot]'", condition)
+        for login in (l for l, s in bots["sources"].items() if s.get("renovate")):
+            self.assertIn(f"github.event.issue.user.login == '{login}[bot]'", condition)
         for title in bots["sources"]["renovate"]["status_pages"]:
             self.assertIn(f"github.event.issue.title == '{title}'", condition)
         self.assertEqual(condition.count("github.event.issue.title =="),

@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 from one_issue import keep
-from rules import ORG, managed_repos, try_gh
+from rules import ORG, managed_repos, renovate_logins, try_gh
 
 REPO = f"{ORG}/.github"
 LABEL = "dependencies"
@@ -73,7 +73,7 @@ def renovate_titles(repo, cache):
         pages = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else None
         cache[repo] = None if pages is None else [
             p["title"] for page in pages for p in page
-            if (p.get("user") or {}).get("login") == "renovate[bot]"]
+            if (p.get("user") or {}).get("login") in renovate_logins()]
     return cache[repo]
 
 
