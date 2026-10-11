@@ -397,7 +397,8 @@ def problems_text(problems, what="issue"):
     """The text of the issue's (or, with what="PR", a bot PR's) one comment for these problems."""
     if not problems:
         return (f"{MARKER}\nAll required answers are filled in. Thanks." if what == "issue"
-                else f"{MARKER}\nFixed: nothing is missing now. Thanks.")
+                else f"{MARKER}\nNothing to fix now: this PR doesn't need to be on the board, or "
+                     "has what it needs.")
     return (f"{MARKER}\nThis {what} is missing something the board needs, so it is labelled "
             f"`{LABEL}`" + (" and kept out of planning views" if what == "issue" else "")
             + ". To fix:\n\n" + "\n".join(f"- {p}" for p in problems))

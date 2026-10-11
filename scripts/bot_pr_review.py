@@ -93,12 +93,13 @@ def on_board(board_id, pr):
 
 def board_changes(pr, board_id, problems):
     """What a bot's issue-less PR needs on the board: (its item as on_board() reads it, or None to
-    add it; Status to set, or None to keep its own; the Reason it should have). `problems` are
+    add it; Status to set, or None if it is already In review, which an open PR always is, even
+    one reopened after the board set Done; the Reason it should have). `problems` are
     reason.pr_problems()'s, which flag it."""
     found = on_board(board_id, pr)
     labels = {l["name"] for l in pr["labels"]["nodes"]} - {LABEL}
     want = reason.pr_reason(labels | ({LABEL} if problems else set()))
-    return found, (None if found and found[1] else "In review"), want
+    return found, (None if found and found[1] == "In review" else "In review"), want
 
 
 def put_on_board(pr, board, sources, dry_run):
@@ -148,7 +149,8 @@ def board_pass(prs, managed, sources, dry_run):
         if owner.lower() != ORG or name not in managed or not reason.is_bot(pr["author"]):
             continue
         qualifies = reason.pr_on_board(pr, rule)
-        if not qualifies and not pr["projectItems"]["nodes"]:
+        if not qualifies and not pr["projectItems"]["nodes"] and LABEL not in {
+                l["name"] for l in pr["labels"]["nodes"]}:
             continue
         try:
             board = board or find_board_fields(spec()["title"])

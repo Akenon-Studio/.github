@@ -445,6 +445,31 @@ class WantReasonTest(unittest.TestCase):
                                      "Waiting for human"), "New bug")
 
 
+class SyncReasonTest(unittest.TestCase):
+    def run_sync(self, problems, status):
+        import issue_fields
+        from unittest import mock
+        issue = {"state": "OPEN", "issueType": {"name": "Task"}, "body": body(**TASK),
+                 "labels": {"nodes": []}, "author": {"__typename": "User", "login": "someone"},
+                 "projectItems": {"nodes": [{"id": "item", "project": {"id": "B"},
+                                             "reason": {"name": "Waiting on"}}]}}
+        reasons = []
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=issue),
+                                 reopen_if_early=mock.Mock(return_value=False),
+                                 reclose_if_done=mock.Mock(return_value=False),
+                                 board_item=mock.Mock(return_value=("item", status)),
+                                 set_field=mock.Mock(), sync_epic=mock.Mock(), report=mock.Mock(),
+                                 epic_of=mock.Mock(return_value=None),
+                                 all_problems=mock.Mock(return_value=problems),
+                                 set_reason=lambda b, i, cur, want: reasons.append((cur, want))):
+            issue_fields.sync("Akenon-Studio/handbook", 1, FORMS, {"id": "B", "fields": {"nodes": []}})
+        return reasons
+
+    def test_sync_sets_the_reason_from_what_it_finds(self):
+        self.assertEqual(self.run_sync(["missing"], "Todo"), [("Waiting on", "Needs fields")])
+        self.assertEqual(self.run_sync([], "In progress"), [("Waiting on", None)])
+
+
 if __name__ == "__main__":
     unittest.main()
 

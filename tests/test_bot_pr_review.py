@@ -76,9 +76,10 @@ class BoardChangesTest(unittest.TestCase):
     def test_on_another_board_counts_as_not_on_ours(self):
         self.assertEqual(self.changes([item("Todo", board="other")]), (None, "In review", "Review"))
 
-    def test_a_status_someone_set_is_kept(self):
-        found, status, why = self.changes([item("Done", "Review")])
-        self.assertEqual((found, status, why), (("item", "Done", "Review"), None, "Review"))
+    def test_in_review_is_kept_and_anything_else_reset(self):
+        found, status, why = self.changes([item("In review", "Review")])
+        self.assertEqual((found, status, why), (("item", "In review", "Review"), None, "Review"))
+        self.assertEqual(self.changes([item("Done", "Review")])[1], "In review")  # reopened
 
     def test_problems_make_it_needs_fields_and_fixing_them_clears_it(self):
         self.assertEqual(self.changes(problems=["x"])[2], "Needs fields")
@@ -119,6 +120,10 @@ class BoardPassTest(unittest.TestCase):
         bot_pr_review.board_pass([self.bot_pr(draft=True, items=[item("In review", "Review")])],
                                  MANAGED, SOURCES, False)
         self.assertEqual(self.calls, [("Reason", "Review", None)])
+
+    def test_a_flagged_pr_off_the_board_is_unflagged_when_it_stops_qualifying(self):
+        bot_pr_review.board_pass([self.bot_pr(draft=True, labels=["needs-fields"])], MANAGED, SOURCES, False)
+        self.assertEqual(self.calls, [("report", 1, [])])
 
     def test_one_failure_doesnt_stop_the_rest(self):
         def boom(*a):
