@@ -296,7 +296,12 @@ def report(path, now=None):
         renovate += problems
         if dashboard:
             tick.append((repo, dashboard))
-    lane = lane_prs(now, set(managed))
+    try:
+        lane = lane_prs(now, set(managed))
+    except SystemExit as e:  # graphql() exits on an error: say so, and still file the rest
+        print(f"::warning::couldn't search the merge lane's PRs: {e}")
+        lane = []
+        state["unread"].append("PRs the merge lane took out (the search failed)")
     print(keep(REPO, LABEL, TITLE, body(sections(state, renovate, lane)),
                passed="Nothing failed unseen any more. Closing."))
     # After the report, so a failed edit can't stop it: Renovate runs again and unticks the box.

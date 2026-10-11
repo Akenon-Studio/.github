@@ -201,6 +201,19 @@ class CollectTest(unittest.TestCase):
 
 
 class ReportTest(unittest.TestCase):
+    def run_report_unpatched_lane(self, issues):
+        calls = []
+        state = {"runs": [], "secrets": [], "unread": [], "renovate": ["platform", "peras"]}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(state, f)
+        with mock.patch.multiple(automation_failures, managed_repos=lambda: ["platform", "peras"],
+                                 try_gh=lambda p: issues.get(p.split("/")[2]),
+                                 keep=lambda repo, label, title, text, passed=None: calls.append(
+                                     ("keep", repo, text)),
+                                 gh=lambda *a, **k: self.fail("nothing to tick")):
+            automation_failures.report(f.name, NOW)
+        return calls
+
     def run_report(self, issues, fresh_body):
         calls = []
         state = {"runs": [], "secrets": [], "unread": [], "renovate": ["platform", "peras"]}
@@ -232,6 +245,13 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(len(patch), 1)
         self.assertIn("newer", patch[0][3]["body"])  # ticked in the copy read just now
         self.assertIn("- [x] <!-- manual job -->", patch[0][3]["body"])
+
+    def test_a_failed_lane_search_is_listed_and_the_rest_still_filed(self):
+        def boom(now, managed):
+            raise SystemExit("GraphQL error")
+        with mock.patch.object(automation_failures, "lane_prs", boom):
+            calls = self.run_report_unpatched_lane({"platform": [], "peras": []})
+        self.assertIn("PRs the merge lane took out (the search failed)", calls[0][2])
 
     def test_no_tick_if_renovate_ticked_meanwhile(self):
         calls = self.run_report({"platform": [issue(PAGES[0], DASHBOARD)], "peras": []},
