@@ -9,8 +9,8 @@
 # "security-scan / code" is the scans that read only the repo:
 #   secrets: gitleaks over the full history, so a key committed and then deleted still fails. A
 #     false positive is allowed in that repo's .gitleaks.toml or with a `gitleaks:allow` comment.
-#   semgrep: Semgrep community edition with its default rules (design 6.4). It fails on ERROR and
-#     WARNING findings; every finding, INFO included, is listed in the job summary. A false positive
+#   semgrep: Semgrep community edition with its default rules (design 6.4). It fails on every finding
+#     but INFO (and LOW, INVENTORY, EXPERIMENT); every finding is listed in the job summary. A false positive
 #     is allowed with a `nosemgrep: <rule id>` comment on the line or the one above, saying why.
 # "security-scan / dependencies" is the scans that need the lockfile:
 #   audit: `pnpm audit` for high and critical advisories (Node from the repo's .nvmrc).
@@ -79,9 +79,9 @@ jobs:
           python3 - "$RUNNER_TEMP/semgrep.json" <<'PY'
           import json, os, sys
           results = json.load(open(sys.argv[1]))["results"]
-          blocking = {"ERROR", "WARNING"}
-          results.sort(key=lambda r: (r["extra"]["severity"] not in blocking, r["path"], r["start"]["line"]))
-          errors = [r for r in results if r["extra"]["severity"] in blocking]
+          minor = {"INFO", "LOW", "INVENTORY", "EXPERIMENT"}  # listed, not blocking; any other blocks
+          results.sort(key=lambda r: (r["extra"]["severity"] in minor, r["path"], r["start"]["line"]))
+          errors = [r for r in results if r["extra"]["severity"] not in minor]
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
               out.write(f"### Semgrep: {len(results)} finding(s), {len(errors)} blocking\n\n")
               for r in results:
