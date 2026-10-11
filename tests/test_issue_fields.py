@@ -508,6 +508,11 @@ class StatusPageSyncTest(unittest.TestCase):
         self.assertFalse(flagged_status_page(self.DASH, "B"))
         self.assertTrue(flagged_status_page(dict(self.DASH, labels={"nodes": [{"name": "needs-fields"}]}), "B"))
         self.assertTrue(flagged_status_page(dict(self.DASH, projectItems={"nodes": [{"id": "I", "project": {"id": "B"}}]}), "B"))
+        import issue_fields
+        stale = dict(self.DASH, comments={"nodes": [{"body": issue_fields.MARKER + "\nmissing"}]})
+        self.assertTrue(flagged_status_page(stale, "B"))  # only the old comment is left
+        done = dict(self.DASH, comments={"nodes": [{"body": issue_fields.STATUS_PAGE_TEXT}]})
+        self.assertFalse(flagged_status_page(done, "B"))  # cleaned: not synced again on every sweep
         self.assertFalse(flagged_status_page(dict(self.DASH, title="chore(deps): x",
                                                   labels={"nodes": [{"name": "needs-fields"}]}), "B"))
 
