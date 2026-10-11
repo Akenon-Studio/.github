@@ -9,7 +9,8 @@
     "unit"
   ],
   "platform": [
-    "checks"
+    "checks",
+    "desktop-package"
   ],
   "animations": [
     "checks"
