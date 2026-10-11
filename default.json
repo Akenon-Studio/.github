@@ -34,6 +34,12 @@
       "groupSlug": "non-major"
     },
     {
+      "description": "Every repo calls our shared workflows at @main on purpose, so a fix there reaches every repo at once (design 6.2): never pin or update them (.github#143).",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["akenon-studio/.github", "Akenon-Studio/.github"],
+      "enabled": false
+    },
+    {
       "description": "three.js is part of the animation contract shared by platform and animations: both move together, by hand (platform#53).",
       "matchPackageNames": ["three", "@types/three"],
       "enabled": false
