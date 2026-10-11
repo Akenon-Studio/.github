@@ -16,7 +16,8 @@
     "checks"
   ],
   "peras": [
-    "workspace-hooks"
+    "workspace-hooks",
+    "checks"
   ],
   "hardware": [
     "lfs",
