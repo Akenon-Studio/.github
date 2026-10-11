@@ -164,6 +164,8 @@ class BodyTest(unittest.TestCase):
         self.assertIn("**Scheduled runs that failed**", text)
         self.assertIn("**Couldn't check**", text)
         self.assertNotIn("merge lane", text.split("### Why")[0])
+        # each section starts its own paragraph, so its heading doesn't join the list above (#145)
+        self.assertIn("\n\n**Couldn't check**", text)
 
 
 class CollectTest(unittest.TestCase):

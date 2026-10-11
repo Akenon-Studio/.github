@@ -7,11 +7,13 @@ errors, which the public .github repo must not. It lists:
 
 - **Scheduled workflow runs** whose latest finished run failed, for every active workflow in every
   managed repo: GitHub emails one person at most.
-- **Renovate problems**, which Mend-hosted Renovate shows only on Mend's site and has no API for:
-  each repo's dashboard issue (its "Repository problems" section), any config-error issue Renovate
-  opened, a repo with no dashboard, and a dashboard whose run-again box is still ticked. The report
-  ticks that box on each run, so Renovate runs again and clears it; still ticked a day later means
-  Renovate isn't running there.
+- **Renovate problems**: each repo's dashboard issue (its "Repository problems" section), any
+  config-error issue Renovate opened, a repo with no dashboard or no Renovate config, and a repo
+  with dashboards from both Renovates. Mend's Renovate shows these only on Mend's site and has no
+  API, so on a Mend dashboard the report also ticks the run-again box each run: Renovate runs again
+  and clears it, and still ticked a day later means it isn't running there. Platform's Renovate
+  runs in its own workflow (design 6.4): its dashboard has no such box, and a failed run shows above
+  as a failed scheduled run.
 - **PRs the merge lane took out** with no activity since (design 6.2): no person commented or
   reviewed, and nothing was pushed, after the lane's comment, LANE_IDLE_DAYS on. Other bots'
   comments (the conflict notice that follows a conflict) don't count as activity.
@@ -178,7 +180,8 @@ def renovate_problems(repo, issues, pages):
     dashboard = next((i for i in sorted(dashboards, key=lambda i: i["user"]["login"] == MEND)), None)
     if dashboard is None:
         return problems + [f"{repo}: no Renovate dashboard issue, so Renovate hasn't run here since "
-                           "it was turned on, or isn't installed (Mend's site has its logs)"], None
+                           "it was turned on, or isn't installed (its logs are on Mend's site, or in the repo's "
+                           "renovate workflow runs)"], None
     link = f"[dashboard]({dashboard['html_url']})"
     problems += [f"{repo}: {p} ({link})" for p in repository_problems(dashboard["body"])]
     # Only Mend's dashboard has the run-again box; our own Renovate's failed runs are scheduled runs
@@ -246,7 +249,7 @@ def body(sections):
 
 These failed in the automation, and nothing else tells anyone:
 
-{chr(10).join(parts)}
+{(chr(10) * 2).join(parts)}
 
 ### Why
 

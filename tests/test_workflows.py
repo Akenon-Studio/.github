@@ -46,6 +46,20 @@ class ReusableWorkflowsTest(unittest.TestCase):
                          len(bots["sources"]["renovate"]["status_pages"]))
         self.assertNotIn("pull_request", condition)
 
+    def test_ai_review_skips_every_renovate(self):
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        wanted = REUSABLE["ai-review.yml"]["jobs"]["review"]["env"]["WANTED"]
+        for login in (l for l, s in bots["sources"].items() if s.get("renovate")):
+            self.assertIn(f"github.event.pull_request.user.login != '{login}[bot]'", wanted)
+
+    def test_every_renovate_has_the_same_status_pages(self):
+        # the issue-fields condition, the failures report and status_page() each read one copy
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        pages = {tuple(s["status_pages"]) for s in bots["sources"].values() if s.get("renovate")}
+        self.assertEqual(len(pages), 1)
+
     # ai-review is called from main even here: its sign-in trusts only the main copy (ai-review.yml).
     # merge-lane too: it holds the Merge Lane app's key, so only main's copy runs (merge-lane.yml).
     FROM_MAIN = {"ai-review.yml", "merge-lane.yml"}
