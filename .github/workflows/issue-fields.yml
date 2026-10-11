@@ -38,6 +38,13 @@ concurrency:
 
 jobs:
   sync:
+    # Renovate's status pages (its dashboard and config-error issue) are not work: no job at all
+    # (design 6.8). The titles are rulesets/bots.json's `status_pages`; tests/test_workflows.py
+    # checks they match.
+    if: >-
+      !(github.event.issue.user.login == 'renovate[bot]' &&
+        (github.event.issue.title == 'Dependency Dashboard' ||
+         github.event.issue.title == 'Action Required: Fix Renovate Configuration'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -225,5 +225,14 @@ class BothSidesTest(unittest.TestCase):
         self.assertEqual(both_sides(["b", "a", "c"], ["c", "a", "z"]), ["a", "c"])
 
 
+class StatusPageTest(unittest.TestCase):
+    def test_renovates_dashboard_is_not_swept(self):
+        from issue_sweep import in_managed_repo
+        dash = {"repository": {"nameWithOwner": "Akenon-Studio/handbook"}, "title": "Dependency Dashboard",
+                "author": {"__typename": "Bot", "login": "renovate"}}
+        self.assertFalse(in_managed_repo(dash, {"handbook"}))
+        self.assertTrue(in_managed_repo({**dash, "title": "chore(deps): x"}, {"handbook"}))
+
+
 if __name__ == "__main__":
     unittest.main()

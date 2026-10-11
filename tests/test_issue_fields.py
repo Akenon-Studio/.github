@@ -449,7 +449,7 @@ class SyncReasonTest(unittest.TestCase):
     def run_sync(self, problems, status):
         import issue_fields
         from unittest import mock
-        issue = {"state": "OPEN", "issueType": {"name": "Task"}, "body": body(**TASK),
+        issue = {"state": "OPEN", "title": "x", "issueType": {"name": "Task"}, "body": body(**TASK),
                  "labels": {"nodes": []}, "author": {"__typename": "User", "login": "someone"},
                  "projectItems": {"nodes": [{"id": "item", "project": {"id": "B"},
                                              "reason": {"name": "Waiting on"}}]}}
@@ -468,6 +468,18 @@ class SyncReasonTest(unittest.TestCase):
     def test_sync_sets_the_reason_from_what_it_finds(self):
         self.assertEqual(self.run_sync(["missing"], "Todo"), [("Waiting on", "Needs fields")])
         self.assertEqual(self.run_sync([], "In progress"), [("Waiting on", None)])
+
+
+class StatusPageSyncTest(unittest.TestCase):
+    def test_sync_leaves_renovates_dashboard_alone(self):
+        import issue_fields
+        from unittest import mock
+        dash = {"title": "Dependency Dashboard", "author": {"__typename": "Bot", "login": "renovate"}}
+        touch = mock.Mock(side_effect=AssertionError("touched"))
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=dash),
+                                 reopen_if_early=touch, board_item=touch, report=touch, set_field=touch):
+            result = issue_fields.sync("Akenon-Studio/handbook", 1, FORMS, {"id": "B"})
+        self.assertIn("skipped", result)
 
 
 class SetReasonTest(unittest.TestCase):

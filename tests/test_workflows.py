@@ -23,11 +23,27 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_the_shared_checks_are_reusable(self):
         self.assertLessEqual({"pr-title.yml", "issue-fields.yml", "security-scan.yml"}, set(REUSABLE))
 
+    # issue-fields isn't a required check, and its condition reads only the issue, which a PR
+    # event doesn't have: it skips Renovate's status pages (design 6.8), never a PR.
+    MAY_SKIP = {("issue-fields.yml", "sync")}
+
     def test_no_job_is_skipped(self):
         # a skipped job reports "skipped", which passes a required check
         for name, workflow in REUSABLE.items():
             for job_id, job in workflow["jobs"].items():
-                self.assertNotIn("if", job, f"{name}: job {job_id}")
+                if (name, job_id) not in self.MAY_SKIP:
+                    self.assertNotIn("if", job, f"{name}: job {job_id}")
+
+    def test_issue_fields_skips_exactly_renovates_status_pages(self):
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        condition = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["if"]
+        self.assertIn("github.event.issue.user.login == 'renovate[bot]'", condition)
+        for title in bots["sources"]["renovate"]["status_pages"]:
+            self.assertIn(f"github.event.issue.title == '{title}'", condition)
+        self.assertEqual(condition.count("github.event.issue.title =="),
+                         len(bots["sources"]["renovate"]["status_pages"]))
+        self.assertNotIn("pull_request", condition)
 
     # ai-review is called from main even here: its sign-in trusts only the main copy (ai-review.yml).
     # merge-lane too: it holds the Merge Lane app's key, so only main's copy runs (merge-lane.yml).
