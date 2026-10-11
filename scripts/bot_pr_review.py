@@ -12,7 +12,8 @@ It also adds a listed bot's source label (rulesets/bots.json) to its PR when the
 them, so every bot PR says where it came from (design 6.8).
 
 A bot's PR that closes no issue (Renovate's, release-please's Release PR) has no issue to carry it
-on the board, so it goes on the board itself: Status In review, Reason Review, so it shows in Needs
+on the board, so it goes on the board itself: Status In review, Reason Review (Release for the
+Release PR, which merging cuts a release, design 6.3), so it shows in Needs
 a human (design 6.6, 6.8; scripts/reason.py). The board marks it Done when it merges or closes. One
 from a bot not listed with `no_issue` in rulesets/bots.json is flagged `needs-fields` with a comment
 saying what to fix, as issue_fields.py flags an issue, and gets Reason Needs fields. A PR with an
@@ -100,7 +101,7 @@ def board_changes(pr, board_id, problems):
     reason.pr_problems()'s, which flag it."""
     found = on_board(board_id, pr)
     labels = {l["name"] for l in pr["labels"]["nodes"]} - {LABEL}
-    want = reason.pr_reason(labels | ({LABEL} if problems else set()))
+    want = reason.pr_reason(labels | ({LABEL} if problems else set()), pr["author"], reason.rules())
     return found, ("In review" if not found or found[1] in (None, "Todo", "Done") else None), want
 
 
