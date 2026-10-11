@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own. The schedule is \"at any time\" only for the first run (#118); #119 puts it back to before 9am on monday (design 6.4).",
+  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own. The schedule is \"at any time\" only for the first run (#118); #119 puts it back to before 9am on monday (design 6.4). `env` runs pnpm with one worker so platform's lockfile updates fit Mend-hosted Renovate's 3 GB (.github#123); Mend allows both names (`global:safeEnv`).",
   "extends": [
     "config:recommended",
     ":semanticCommits",
@@ -67,7 +67,7 @@
     {
       "description": "The workspace-wide tools move together in one PR, so the packages never run mixed versions.",
       "matchRepositories": ["Akenon-Studio/platform"],
-      "matchPackageNames": ["typescript", "vitest", "@vitest/**", "eslint", "@eslint/**", "eslint-plugin-*", "eslint-config-*", "typescript-eslint", "@typescript-eslint/**", "turbo", "prettier", "knip", "dependency-cruiser", "@stryker-mutator/**"],
+      "matchPackageNames": ["typescript", "vitest", "@vitest/**", "eslint", "@eslint/**", "eslint-plugin-*", "eslint-config-*", "!eslint-config-next", "typescript-eslint", "@typescript-eslint/**", "turbo", "prettier", "knip", "dependency-cruiser", "@stryker-mutator/**"],
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "groupName": "toolchain",
       "groupSlug": "toolchain",
