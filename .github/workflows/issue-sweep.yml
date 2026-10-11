@@ -3,8 +3,9 @@
 # added or removed, a parent closed while its sub-issues are open (it is reopened). Fixes the
 # `needs-fields` label and comment like the issue-fields workflow does. Posts one comment on each
 # open PR that conflicts with its base branch, mentioning its assignees, and edits it to say
-# "Resolved" once it merges cleanly. Also asks the automation owners team to review each bot's open
-# PR (scripts/bot_pr_review.py, design 6.8).
+# "Resolved" once it merges cleanly. Keeps each issue's Reason board field in step (scripts/reason.py).
+# Also asks the automation owners team to review each bot's open PR, and puts one that closes no
+# issue on the board in In review with Reason Review (scripts/bot_pr_review.py, design 6.6, 6.8).
 #
 # Logs in as the org's GitHub App (org variable AKENON_APP_ID, org secret AKENON_APP_PRIVATE_KEY),
 # like issue-fields: the Actions token cannot write to other repos' issues or the org board.
@@ -39,14 +40,15 @@ jobs:
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
+      - name: Install PyYAML (both scripts read the issue forms)
+        run: pip install --quiet pyyaml
+
       - name: Re-check issues and conflicting PRs
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          pip install --quiet pyyaml
-          python3 scripts/issue_sweep.py
+        run: python3 scripts/issue_sweep.py
 
-      - name: Ask the automation owners to review bot PRs
+      - name: Ask the automation owners to review bot PRs, and put them on the board
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}

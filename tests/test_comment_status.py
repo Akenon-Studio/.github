@@ -44,12 +44,13 @@ class DecideTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(comment_status, k) for k in
-                      ("find_board_fields", "load_issue", "board_item", "set_field", "gh", "try_gh")}
+                      ("find_board_fields", "load_issue", "board_item", "set_field", "sync_reason", "gh", "try_gh")}
         self.calls = []
         comment_status.find_board_fields = lambda title: {"id": "B"}
         comment_status.load_issue = lambda repo, n: {"assignedActors": {"nodes": [{"login": "x"}]}}
         comment_status.board_item = lambda board, issue: ("I", "In progress")
         comment_status.set_field = lambda board, item, field, value: self.calls.append((field, value))
+        comment_status.sync_reason = lambda board, item, issue, status: self.calls.append(("Reason for", status))
         comment_status.gh = lambda path, *a, body=None: self.calls.append((path, body))
         self.writers = set()
         comment_status.try_gh = lambda path: {"permission": "write" if path.split("/")[-2] in self.writers else "read"}
@@ -70,7 +71,8 @@ class MainTest(unittest.TestCase):
     def test_a_waiting_comment(self):
         self.assertEqual(self.run_event("Waiting on: @partner"), 0)
         self.assertEqual(self.calls, [("repos/Akenon-Studio/platform/issues/5/assignees", {"assignees": ["partner"]}),
-                                      ("Status", "Waiting for human")])
+                                      ("Status", "Waiting for human"),
+                                      ("Reason for", "Waiting for human")])
 
     def test_a_private_member_with_write_access_counts(self):
         self.writers = {"someone"}
