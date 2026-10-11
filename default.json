@@ -12,7 +12,7 @@
   "labels": ["dependencies"],
   "automerge": false,
   "platformAutomerge": false,
-  "prConcurrentLimit": 5,
+  "prConcurrentLimit": 10,
   "rebaseWhen": "conflicted",
   "minimumReleaseAge": "3 days",
   "env": { "PNPM_WORKERS": "1", "PNPM_MAX_WORKERS": "1" },
@@ -28,7 +28,7 @@
   },
   "packageRules": [
     {
-      "description": "Minor and patch updates in one weekly PR per repo, to keep CI minutes down.",
+      "description": "Minor and patch updates grouped weekly, to keep CI minutes down: one PR per repo (platform: a few, below).",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "groupName": "non-major dependencies",
       "groupSlug": "non-major"
@@ -50,12 +50,35 @@
       "allowedVersions": "<7"
     },
     {
-      "description": "platform's grouped update, in one lockfile pass, ran out of Mend's 3 GB (.github#123): there each app and package gets its own branch; the root and the workflows stay in one.",
+      "description": "platform's single grouped update ran out of Mend-hosted Renovate's 3 GB in one lockfile pass (.github#123), so it is split: one branch per app, one for the packages, one for the root and workflows, and the toolchain below.",
       "matchRepositories": ["Akenon-Studio/platform"],
-      "matchFileNames": ["apps/**", "packages/**"],
+      "matchFileNames": ["apps/**"],
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "additionalBranchPrefix": "{{parentDir}}-",
       "commitMessageSuffix": "({{parentDir}})"
+    },
+    {
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchFileNames": ["packages/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "non-major dependencies (packages)",
+      "groupSlug": "non-major-packages"
+    },
+    {
+      "description": "The workspace-wide tools move together in one PR, so the packages never run mixed versions.",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchPackageNames": ["typescript", "vitest", "@vitest/**", "eslint", "@eslint/**", "eslint-plugin-*", "eslint-config-*", "typescript-eslint", "@typescript-eslint/**", "turbo", "prettier", "knip", "dependency-cruiser", "@stryker-mutator/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "toolchain",
+      "groupSlug": "toolchain",
+      "additionalBranchPrefix": "",
+      "commitMessageSuffix": ""
+    },
+    {
+      "description": "Lock-file maintenance rebuilds platform's whole lockfile in one pass, more than Mend's 3 GB allows: off there until it fits (.github#124).",
+      "matchRepositories": ["Akenon-Studio/platform"],
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "enabled": false
     }
   ]
 }
