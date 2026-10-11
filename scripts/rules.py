@@ -201,6 +201,16 @@ def bot_sources():
     return load("bots.json")["sources"]
 
 
+def status_page(author, title):
+    """True for an issue a bot opens as its own status page, not work (rulesets/bots.json
+    `status_pages`: Renovate's dashboard and config-error issue, design 6.8). `author` is the
+    GraphQL or REST actor."""
+    login = bot_login((author or {}).get("login"))
+    if (author or {}).get("__typename", (author or {}).get("type")) != "Bot":
+        return False
+    return title in (bot_sources().get(login) or {}).get("status_pages", [])
+
+
 def source_labels():
     """Every source label any bot's work carries."""
     return {label for s in bot_sources().values() for label in s["labels"]}

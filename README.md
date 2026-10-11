@@ -22,6 +22,7 @@ never code, secrets or product plans.
 | `scripts/issue_sweep.py` | Every 15 minutes: re-checks issues, and posts one comment on each open PR that conflicts with its base branch |
 | `scripts/ai_review.py` | The advisory AI review on every PR (`.github/workflows/ai-review.yml`, design 6.4) |
 | `.github/workflows/ai-scorecard.yml` | Monthly: `scripts/ai_scorecard.py` reports the AI review's late catches, false alarms, rounds and cost per PR as one `ai-scorecard` issue |
+| `scripts/automation_failures.py` | Run daily by `settings-check.yml`: keeps one `automation-failures` issue listing failed scheduled runs, Renovate's problems, PRs the merge lane left out, and secret-scanning alerts |
 | `scripts/bot_pr_review.py` | Run by the issue sweep: asks the automation owners to review each bot's open PR, and puts one that closes no issue on the board in In review |
 | `profile/README.md` | The public org profile |
 | `SECURITY.md`, `CONTRIBUTING.md` | Org-wide security policy and contribution rules |

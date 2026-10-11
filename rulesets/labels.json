@@ -1,5 +1,5 @@
 {
-  "_comment": "Labels every managed repo has ('all'), plus a repo's own. The issue forms add their label; the automation adds needs-fields, settings-drift, claude-md-drift and ai-scorecard; a person adds confirmed (design 6.1). apply-rules.py creates or updates them, verify-settings.py checks name, colour and description. Labels not listed (GitHub's defaults) are left alone.",
+  "_comment": "Labels every managed repo has ('all'), plus a repo's own. The issue forms add their label; the automation adds needs-fields, settings-drift, claude-md-drift, ai-scorecard and automation-failures; a person adds confirmed (design 6.1). apply-rules.py creates or updates them, verify-settings.py checks name, colour and description. Labels not listed (GitHub's defaults) are left alone.",
   "all": [
     {"name": "epic", "color": "0e8a16", "description": "Epic form"},
     {"name": "task", "color": "ededed", "description": "Task form"},
@@ -21,6 +21,7 @@
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},
     {"name": "claude-md-drift", "color": "b60205", "description": "A CLAUDE.md names a design section that no longer exists"},
     {"name": "peras-tests-broken", "color": "b60205", "description": "A change to .github's main broke peras's agent-hook tests"},
-    {"name": "ai-scorecard", "color": "1d76db", "description": "The monthly AI review scorecard (design 6.4)"}
+    {"name": "ai-scorecard", "color": "1d76db", "description": "The monthly AI review scorecard (design 6.4)"},
+    {"name": "automation-failures", "color": "b60205", "description": "Automation that failed with no one told: scheduled runs, Renovate, the merge lane, secrets (design 6.8)"}
   ]
 }

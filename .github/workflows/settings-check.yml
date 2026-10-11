@@ -1,7 +1,11 @@
 # Daily: compares live GitHub settings with rulesets/ (scripts/verify-settings.py) and keeps one
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
 # (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
-# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts.
+# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. Last, keeps
+# one `automation-failures` issue listing what failed with no one told: scheduled runs, Renovate's
+# problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
+# secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
+# Actions: read and Secret scanning alerts: read for those; without them the issue says so.
 # Reports only: an owner fixes drift by re-running scripts/apply-rules.py.
 #
 # Reads settings as the read-only "Akenon Studio Settings" app, whose key lives only in this repo's
@@ -85,3 +89,17 @@ jobs:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
           PR_READ_TOKEN: ${{ steps.pr-read.outputs.token }}
         run: python3 scripts/stale_alerts.py report alerts.json
+
+      # Last, and whatever happened above, so a failure there can't hide these (design 6.8).
+      - name: List failed scheduled runs and secret-scanning alerts
+        id: failures
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ steps.settings.outputs.token }}
+        run: python3 scripts/automation_failures.py collect failures.json
+
+      - name: Open, update or close the automation failures issue
+        if: ${{ !cancelled() && steps.failures.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ steps.automation.outputs.token }}
+        run: python3 scripts/automation_failures.py report failures.json

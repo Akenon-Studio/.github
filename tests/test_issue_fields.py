@@ -449,7 +449,7 @@ class SyncReasonTest(unittest.TestCase):
     def run_sync(self, problems, status):
         import issue_fields
         from unittest import mock
-        issue = {"state": "OPEN", "issueType": {"name": "Task"}, "body": body(**TASK),
+        issue = {"state": "OPEN", "title": "x", "issueType": {"name": "Task"}, "body": body(**TASK),
                  "labels": {"nodes": []}, "author": {"__typename": "User", "login": "someone"},
                  "projectItems": {"nodes": [{"id": "item", "project": {"id": "B"},
                                              "reason": {"name": "Waiting on"}}]}}

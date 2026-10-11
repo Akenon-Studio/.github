@@ -28,7 +28,7 @@ from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems,
                           epic_stale, load_forms, problems_text, reason_on, reclose_due, status_on,
                           sync, want_reason)
 from reason import FIELD as REASON_FIELD
-from rules import ORG, automation_owners, gh, managed_repos, try_gh
+from rules import ORG, automation_owners, gh, managed_repos, status_page, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
 ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body }} }} }}"
@@ -81,8 +81,10 @@ def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
 
 
 def in_managed_repo(issue, managed):
+    """True for an issue or PR in a managed repo, a bot's status page aside (design 6.8)."""
     owner, name = issue["repository"]["nameWithOwner"].split("/")
-    return owner.lower() == ORG and name in managed
+    return (owner.lower() == ORG and name in managed
+            and not status_page(issue.get("author"), issue.get("title")))
 
 
 def who_to_tell(pr):
