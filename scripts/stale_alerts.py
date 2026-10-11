@@ -71,9 +71,10 @@ def renovate_titles(repo, cache):
                               f"repos/{ORG}/{repo}/pulls?state=open&per_page=100"],
                              capture_output=True, text=True, env=env)
         pages = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else None
+        logins = renovate_logins()
         cache[repo] = None if pages is None else [
             p["title"] for page in pages for p in page
-            if (p.get("user") or {}).get("login") in renovate_logins()]
+            if (p.get("user") or {}).get("login") in logins]
     return cache[repo]
 
 

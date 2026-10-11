@@ -45,6 +45,7 @@ FAILED = {"failure", "timed_out", "startup_failure"}
 RECENT = datetime.timedelta(days=40)  # a monthly workflow's last run is in range; a cron removed long ago isn't
 LANE_MARKER = "<!-- merge-lane -->"
 LANE_IDLE_DAYS = 2
+MEND = "renovate[bot]"  # Mend's Renovate; the others in bots.json run in our own workflows
 # Where Renovate looks for a repo's config (the first it finds wins)
 RENOVATE_CONFIGS = ("renovate.json", "renovate.json5", ".github/renovate.json",
                     ".github/renovate.json5", ".gitlab/renovate.json", ".gitlab/renovate.json5",
@@ -164,17 +165,24 @@ def renovate_problems(repo, issues, pages):
     issues there.
     `pages` is renovate_pages(): [dashboard title, config-error title]."""
     dashboard_title, config_title = pages
-    mine = [i for i in issues if (i.get("user") or {}).get("login") in renovate_logins()
+    logins = renovate_logins()
+    mine = [i for i in issues if (i.get("user") or {}).get("login") in logins
             and "pull_request" not in i]
     problems = [f"{repo}: Renovate's config is broken, so it has stopped here: [{i['title']}]"
                 f"({i['html_url']})" for i in mine if i["title"] == config_title]
-    dashboard = next((i for i in mine if i["title"] == dashboard_title), None)
+    dashboards = [i for i in mine if i["title"] == dashboard_title]
+    if len({i["user"]["login"] for i in dashboards}) > 1:
+        problems.append(f"{repo}: two Renovates keep a dashboard here, Mend's and our own; only one "
+                        "should run on a repo (design 6.4): close the one that no longer runs")
+    # Our own Renovate's first: it runs where Mend's doesn't fit, so it is the live one
+    dashboard = next((i for i in sorted(dashboards, key=lambda i: i["user"]["login"] == MEND)), None)
     if dashboard is None:
         return problems + [f"{repo}: no Renovate dashboard issue, so Renovate hasn't run here since "
                            "it was turned on, or isn't installed (Mend's site has its logs)"], None
     link = f"[dashboard]({dashboard['html_url']})"
     problems += [f"{repo}: {p} ({link})" for p in repository_problems(dashboard["body"])]
-    box = run_again(dashboard["body"])
+    # Only Mend's dashboard has the run-again box; our own Renovate's failed runs are scheduled runs
+    box = run_again(dashboard["body"]) if dashboard["user"]["login"] == MEND else None
     if box is None:
         return problems, None
     if box[0]:
