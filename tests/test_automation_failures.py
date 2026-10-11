@@ -161,13 +161,22 @@ class CollectTest(unittest.TestCase):
                      "updated_at": "2026-10-01T00:00:00Z"}]}
             if "/runs?" in path:
                 return {"workflow_runs": [run("failure")]}
-            return [[]]  # secret alerts: none
+            self.assertIn("hide_secret=true", path)  # never fetch the secret itself
+            return [[{"repository": {"name": "a"}, "secret_type": "k", "html_url": "u",
+                      "created_at": "t"},
+                     {"repository": {"name": "old-repo"}, "secret_type": "k", "html_url": "u",
+                      "created_at": "t"}]]
         set_up = {"a": True, "b": False, "c": None}
         with mock.patch.multiple(automation_failures, managed_repos=lambda: ["a", "b", "c"],
                                  renovate_set_up=lambda r: set_up[r], try_gh=try_gh), \
-                tempfile.NamedTemporaryFile(suffix=".json") as f:
+                tempfile.NamedTemporaryFile(suffix=".json") as f, \
+                mock.patch("sys.stdout") as out:
             automation_failures.collect(f.name, NOW)
             state = json.load(open(f.name))
+        printed = "".join(c.args[0] for c in out.write.call_args_list)
+        self.assertNotIn("secret", printed)  # this log is public
+        self.assertEqual([a["repo"] for a in state["secrets"]], ["a"])  # managed repos only
+        self.assertEqual(state["no_config"], ["b"])
         self.assertEqual(state["renovate"], ["a"])
         self.assertEqual(len(state["unread"]), 1)
         self.assertIn("whether Renovate is set up in c", state["unread"][0])
@@ -179,6 +188,16 @@ class CollectTest(unittest.TestCase):
         self.assertTrue(renovate_set_up("x", lambda r, p: p == ".github/renovate.json"))
         self.assertFalse(renovate_set_up("x", lambda r, p: False))
         self.assertIsNone(renovate_set_up("x", lambda r, p: None if p == "renovate.json" else False))
+
+    def test_has_file_tells_missing_from_unreadable(self):
+        from automation_failures import has_file
+        done = lambda code, err="": mock.Mock(returncode=code, stderr=err)
+        with mock.patch("subprocess.run", return_value=done(0)):
+            self.assertTrue(has_file("x", "renovate.json"))
+        with mock.patch("subprocess.run", return_value=done(1, "gh: Not Found (HTTP 404)")):
+            self.assertFalse(has_file("x", "renovate.json"))
+        with mock.patch("subprocess.run", return_value=done(1, "gh: Resource not accessible (HTTP 403)")):
+            self.assertIsNone(has_file("x", "renovate.json"))
 
 
 class ReportTest(unittest.TestCase):

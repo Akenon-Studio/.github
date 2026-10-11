@@ -19,7 +19,8 @@ errors, which the public .github repo must not. It lists:
 - Anything the check couldn't read, so a missing permission shows instead of an empty list.
 
 Usage: scripts/automation_failures.py collect <state.json>   as the read-only settings app (Actions:
-                                                             read, Secret scanning alerts: read)
+                                                             read, Secret scanning alerts: read,
+                                                             Contents: read)
        scripts/automation_failures.py report <state.json>    as the automation app: reads Renovate's
                                                              issues and the lane's PRs, ticks the
                                                              dashboards' run-again box, keeps the issue
@@ -47,7 +48,8 @@ LANE_IDLE_DAYS = 2
 RENOVATE = "renovate[bot]"
 # Where Renovate looks for a repo's config (the first it finds wins)
 RENOVATE_CONFIGS = ("renovate.json", "renovate.json5", ".github/renovate.json",
-                    ".github/renovate.json5", ".gitlab/renovate.json", ".renovaterc", ".renovaterc.json")
+                    ".github/renovate.json5", ".gitlab/renovate.json", ".gitlab/renovate.json5",
+                    ".renovaterc", ".renovaterc.json", ".renovaterc.json5")
 RUN_AGAIN = re.compile(r"^(\s*- \[)([ xX])(\] <!-- manual job -->)", re.M)
 
 
@@ -95,7 +97,7 @@ def renovate_set_up(repo, exists=has_file):
 
 def collect(path, now=None):
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    state = {"runs": [], "secrets": [], "unread": [], "renovate": []}
+    state = {"runs": [], "secrets": [], "unread": [], "renovate": [], "no_config": []}
     managed = managed_repos()
     for repo in managed:
         set_up = renovate_set_up(repo)
@@ -104,6 +106,8 @@ def collect(path, now=None):
                                    "Contents: read)")
         elif set_up:
             state["renovate"].append(repo)
+        else:  # every managed repo extends the shared preset (design 6.4)
+            state["no_config"].append(repo)
         workflows = try_gh(f"repos/{ORG}/{repo}/actions/workflows?per_page=100")
         if workflows is None:
             state["unread"].append(f"scheduled runs in {repo} (the settings app needs Actions: read)")
@@ -123,7 +127,7 @@ def collect(path, now=None):
             found = failed_schedule((runs["workflow_runs"] or [None])[0], now)
             if found:
                 state["runs"].append({"repo": repo, **found})
-    alerts = try_gh("--paginate", "--slurp", f"orgs/{ORG}/secret-scanning/alerts?state=open&per_page=100")
+    alerts = try_gh("--paginate", "--slurp", f"orgs/{ORG}/secret-scanning/alerts?state=open&hide_secret=true&per_page=100")
     if alerts is None:
         state["unread"].append("secret-scanning alerts (the settings app needs Secret scanning "
                                "alerts: read)")
@@ -281,7 +285,9 @@ def report(path, now=None):
     state = json.load(open(path))
     now = now or datetime.datetime.now(datetime.timezone.utc)
     managed, pages, renovate, tick = managed_repos(), renovate_pages(), [], []
-    for repo in state["renovate"]:  # collect() saw renovate.json there
+    renovate += [f"{repo}: no Renovate config, so Renovate doesn't update it (every repo extends "
+                 "the shared preset, design 6.4)" for repo in state.get("no_config", [])]
+    for repo in state["renovate"]:  # collect() found a Renovate config there
         issues = try_gh(f"repos/{ORG}/{repo}/issues?creator={RENOVATE}&state=open&per_page=100")
         if issues is None:
             state["unread"].append(f"Renovate's issues in {repo}")
