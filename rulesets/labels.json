@@ -18,7 +18,7 @@
     {"name": "ready-to-merge", "color": "0e8a16", "description": "Approved and green: the merge lane merges it in turn (design 6.2)"}
   ],
   ".github-private": [
-    {"name": "automation-failures", "color": "b60205", "description": "Automation that failed with no one told: scheduled runs, Renovate, the merge lane, secrets (design 6.8)"}
+    {"name": "automation-failures", "color": "b60205", "description": "The automation failures report: what failed with no one told (design 6.8)"}
   ],
   ".github": [
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},
