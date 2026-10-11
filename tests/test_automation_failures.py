@@ -102,14 +102,14 @@ class RenovateTest(unittest.TestCase):
 
 
 def pr(comment, said="2026-10-15T00:00:00Z", pushed="2026-10-14T00:00:00Z", labels=(),
-       later=(), reviews=(), checks="2026-10-14T00:00:00Z"):
+       later=(), reviews=(), forced=None):
     """`later`: (author type, body, time) comments after the lane's."""
     comments = [{"body": comment, "createdAt": said, "author": {"__typename": "Bot"}}]
     comments += [{"body": b, "createdAt": at, "author": {"__typename": who}} for who, b, at in later]
     return {"comments": {"nodes": comments},
             "reviews": {"nodes": [{"createdAt": at, "author": {"__typename": "User"}} for at in reviews]},
-            "commits": {"nodes": [{"commit": {"committedDate": pushed,
-                                              "checkSuites": {"nodes": [{"createdAt": checks}]}}}]},
+            "commits": {"nodes": [{"commit": {"committedDate": pushed}}]},
+            "forcePushes": {"nodes": [{"createdAt": forced}] if forced else []},
             "labels": {"nodes": [{"name": l} for l in labels]}}
 
 
@@ -127,8 +127,7 @@ class LaneTest(unittest.TestCase):
         self.assertFalse(lane_idle(pr("Looking at it."), NOW))
         self.assertFalse(lane_idle(pr(DROPPED, later=[("User", "On it", "2026-10-16T00:00:00Z")]), NOW))
         self.assertFalse(lane_idle(pr(DROPPED, reviews=["2026-10-16T00:00:00Z"]), NOW))
-        # an old commit pushed after the comment: its checks started then
-        self.assertFalse(lane_idle(pr(DROPPED, checks="2026-10-16T00:00:00Z"), NOW))
+        self.assertFalse(lane_idle(pr(DROPPED, forced="2026-10-16T00:00:00Z"), NOW))
 
     def test_a_bots_comment_after_it_isnt_activity(self):
         notice = ("Bot", "<!-- pr-conflicts -->\n@x This PR conflicts", "2026-10-15T00:10:00Z")
@@ -163,16 +162,23 @@ class CollectTest(unittest.TestCase):
             if "/runs?" in path:
                 return {"workflow_runs": [run("failure")]}
             return [[]]  # secret alerts: none
-        files = {"a": {"renovate.json"}, "b": set(), "c": None}
+        set_up = {"a": True, "b": False, "c": None}
         with mock.patch.multiple(automation_failures, managed_repos=lambda: ["a", "b", "c"],
-                                 repo_files=lambda r: files[r], try_gh=try_gh), \
+                                 renovate_set_up=lambda r: set_up[r], try_gh=try_gh), \
                 tempfile.NamedTemporaryFile(suffix=".json") as f:
             automation_failures.collect(f.name, NOW)
             state = json.load(open(f.name))
         self.assertEqual(state["renovate"], ["a"])
-        self.assertEqual(state["unread"], ["whether Renovate is set up in c"])
+        self.assertEqual(len(state["unread"]), 1)
+        self.assertIn("whether Renovate is set up in c", state["unread"][0])
         self.assertEqual(sorted(r["conclusion"] for r in state["runs"] if r["repo"] == "a"),
                          ["disabled by GitHub for inactivity", "failure"])
+
+    def test_where_renovate_config_can_be(self):
+        from automation_failures import renovate_set_up
+        self.assertTrue(renovate_set_up("x", lambda r, p: p == ".github/renovate.json"))
+        self.assertFalse(renovate_set_up("x", lambda r, p: False))
+        self.assertIsNone(renovate_set_up("x", lambda r, p: None if p == "renovate.json" else False))
 
 
 class ReportTest(unittest.TestCase):

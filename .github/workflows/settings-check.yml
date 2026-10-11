@@ -5,7 +5,8 @@
 # one `automation-failures` issue in .github-private (members only) listing what failed with no one told: scheduled runs, Renovate's
 # problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
 # secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
-# Actions: read and Secret scanning alerts: read for those; without them the issue says so.
+# Actions: read, Secret scanning alerts: read and Contents: read for those; without them the issue
+# says so.
 # Reports only: an owner fixes drift by re-running scripts/apply-rules.py.
 #
 # Reads settings as the read-only "Akenon Studio Settings" app, whose key lives only in this repo's
@@ -110,6 +111,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           permission-issues: write
           permission-pull-requests: read
+          permission-contents: read
 
       - name: Open, update or close the automation failures issue
         if: ${{ !cancelled() && steps.failures.outcome == 'success' }}

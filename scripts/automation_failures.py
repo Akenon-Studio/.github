@@ -28,12 +28,14 @@ In Actions both run in the daily settings-check workflow.
 
 import datetime
 import json
+import os
 import re
+import subprocess
 import sys
 
 from board import graphql
 from one_issue import keep
-from rules import ORG, gh, load, managed_repos, repo_files, try_gh
+from rules import ORG, gh, load, managed_repos, try_gh
 
 REPO = f"{ORG}/.github-private"
 LABEL = "automation-failures"
@@ -43,6 +45,9 @@ RECENT = datetime.timedelta(days=40)  # a monthly workflow's last run is in rang
 LANE_MARKER = "<!-- merge-lane -->"
 LANE_IDLE_DAYS = 2
 RENOVATE = "renovate[bot]"
+# Where Renovate looks for a repo's config (the first it finds wins)
+RENOVATE_CONFIGS = ("renovate.json", "renovate.json5", ".github/renovate.json",
+                    ".github/renovate.json5", ".gitlab/renovate.json", ".renovaterc", ".renovaterc.json")
 RUN_AGAIN = re.compile(r"^(\s*- \[)([ xX])(\] <!-- manual job -->)", re.M)
 
 
@@ -67,14 +72,37 @@ def failed_schedule(run, now):
             "at": run["created_at"]}
 
 
+def has_file(repo, path):
+    """True or False for whether the repo's default branch has the file, or None if this token
+    can't tell (anything but a 404)."""
+    res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/contents/{path}",
+                          "--jq", ".type"], capture_output=True, text=True)
+    if res.returncode == 0:
+        return True
+    return False if "HTTP 404" in res.stderr else None
+
+
+def renovate_set_up(repo, exists=has_file):
+    """True or False for whether Renovate has a config in the repo, or None if it can't be told."""
+    unknown = False
+    for path in RENOVATE_CONFIGS:
+        found = exists(repo, path)
+        if found:
+            return True
+        unknown = unknown or found is None
+    return None if unknown else False
+
+
 def collect(path, now=None):
     now = now or datetime.datetime.now(datetime.timezone.utc)
     state = {"runs": [], "secrets": [], "unread": [], "renovate": []}
-    for repo in managed_repos():
-        files = repo_files(repo)
-        if files is None:
-            state["unread"].append(f"whether Renovate is set up in {repo}")
-        elif "renovate.json" in files:
+    managed = managed_repos()
+    for repo in managed:
+        set_up = renovate_set_up(repo)
+        if set_up is None:
+            state["unread"].append(f"whether Renovate is set up in {repo} (the settings app needs "
+                                   "Contents: read)")
+        elif set_up:
             state["renovate"].append(repo)
         workflows = try_gh(f"repos/{ORG}/{repo}/actions/workflows?per_page=100")
         if workflows is None:
@@ -102,11 +130,11 @@ def collect(path, now=None):
     else:
         state["secrets"] = [{"repo": a["repository"]["name"], "type": a.get("secret_type_display_name")
                              or a.get("secret_type"), "url": a["html_url"], "at": a["created_at"]}
-                            for page in alerts for a in page]
+                            for page in alerts for a in page if a["repository"]["name"] in managed]
     with open(path, "w") as f:
         json.dump(state, f, indent=2)
-    print(f"{len(state['runs'])} failed schedule(s), {len(state['secrets'])} secret alert(s), "
-          f"{len(state['unread'])} unread")
+    # No secret-alert count: this log is in the public .github repo
+    print(f"{len(state['runs'])} failed schedule(s), {len(state['unread'])} unread")
 
 
 # --- report, as the automation app ---------------------------------------------------------------
@@ -159,14 +187,16 @@ LANE_PRS = """query($q: String!, $after: String) { search(type: ISSUE, query: $q
     labels(first: 20) { nodes { name } }
     comments(last: 30) { nodes { body createdAt author { __typename } } }
     reviews(last: 5) { nodes { createdAt author { __typename } } }
-    commits(last: 1) { nodes { commit { committedDate
-      checkSuites(first: 1) { nodes { createdAt } } } } } } } } }"""
+    commits(last: 1) { nodes { commit { committedDate } } }
+    forcePushes: timelineItems(itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], last: 1) {
+      nodes { ... on HeadRefForcePushedEvent { createdAt } } } } } } }"""
 
 
 def lane_idle(pr, now, days=LANE_IDLE_DAYS):
     """True for a PR the merge lane took out at least `days` ago with no activity since: no
-    person's comment or review, and no push (the head commit's date, or when its first checks
-    started, which is when it was pushed), and not labelled for the lane again."""
+    person's comment or review, and no push (the head commit's date, or a force push), and not
+    labelled for the lane again. A commit made before the lane's comment and pushed after it reads
+    as no push: GitHub records no push time a PR-reading token can see."""
     if "ready-to-merge" in {l["name"] for l in pr["labels"]["nodes"]}:
         return False
     lane = [c for c in pr["comments"]["nodes"]
@@ -177,8 +207,8 @@ def lane_idle(pr, now, days=LANE_IDLE_DAYS):
     people = [c["createdAt"] for c in pr["comments"]["nodes"] + pr["reviews"]["nodes"]
               if (c.get("author") or {}).get("__typename") == "User"]
     commit = (pr["commits"]["nodes"] or [{}])[-1].get("commit") or {}
-    pushed = [commit.get("committedDate")] + [s["createdAt"] for s in
-                                               (commit.get("checkSuites") or {}).get("nodes", [])]
+    pushed = [commit.get("committedDate")] + [e["createdAt"] for e in
+                                               (pr.get("forcePushes") or {}).get("nodes", []) if e]
     if any(when(t) > said for t in people + [p for p in pushed if p]):
         return False
     return now - said >= datetime.timedelta(days=days)
