@@ -58,6 +58,19 @@ class FixPrTest(unittest.TestCase):
         self.assertIsNone(fix_pr(alert("2026-10-01T00:00:00Z", "3.0.4"), {}))
 
 
+class RenovateTitlesTest(unittest.TestCase):
+    def test_both_renovates_prs_count(self):
+        import json
+        from unittest import mock
+        prs = [[{"title": "fix(deps): update braces", "user": {"login": "akenon-studio-renovate[bot]"}},
+                {"title": "fix(deps): update qs", "user": {"login": "renovate[bot]"}},
+                {"title": "feat: something", "user": {"login": "someone"}}]]
+        done = mock.Mock(returncode=0, stdout=json.dumps(prs))
+        with mock.patch("subprocess.run", return_value=done):
+            self.assertEqual(stale_alerts.renovate_titles("platform", {}),
+                             ["fix(deps): update braces", "fix(deps): update qs"])
+
+
 class PlainTest(unittest.TestCase):
     def test_advisory_text_cannot_mention_or_link(self):
         self.assertEqual(plain("ping @someone `x`\n[y](z)"), "`ping @someone 'x' [y](z)`")
