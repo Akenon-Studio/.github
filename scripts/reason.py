@@ -4,7 +4,7 @@ person. An item has the first Reason that applies:
 
 1. Needs fields: labelled `needs-fields` (issue_fields.py); its comment says what to fix.
 2. Review: board Status In review (a ready PR closes the issue), or a bot's PR that closes no
-   issue (dependency updates, release-please's Release PR).
+   issue (dependency updates), the Release PR aside.
 3. Report: an issue a bot in `report_authors` opened for a person (the scorecard, settings drift).
 4. New bug: a bug report still carrying the triage label.
 5. Waiting on: anything else in Waiting for human.

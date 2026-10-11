@@ -95,7 +95,7 @@
         {
           "name": "Review",
           "color": "PURPLE",
-          "description": "In review, or a bot's PR with no issue behind it"
+          "description": "In review, or a bot's PR with no issue (the Release PR aside)"
         },
         {
           "name": "Report",
@@ -259,7 +259,7 @@
         "Created",
         "ASC"
       ],
-      "_comment": "Everything waiting on a person, grouped by why (design 6.6): issues flagged needs-fields, issues In review and bot PRs, the automation's reports, untriaged bugs, and anything else in Waiting for human. The Reason field does the work, since a filter cannot OR across fields and a view cannot group by label."
+      "_comment": "Everything waiting on a person, grouped by why (design 6.6): issues flagged needs-fields, issues In review and bot PRs, the automation's reports, untriaged bugs, anything else in Waiting for human, and the Release PR in its own group. The Reason field does the work, since a filter cannot OR across fields and a view cannot group by label."
     },
     {
       "name": "My work",

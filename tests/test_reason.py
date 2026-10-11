@@ -108,6 +108,13 @@ class PrTest(unittest.TestCase):
         self.assertEqual(reason.pr_reason({"dependencies"}, renovate, RULE), reason.REVIEW)
         self.assertEqual(reason.pr_reason({"needs-fields"}, renovate, RULE), reason.NEEDS_FIELDS)
         self.assertEqual(reason.pr_reason({"release"}, release, RULE), reason.RELEASE)
+        self.assertEqual(reason.pr_reason({"needs-fields"}, release, RULE), reason.NEEDS_FIELDS)
+
+    def test_each_release_author_may_open_issue_less_prs(self):
+        # otherwise its PR is flagged and never shows as Release
+        bots = json.loads((ROOT / "rulesets" / "bots.json").read_text())["sources"]
+        for login in RULE["release_authors"]:
+            self.assertTrue(bots[login]["no_issue"], login)
 
 
 if __name__ == "__main__":
