@@ -5,7 +5,8 @@
 # assignees, closing a parent early) are caught by the issue-sweep workflow. On a PR event it sets
 # the issues the PR closes to In review, and back when it closes unmerged or turns into a draft
 # (scripts/pr_status.py). On a new comment, a `Waiting on` line sets Waiting for human and a later
-# comment without one takes it back (scripts/comment_status.py).
+# comment without one takes it back (scripts/comment_status.py). Each keeps the board's Reason field
+# (why the item waits on a person, scripts/reason.py) in step.
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
 #
 #   on: { issues: { types: [opened, edited, reopened, typed, untyped] },
@@ -41,7 +42,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Get the scripts and forms
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/.github
           ref: main
@@ -49,7 +50,7 @@ jobs:
 
       - name: Log in as the org app
         id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}

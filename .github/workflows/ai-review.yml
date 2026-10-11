@@ -52,7 +52,7 @@ jobs:
 
       - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -63,7 +63,7 @@ jobs:
         if: env.WANTED == 'true' && env.HAS_KEY == 'true'
         continue-on-error: true
         id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
@@ -75,7 +75,7 @@ jobs:
         if: env.WANTED == 'true' && env.HAS_KEY == 'true' && steps.app.outcome == 'success'
         continue-on-error: true
         id: design
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/handbook
           ref: main
@@ -87,7 +87,7 @@ jobs:
 
       - name: Get the script
         if: env.WANTED == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/.github
           # Always main, even for this repo's own PRs: the sign-in trusts only this workflow on main

@@ -17,7 +17,7 @@ import re
 import sys
 
 from board import find_board_fields
-from issue_fields import WAITING, board_item, load_issue, set_field
+from issue_fields import WAITING, board_item, load_issue, set_field, sync_reason
 from rules import gh, try_gh
 
 WAITING_LINE = re.compile(r"^ {0,3}(?:[-*+][ \t]+)?[*_]*waiting on\b[*_]*(.*)$", re.I | re.M)  # 4 spaces: code
@@ -80,6 +80,7 @@ def main(path):
         print(f"#{number}: assigned {', '.join(people)}")
     if status_to:
         set_field(board, item, "Status", status_to)
+        sync_reason(board, item, loaded, status_to)
         print(f"#{number}: {status} -> {status_to}")
     else:
         print(f"#{number}: stays {status}")

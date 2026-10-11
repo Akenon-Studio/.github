@@ -29,13 +29,13 @@ jobs:
     timeout-minutes: 10
     environment: settings-check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Log in as the read-only settings app
         id: settings
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.SETTINGS_APP_ID }}
           private-key: ${{ secrets.SETTINGS_APP_PRIVATE_KEY }}
@@ -53,7 +53,7 @@ jobs:
 
       - name: Log in as the automation app
         id: automation
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
@@ -73,7 +73,7 @@ jobs:
 
       - name: Log in as the automation app, every repo, read-only PRs (to see Renovate's)
         id: pr-read
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
