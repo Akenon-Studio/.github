@@ -470,6 +470,38 @@ class SyncReasonTest(unittest.TestCase):
         self.assertEqual(self.run_sync([], "In progress"), [("Waiting on", None)])
 
 
+class SetReasonTest(unittest.TestCase):
+    BOARD = {"id": "B", "fields": {"nodes": [{"id": "F", "name": "Reason", "options": [
+        {"id": "o1", "name": "Review"}, {"id": "o2", "name": "Waiting on"}]}]}}
+
+    def run_set(self, current, want, board=None):
+        import issue_fields
+        from unittest import mock
+        calls = mock.Mock(return_value={})
+        with mock.patch.object(issue_fields, "graphql", calls):
+            issue_fields.set_reason(board or self.BOARD, "item", current, want)
+        return [(next(m for m in ("updateProjectV2ItemFieldValue", "clearProjectV2ItemFieldValue")
+                      if m in c.args[0]), c.kwargs) for c in calls.call_args_list]
+
+    def test_set_clear_and_no_ops(self):
+        self.assertEqual(self.run_set(None, "Review"),
+                         [("updateProjectV2ItemFieldValue", {"p": "B", "i": "item", "f": "F", "o": "o1"})])
+        self.assertEqual(self.run_set("Review", None),
+                         [("clearProjectV2ItemFieldValue", {"p": "B", "i": "item", "f": "F"})])
+        self.assertEqual(self.run_set("Review", "Review"), [])
+        self.assertEqual(self.run_set(None, "Review", {"id": "B", "fields": {"nodes": []}}), [])
+
+    def test_sync_reason_reads_the_labels_as_loaded(self):
+        import issue_fields
+        from unittest import mock
+        issue = {"state": "OPEN", "issueType": {"name": "Task"}, "author": {"__typename": "User"},
+                 "labels": {"nodes": [{"name": "needs-fields"}]},
+                 "projectItems": {"nodes": [{"project": {"id": "B"}, "reason": None}]}}
+        with mock.patch.object(issue_fields, "set_reason") as set_reason:
+            issue_fields.sync_reason(self.BOARD, "item", issue, "In review")
+        set_reason.assert_called_once_with(self.BOARD, "item", None, "Needs fields")
+
+
 if __name__ == "__main__":
     unittest.main()
 

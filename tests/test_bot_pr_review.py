@@ -76,10 +76,12 @@ class BoardChangesTest(unittest.TestCase):
     def test_on_another_board_counts_as_not_on_ours(self):
         self.assertEqual(self.changes([item("Todo", board="other")]), (None, "In review", "Review"))
 
-    def test_in_review_is_kept_and_anything_else_reset(self):
+    def test_a_status_a_person_set_is_kept_but_done_is_reset(self):
         found, status, why = self.changes([item("In review", "Review")])
         self.assertEqual((found, status, why), (("item", "In review", "Review"), None, "Review"))
+        self.assertIsNone(self.changes([item("Blocked", "Review")])[1])
         self.assertEqual(self.changes([item("Done", "Review")])[1], "In review")  # reopened
+        self.assertEqual(self.changes([item(None, None)])[1], "In review")
 
     def test_problems_make_it_needs_fields_and_fixing_them_clears_it(self):
         self.assertEqual(self.changes(problems=["x"])[2], "Needs fields")
