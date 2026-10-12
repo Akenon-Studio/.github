@@ -135,8 +135,8 @@ DOCS_LOOK_FOR = """Look for:
 Leave out what the deterministic checks already enforce: formatting, PR titles, secret scanning,
 links to design sections that don't exist. No praise, no style preferences.
 
-The design you get is design.md as this PR leaves it, in full: judge each change against the rest
-of it."""
+The design you get is design.md as this PR leaves it, in full (unless it says it could not be
+read): judge each change against the rest of it."""
 
 DOCS_SEVERITY = """For documents, these meanings replace the code examples in the scale above:
 - critical: a change that would make work unsafe if followed: a security, privacy or credential
@@ -303,7 +303,7 @@ def read_design(path, repo, root="."):
             try:
                 with open(own, encoding="utf-8") as f:
                     text = f.read()
-                if text.strip():  # an emptied design.md: main's copy, below
+                if text.strip():  # an emptied design.md: `path` below (none from the handbook caller)
                     return text
             except (OSError, UnicodeDecodeError):
                 pass
