@@ -6,6 +6,7 @@
 #   permissions: { contents: read, pull-requests: write, id-token: write }
 #   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main,
 #     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
+#   (handbook passes no secrets: its review reads the design from its own checkout)
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
 # a token for the handbook repo only, contents read only. A handbook PR is checked against its own

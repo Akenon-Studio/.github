@@ -293,8 +293,9 @@ NO_DESIGN = "(The design could not be read for this run: judge design fit from C
 
 def read_design(path, repo, root="."):
     """The design sections for `repo`, or NO_DESIGN when the file is missing or has none. For the
-    design's own repo, design.md as the checked-out PR leaves it (main's copy if it has none), so a
-    PR is judged against its own version; it is then not sent again as a changed file."""
+    design's own repo, design.md as the checked-out PR leaves it, so a PR is judged against its own
+    version; it is then not sent again as a changed file. Only if the PR deletes or empties it is
+    `path` read, which the handbook caller doesn't fetch (it passes no key)."""
     if repo == DESIGN_REPO:
         own, top = os.path.join(root, DESIGN_PATH), os.path.realpath(root)
         # A symlink in the PR could point at a runner file: only a real file in the repo
