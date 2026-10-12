@@ -330,10 +330,13 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
     and replies, changes since the last review) for a later round, which says so in the user
     message to keep the cached prefix the same. A later round's `files` are those the changes
     touch, and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
-    the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled."""
-    system = [{"type": "text", "text": instructions(repo)},
-              {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
-               "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+    the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled. For
+    the design's own repo the design is the PR's, which most pushes change, so it isn't cached:
+    writing it to the cache costs more than reading it plainly."""
+    shared = {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design)}
+    if repo != DESIGN_REPO:
+        shared["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+    system = [{"type": "text", "text": instructions(repo)}, shared]
     user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
             "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
             (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
@@ -619,7 +622,11 @@ def main(argv):
     except OSError:
         claude_md = ""
     reviews = all_reviews(repo, number, token)
-    fp = fingerprint(files, claude_md) if files else None
+    # For the design's own repo, a change elsewhere in the design (main brought in) is a new review:
+    # what it is judged against changed, as with CLAUDE.md
+    name = repo.split("/")[1]
+    against = claude_md + (read_design(os.environ.get("DESIGN_FILE"), name) if name == DESIGN_REPO else "")
+    fp = fingerprint(files, against) if files else None
     if fp and fp == last_fingerprint(reviews):
         print(f"The diff and CLAUDE.md are unchanged since the last review ({fp}); nothing new to review.")
         return 0

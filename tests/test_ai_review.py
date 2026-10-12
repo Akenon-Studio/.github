@@ -201,6 +201,7 @@ class RequestTest(unittest.TestCase):
         self.assertGreater(docs.index("these meanings replace"), docs.index("- critical: harm"))
         system, _ = request("", "design", "t", "d", {}, "diff", repo="handbook")
         self.assertEqual(system[0]["text"], docs)
+        self.assertNotIn("cache_control", system[1], "the PR's own design changes on most pushes")
 
     def test_the_shared_part_is_cached_and_a_later_round_says_so(self):
         system, user = request("rules", "design", "t", "d", {"a.py": "x = 1"}, "diff")
@@ -440,6 +441,12 @@ class MainTest(unittest.TestCase):
         self.assertEqual(seen["system"][0]["text"], ai_review.instructions("handbook"))
         self.assertIn("the PR's version", seen["system"][1]["text"])
         self.assertNotIn('<file path="design.md">', seen["user"], "sent once, as the design")
+        # the design is part of the fingerprint: a change elsewhere in it is a new review
+        first = ai_review.DIFF_MARKER.findall(self.posted[-1]["body"])[0]
+        with open("design.md", "a") as f:
+            f.write("another section changed on main\n")
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertNotEqual(ai_review.DIFF_MARKER.findall(self.posted[-1]["body"])[0], first)
 
     def test_a_local_review_stops_when_it_cant_read_the_design(self):
         import subprocess
