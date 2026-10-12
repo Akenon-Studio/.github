@@ -129,6 +129,8 @@ DOCS_LOOK_FOR = """Look for:
    cover that will plausibly happen, a step that depends on something not yet built without saying
    so, or a rule the tools it names can't enforce.
 5. Clarity: a term used before it is explained, or a sentence a reader could take two ways.
+6. Code: in a workflow or script the PR changes, bugs and security (permissions, secrets,
+   untrusted input), as in any code repo.
 
 Leave out what the deterministic checks already enforce: formatting, PR titles, secret scanning,
 links to design sections that don't exist. No praise, no style preferences.

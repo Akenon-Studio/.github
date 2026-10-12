@@ -192,6 +192,7 @@ class RequestTest(unittest.TestCase):
         self.assertEqual(code, ai_review.INSTRUCTIONS)
         self.assertIn("Appendix A", docs)
         self.assertNotIn("Wasted performance", docs)
+        self.assertIn("in a workflow or script the PR changes", docs)  # handbook has workflows too
         # the shared parts stay: the opening, the severity scale and the finding format
         self.assertTrue(docs.startswith(code.split("Look for:")[0]))
         self.assertEqual(docs.count("Severity is absolute."), 1)
