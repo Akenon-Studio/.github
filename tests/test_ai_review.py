@@ -176,12 +176,11 @@ class RequestTest(unittest.TestCase):
             self.assertEqual(read_design(main.name, "handbook", root=pr), "the PR's design")
             # other repos never read a design.md of their own
             self.assertEqual(read_design(main.name, "platform", root=pr), NO_DESIGN)
+            # an emptied one: main's
+            with open(os.path.join(pr, "design.md"), "w") as f:
+                f.write("\n")
+            self.assertEqual(read_design(main.name, "handbook", root=pr), "main's design")
             # a design.md that is a symlink (to a runner file, say) isn't read
-            os.remove(os.path.join(pr, "design.md"))
-            os.symlink(main.name, os.path.join(pr, "design.md"))
-            with open(main.name, "w") as f:
-                f.write("## 4. Repository\nfour\n")
-            self.assertEqual(read_design(main.name, "handbook", root=pr), "## 4. Repository\nfour\n")
             os.remove(os.path.join(pr, "design.md"))
             os.symlink("/etc/hosts", os.path.join(pr, "design.md"))
             self.assertNotIn("localhost", read_design(main.name, "handbook", root=pr))

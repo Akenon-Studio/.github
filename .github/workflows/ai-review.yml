@@ -8,7 +8,8 @@
 #     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
-# a token for the handbook repo only, contents read only.
+# a token for the handbook repo only, contents read only. A handbook PR is checked against its own
+# design.md instead, from its checkout; main's copy is used only if the PR deletes or empties it.
 #
 # scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token

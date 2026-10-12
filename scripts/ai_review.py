@@ -299,7 +299,9 @@ def read_design(path, repo, root="."):
         if not os.path.islink(own) and os.path.realpath(own).startswith(top + os.sep):
             try:
                 with open(own, encoding="utf-8") as f:
-                    return f.read() or NO_DESIGN
+                    text = f.read()
+                if text.strip():  # an emptied design.md: main's copy, below
+                    return text
             except (OSError, UnicodeDecodeError):
                 pass
     try:
