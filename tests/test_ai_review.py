@@ -2,6 +2,7 @@
 
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
@@ -161,6 +162,28 @@ class RequestTest(unittest.TestCase):
                          "## 4. Repository\nfour\n### 4.1 Sub\nsub\n## 6. Engineering\nsix\n")
         self.assertIn("## 7. Peras", design_sections(self.DESIGN, "peras"))
         self.assertNotIn("## 3.", design_sections(self.DESIGN, "peras"))
+
+    def test_the_design_repo_reads_all_of_it_or_the_changed_file(self):
+        self.assertEqual(design_sections(self.DESIGN, "handbook"), self.DESIGN)
+        with tempfile.NamedTemporaryFile("w", suffix=".md") as f:
+            f.write(self.DESIGN)
+            f.flush()
+            self.assertEqual(read_design(f.name, "handbook", {"company/x.md": ""}), self.DESIGN)
+            # a PR that changes the design: its new version, in full among the files, not main's
+            self.assertEqual(read_design(f.name, "handbook", {"design.md": ""}), ai_review.DESIGN_IN_FILES)
+            self.assertNotEqual(read_design(f.name, "platform", {"design.md": ""}), ai_review.DESIGN_IN_FILES)
+
+    def test_the_design_repo_is_reviewed_as_documents(self):
+        docs, code = ai_review.instructions("handbook"), ai_review.instructions("platform")
+        self.assertEqual(code, ai_review.INSTRUCTIONS)
+        self.assertIn("Appendix A", docs)
+        self.assertNotIn("Wasted performance", docs)
+        # the shared parts stay: the opening, the severity scale and the finding format
+        self.assertTrue(docs.startswith(code.split("Look for:")[0]))
+        self.assertEqual(docs.count("Severity is absolute."), 1)
+        self.assertTrue(docs.endswith(code.split("Severity is absolute.")[1]))
+        system, _ = request("", "design", "t", "d", {}, "diff", repo="handbook")
+        self.assertEqual(system[0]["text"], docs)
 
     def test_the_shared_part_is_cached_and_a_later_round_says_so(self):
         system, user = request("rules", "design", "t", "d", {"a.py": "x = 1"}, "diff")

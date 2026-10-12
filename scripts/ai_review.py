@@ -67,6 +67,7 @@ SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js
 # Peras is also governed by 7.
 DESIGN_SECTIONS = {"peras": ("4", "5", "6", "7")}
 DEFAULT_SECTIONS = ("4", "5", "6")
+DESIGN_REPO, DESIGN_PATH = "handbook", "design.md"  # the design's own repo: its review reads all of it
 SEVERITIES = ("critical", "major", "minor", "nit")
 THREADS = {"critical", "major"}  # these become review threads; the rest go in the summary
 
@@ -115,6 +116,38 @@ with low confidence.
 Each finding: the file, and a line the PR adds (a `+` line, numbered in the new file) where the
 problem is; what goes wrong and the fix, in under 100 words; the design section it breaks, or "".
 If there is nothing worth saying, return no findings and a one-line summary saying so."""
+
+# For the design's own repo (handbook), "Look for" is about documents, and the design is all of it
+DOCS_LOOK_FOR = """Look for:
+1. Contradictions: text that disagrees with another part of the design, unchanged parts included
+   (an end date, a number, a name, who decides), or with a decision record.
+2. One fact in two places (design 6.5): a fact restated instead of pointed to, so the copies can
+   drift; and a pointer to a section, file or issue that doesn't exist or says something else.
+3. History: a decision that replaces an earlier one without the earlier position in Appendix A, or
+   history written into the body, which holds only current decisions; a decision with no date.
+4. Rules that can't be followed or checked: a rule too vague to enforce or test, a case it doesn't
+   cover that will plausibly happen, a step that depends on something not yet built without saying
+   so, or a rule the tools it names can't enforce.
+5. Clarity: a term used before it is explained, or a sentence a reader could take two ways.
+
+Leave out what the deterministic checks already enforce: formatting, PR titles, secret scanning,
+links to design sections that don't exist. No praise, no style preferences.
+
+For documents, critical means a change that would make work unsafe if followed: a security,
+privacy or credential rule weakened or contradicted, or an approval or check removed by accident.
+Major means a contradiction or gap a person or agent will plausibly act on wrongly. Minor means
+real but unlikely to mislead. Nit means polish."""
+
+DESIGN_IN_FILES = ("(The design is the file design.md, shown in full among the changed files as "
+                   "this PR leaves it: judge each change against the rest of it.)")
+
+
+def instructions(repo):
+    """The review's instructions: for the design's own repo, about documents instead of code."""
+    if repo != DESIGN_REPO:
+        return INSTRUCTIONS
+    head, rest = INSTRUCTIONS.split("Look for:", 1)
+    return head + DOCS_LOOK_FOR + "\n\nSeverity is absolute." + rest.split("Severity is absolute.", 1)[1]
 
 LATER_ROUND = """
 
@@ -217,7 +250,10 @@ def review_input(files):
 
 
 def design_sections(design, repo):
-    """The top-level sections of design.md that govern `repo` (DESIGN_SECTIONS), as one text."""
+    """The top-level sections of design.md that govern `repo` (DESIGN_SECTIONS), as one text; for
+    the design's own repo, all of it."""
+    if repo == DESIGN_REPO:
+        return design
     want = DESIGN_SECTIONS.get(repo, DEFAULT_SECTIONS)
     parts = re.split(r"(?m)^(?=## )", design)
     return "".join(p for p in parts if re.match(r"## (\d+)\.", p) and
@@ -249,8 +285,11 @@ def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
 NO_DESIGN = "(The design could not be read for this run: judge design fit from CLAUDE.md.)"
 
 
-def read_design(path, repo):
-    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none."""
+def read_design(path, repo, changed=()):
+    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none. When the
+    PR changes the design itself, it is read from the changed files instead (DESIGN_IN_FILES)."""
+    if repo == DESIGN_REPO and DESIGN_PATH in changed:
+        return DESIGN_IN_FILES
     try:
         with open(path) as f:
             return design_sections(f.read(), repo) or NO_DESIGN
@@ -263,14 +302,14 @@ def tagged(tag, text):
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
-            history="", generated=()):
+            history="", generated=(), repo=""):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
     message to keep the cached prefix the same. A later round's `files` are those the changes
     touch, and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
     the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled."""
-    system = [{"type": "text", "text": INSTRUCTIONS},
+    system = [{"type": "text", "text": instructions(repo)},
               {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
                "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
     user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
@@ -528,8 +567,8 @@ def prompt_main(repo, base, design_path):
     claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
     title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
     whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
-    system, user = request(claude_md, design_sections(open(design_path).read(), repo), title, "",
-                           whole, text, omitted=omitted, generated=generated_paths(diff))
+    system, user = request(claude_md, read_design(design_path, repo, files), title, "",
+                           whole, text, omitted=omitted, generated=generated_paths(diff), repo=repo)
     print(json.dumps({"system": system, "user": user}))
     return 0
 
@@ -566,7 +605,7 @@ def main(argv):
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
-        design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
+        design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1], files)
         since = changes_since(done[-1]["commit_id"], list(files)) if done else None
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
@@ -584,7 +623,7 @@ def main(argv):
                 + sum(len(g) + 1 for g in generated))
         whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated)
+                               omitted, history, generated, repo.split("/")[1])
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:
