@@ -2,6 +2,7 @@
 
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
@@ -161,6 +162,46 @@ class RequestTest(unittest.TestCase):
                          "## 4. Repository\nfour\n### 4.1 Sub\nsub\n## 6. Engineering\nsix\n")
         self.assertIn("## 7. Peras", design_sections(self.DESIGN, "peras"))
         self.assertNotIn("## 3.", design_sections(self.DESIGN, "peras"))
+
+    def test_the_design_repo_reads_all_of_it_as_the_pr_leaves_it(self):
+        import os
+        self.assertEqual(design_sections(self.DESIGN, "handbook"), self.DESIGN)
+        with tempfile.TemporaryDirectory() as pr, tempfile.NamedTemporaryFile("w", suffix=".md") as main:
+            main.write("main's design")
+            main.flush()
+            # no design.md in the PR's checkout: main's
+            self.assertEqual(read_design(main.name, "handbook", root=pr), "main's design")
+            with open(os.path.join(pr, "design.md"), "w") as f:
+                f.write("the PR's design")
+            self.assertEqual(read_design(main.name, "handbook", root=pr), "the PR's design")
+            # other repos never read a design.md of their own
+            self.assertEqual(read_design(main.name, "platform", root=pr), NO_DESIGN)
+            # an emptied one: main's
+            with open(os.path.join(pr, "design.md"), "w") as f:
+                f.write("\n")
+            self.assertEqual(read_design(main.name, "handbook", root=pr), "main's design")
+            # a design.md that is a symlink (to a runner file, say) isn't read
+            os.remove(os.path.join(pr, "design.md"))
+            os.symlink("/etc/hosts", os.path.join(pr, "design.md"))
+            self.assertNotIn("localhost", read_design(main.name, "handbook", root=pr))
+        self.assertEqual(ai_review.review_paths(["design.md", "x.md"], "handbook"), ["x.md"])
+        self.assertEqual(ai_review.review_paths(["design.md"], "platform"), ["design.md"])
+
+    def test_the_design_repo_is_reviewed_as_documents(self):
+        docs, code = ai_review.instructions("handbook"), ai_review.instructions("platform")
+        self.assertEqual(code, ai_review.INSTRUCTIONS)
+        self.assertIn("Appendix A", docs)
+        self.assertNotIn("Wasted performance", docs)
+        self.assertIn("in a workflow or script the PR changes", docs)  # handbook has workflows too
+        # the shared parts stay: the opening, the severity scale and the finding format
+        self.assertTrue(docs.startswith(code.split("Look for:")[0]))
+        self.assertEqual(docs.count("Severity is absolute."), 1)
+        self.assertTrue(docs.endswith(code.split("\n\nEach finding:")[1]))
+        # the document meanings come after the code scale they replace
+        self.assertGreater(docs.index("these meanings replace"), docs.index("- critical: harm"))
+        system, _ = request("", "design", "t", "d", {}, "diff", repo="handbook")
+        self.assertEqual(system[0]["text"], docs)
+        self.assertNotIn("cache_control", system[1], "the PR's own design changes on most pushes")
 
     def test_the_shared_part_is_cached_and_a_later_round_says_so(self):
         system, user = request("rules", "design", "t", "d", {"a.py": "x = 1"}, "diff")
@@ -377,6 +418,42 @@ class MainTest(unittest.TestCase):
         self.assertEqual(ai_review.USAGE_MARKER.findall(self.posted[0]["body"]),
                          ['{"model": "m", "input": 1, "cache_read": 2, "cache_write": 3, "output": 4}'])
         self.assertIn(NO_DESIGN, seen["design"])
+
+
+    def test_a_handbook_pr_is_reviewed_as_documents_against_its_own_design(self):
+        import os
+        os.environ["GITHUB_REPOSITORY"] = "akenon-studio/handbook"
+        with open("design.md", "w") as f:
+            f.write("## 6. Engineering\nthe PR's version\n")
+        diff = "diff --git a/design.md b/design.md\n--- a/design.md\n+++ b/design.md\n@@ -1 +1,2 @@\n ## 6. Engineering\n+the PR's version\n"
+        github = ai_review.github
+
+        def with_design_diff(path, token, method="GET", body=None, accept=""):
+            return diff if accept.endswith("diff") else github(path, token, method, body, accept)
+        ai_review.github = with_design_diff
+        seen = {}
+
+        def answer(system, user):
+            seen.update(system=system, user=user)
+            return {"summary": "Fine.", "comments": []}, None
+        ai_review.ask_claude = answer
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertEqual(seen["system"][0]["text"], ai_review.instructions("handbook"))
+        self.assertIn("the PR's version", seen["system"][1]["text"])
+        self.assertNotIn('<file path="design.md">', seen["user"], "sent once, as the design")
+        # the design is part of the fingerprint: a change elsewhere in it is a new review
+        first = ai_review.DIFF_MARKER.findall(self.posted[-1]["body"])[0]
+        with open("design.md", "a") as f:
+            f.write("another section changed on main\n")
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertNotEqual(ai_review.DIFF_MARKER.findall(self.posted[-1]["body"])[0], first)
+
+    def test_a_local_review_stops_when_it_cant_read_the_design(self):
+        import subprocess
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+                       check=True)
+        with self.assertRaises(SystemExit):
+            ai_review.prompt_main("platform", "HEAD", "/nonexistent/design.md")
 
 
 if __name__ == "__main__":

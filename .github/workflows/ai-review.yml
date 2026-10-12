@@ -1,18 +1,22 @@
 # Reusable: Claude reviews a PR and comments (design 6.4: advisory, never approves, never a required
-# check). The code repos (platform, animations, peras, this one) call it with:
+# check). The code repos (platform, animations, peras, this one) and handbook, whose review reads
+# the whole design as documents (ai_review.py's DOCS_LOOK_FOR), call it with:
 #
 #   on: { pull_request: { types: [opened, synchronize, ready_for_review, reopened] } }
 #   permissions: { contents: read, pull-requests: write, id-token: write }
 #   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main,
 #     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
+#   (handbook passes no secrets: its review reads the design from its own checkout)
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
-# a token for the handbook repo only, contents read only.
+# a token for the handbook repo only, contents read only. A handbook PR is checked against its own
+# design.md instead, from its checkout, and its caller passes no key, so a PR that deletes or
+# empties design.md is reviewed without a design.
 #
 # scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
 # (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request runs
-# of those four repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
+# of those five repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
 # org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
 # job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
 # every caller, this repo's included, uses the main copy. The review is posted with the
