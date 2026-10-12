@@ -133,13 +133,15 @@ DOCS_LOOK_FOR = """Look for:
 Leave out what the deterministic checks already enforce: formatting, PR titles, secret scanning,
 links to design sections that don't exist. No praise, no style preferences.
 
-For documents, critical means a change that would make work unsafe if followed: a security,
-privacy or credential rule weakened or contradicted, or an approval or check removed by accident.
-Major means a contradiction or gap a person or agent will plausibly act on wrongly. Minor means
-real but unlikely to mislead. Nit means polish."""
+The design you get is design.md as this PR leaves it, in full: judge each change against the rest
+of it."""
 
-DESIGN_IN_FILES = ("(The design is the file design.md, shown in full among the changed files as "
-                   "this PR leaves it: judge each change against the rest of it.)")
+DOCS_SEVERITY = """For documents, these meanings replace the code examples in the scale above:
+- critical: a change that would make work unsafe if followed: a security, privacy or credential
+  rule weakened or contradicted, or an approval or check removed by accident.
+- major: a contradiction or gap a person or agent will plausibly act on wrongly.
+- minor: real but unlikely to mislead.
+- nit: polish."""
 
 
 def instructions(repo):
@@ -147,7 +149,9 @@ def instructions(repo):
     if repo != DESIGN_REPO:
         return INSTRUCTIONS
     head, rest = INSTRUCTIONS.split("Look for:", 1)
-    return head + DOCS_LOOK_FOR + "\n\nSeverity is absolute." + rest.split("Severity is absolute.", 1)[1]
+    scale, finding = rest.split("Severity is absolute.", 1)[1].split("\n\nEach finding:", 1)
+    return (head + DOCS_LOOK_FOR + "\n\nSeverity is absolute." + scale + "\n\n" + DOCS_SEVERITY +
+            "\n\nEach finding:" + finding)
 
 LATER_ROUND = """
 
@@ -285,16 +289,30 @@ def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
 NO_DESIGN = "(The design could not be read for this run: judge design fit from CLAUDE.md.)"
 
 
-def read_design(path, repo, changed=()):
-    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none. When the
-    PR changes the design itself, it is read from the changed files instead (DESIGN_IN_FILES)."""
-    if repo == DESIGN_REPO and DESIGN_PATH in changed:
-        return DESIGN_IN_FILES
+def read_design(path, repo, root="."):
+    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none. For the
+    design's own repo, design.md as the checked-out PR leaves it (main's copy if it has none), so a
+    PR is judged against its own version; it is then not sent again as a changed file."""
+    if repo == DESIGN_REPO:
+        own, top = os.path.join(root, DESIGN_PATH), os.path.realpath(root)
+        # A symlink in the PR could point at a runner file: only a real file in the repo
+        if not os.path.islink(own) and os.path.realpath(own).startswith(top + os.sep):
+            try:
+                with open(own, encoding="utf-8") as f:
+                    return f.read() or NO_DESIGN
+            except (OSError, UnicodeDecodeError):
+                pass
     try:
         with open(path) as f:
             return design_sections(f.read(), repo) or NO_DESIGN
     except (TypeError, OSError):  # TypeError: no path given
         return NO_DESIGN
+
+
+def review_paths(paths, repo):
+    """The changed files to send in full: for the design's own repo, not design.md, which is the
+    design already (read_design)."""
+    return [p for p in paths if not (repo == DESIGN_REPO and p == DESIGN_PATH)]
 
 
 def tagged(tag, text):
@@ -566,8 +584,11 @@ def prompt_main(repo, base, design_path):
     text, _ = review_input(files)
     claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
     title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
-    whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
-    system, user = request(claude_md, read_design(design_path, repo, files), title, "",
+    design = read_design(design_path, repo)
+    if design == NO_DESIGN:
+        raise SystemExit(f"can't read the design for {repo} from {design_path}")
+    whole, omitted = full_files(review_paths(files, repo), budget=MAX_INPUT_CHARS - len(text) - len(design))
+    system, user = request(claude_md, design, title, "",
                            whole, text, omitted=omitted, generated=generated_paths(diff), repo=repo)
     print(json.dumps({"system": system, "user": user}))
     return 0
@@ -605,7 +626,7 @@ def main(argv):
         review = {"event": "COMMENT", "comments": [], "body": "**AI review (advisory)**\n\n"
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
-        design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1], files)
+        design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
         since = changes_since(done[-1]["commit_id"], list(files)) if done else None
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
@@ -621,7 +642,7 @@ def main(argv):
         generated = generated_paths(diff)  # the whole PR's, every round
         used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
                 + sum(len(g) + 1 for g in generated))
-        whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
+        whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
                                omitted, history, generated, repo.split("/")[1])
         try:
