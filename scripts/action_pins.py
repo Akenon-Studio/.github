@@ -76,10 +76,18 @@ def git(root, *args):
                           check=True).stdout
 
 
-def changed_files(root, base):
-    """Workflows and composite actions the PR adds or changes."""
-    out = git(root, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", f"{base}...HEAD")
-    return [f for f in out.decode().split("\0") if f and CHECKED.search(f)]
+SYMLINK_SCOPE = re.compile(r"(^|/)\.github(/|$)|(^|/)action\.ya?ml$")
+
+
+def changed_files(root, base, symlinks=False):
+    """Workflows and composite actions the PR adds or changes; with symlinks, instead the symlinks
+    it adds or changes in a .github folder (a linked folder too) or named action.yml/.yaml."""
+    out = git(root, "diff", "--raw", "-z", "--no-renames", "--diff-filter=d", f"{base}...HEAD").decode()
+    fields = out.split("\0")
+    entries = [(fields[i].split()[1], fields[i + 1]) for i in range(0, len(fields) - 1, 2) if fields[i]]
+    if symlinks:
+        return [path for mode, path in entries if mode == "120000" and SYMLINK_SCOPE.search(path)]
+    return [path for mode, path in entries if mode != "120000" and CHECKED.search(path)]
 
 
 def new_uses(root, base):
@@ -87,10 +95,9 @@ def new_uses(root, base):
     that can't be read as YAML."""
     merge_base = git(root, "merge-base", base, "HEAD").decode().strip()
     added, problems = {}, []
+    for path in changed_files(root, base, symlinks=True):
+        problems.append((path, "is a symlink, so the check can't read what it points to: make it a file"))
     for path in changed_files(root, base):
-        if git(root, "ls-tree", "HEAD", "--", path).decode().startswith("120000"):
-            problems.append((path, "is a symlink, so the check can't read what it points to: make it a file"))
-            continue
         try:
             head = uses_values(git(root, "show", f"HEAD:{path}").decode())
         except yaml.YAMLError as e:

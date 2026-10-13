@@ -175,6 +175,16 @@ class Run(unittest.TestCase):
         self.commit()
         self.assertEqual(run(self.root, self.base, fake_api({}), {}), (["No outside action added or changed."], True))
 
+    def test_a_symlinked_workflows_folder_fails(self):
+        (self.root / "elsewhere").mkdir()
+        (self.root / "elsewhere/x.yml").write_text("jobs:\n  a:\n    steps:\n      - uses: evil/a@v1\n")
+        self.git("rm", "-rq", ".github")
+        (self.root / ".github").symlink_to("elsewhere")
+        self.commit()
+        lines, ok = run(self.root, self.base, fake_api({}), {})
+        self.assertFalse(ok)
+        self.assertIn("file=.github::is a symlink", lines[0])
+
     def test_unreadable_yaml_fails(self):
         self.write(".github/workflows/ci.yml", "jobs: [\n")
         self.commit()
