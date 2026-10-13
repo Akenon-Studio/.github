@@ -134,10 +134,6 @@ class ReusableWorkflowsTest(unittest.TestCase):
             if "checkout" in step.get("uses", ""):
                 self.assertEqual(step["with"]["ref"], "main")
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PrAuthorTest(unittest.TestCase):
     """The required check that refuses an outsider's PR (design 6.2) can't be changed by the PR."""
 
@@ -153,3 +149,7 @@ class PrAuthorTest(unittest.TestCase):
         self.assertTrue(steps[-1]["run"].endswith("--require"))
         checks = json.loads((WORKFLOWS.parent.parent / "rulesets" / "required-checks.json").read_text())
         self.assertIn("pr-author", checks[".github"])
+
+
+if __name__ == "__main__":
+    unittest.main()

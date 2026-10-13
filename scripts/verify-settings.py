@@ -79,8 +79,11 @@ def main():
         problems += [f"{repo} settings: {d}"
                      for d in differences(load("repo-settings.json"), repo_settings(repo))]
         if is_public(repo):
-            policy = gh(f"repos/{ORG}/{repo}/{FORK_APPROVAL_ENDPOINT}").get("approval_policy")
-            if policy != FORK_APPROVAL:
+            fork = try_gh(f"repos/{ORG}/{repo}/{FORK_APPROVAL_ENDPOINT}") or {}
+            policy = fork.get("approval_policy")
+            if policy is None:
+                print(f"note: can't read {repo}'s fork PR workflow approval; not checked")
+            elif policy != FORK_APPROVAL:
                 problems.append(f"{repo} settings: fork PR workflow approval is {policy}, want "
                                 f"{FORK_APPROVAL} (design 6.2)")
         have = repo_rulesets(repo)

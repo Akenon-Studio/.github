@@ -119,6 +119,18 @@ class RecordTest(unittest.TestCase):
         rec = pr_record("platform", 7, "u", data, lambda *a: "")
         self.assertEqual([t["outcome"] for t in rec["threads"]], [None])
 
+    def test_the_orgs_apps_replies_count(self):
+        # design 6.2, 6.4: Peras answering as an app counts; an outsider and the reviewer don't
+        data = self.data()
+        t = thread("r1", "**Major** · high confidence", "y = new_code_here()", [])
+        t["comments"]["nodes"] += [
+            {"author": {"__typename": "User", "login": "someone"}, "body": "Not an issue"},
+            {"author": {"__typename": "Bot", "login": "github-actions"}, "body": "Not an issue"},
+            {"author": {"__typename": "Bot", "login": "akenon-studio-peras"}, "body": "Fixed in c2"}]
+        data["reviewThreads"]["nodes"] = [t]
+        rec = pr_record("platform", 7, "u", data, lambda *a: "")
+        self.assertEqual([x["outcome"] for x in rec["threads"]], ["fixed"])
+
     def test_a_pr_the_review_never_ran_on(self):
         self.assertIsNone(pr_record("platform", 8, "u", {"reviews": {"nodes": []},
                                                          "reviewThreads": {"nodes": []}}))
