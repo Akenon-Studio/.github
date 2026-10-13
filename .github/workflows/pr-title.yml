@@ -18,6 +18,8 @@
 #     scripts/pr_not_stacked.py)
 #   gaming: the PR doesn't pass by weakening checks: skipped or focused tests, deleted test files,
 #     @ts-ignore, eslint-disable, `any` (design 7.13 stage 6; scripts/gaming_check.py)
+#   action-pins: every action commit the PR adds or changes is on the action's default branch, or a
+#     branch listed in rulesets/action-branches.json (design 6.4; scripts/action_pins.py)
 #   docs: every doc is in the fixed map with its owner/covers header, and names only paths, env
 #     vars and links that exist (design 6.5; scripts/docs_check.py, rulesets/docs.json)
 #   docs-covered: a PR that changes code a doc covers updates the doc or ticks "Still accurate:
@@ -126,6 +128,33 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 akenon-github/scripts/gaming_check.py "$BASE_SHA" repo
 
+      # The pin check and its list of allowed branches always come from main, even in this repo's
+      # own PRs, so a PR can't list a branch for itself (design 6.4).
+      - name: Get main's pin check
+        id: pins-main
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          path: akenon-github-main
+          sparse-checkout: |
+            scripts
+            rulesets
+          persist-credentials: false
+
+      - name: Every action commit added is on the action's default branch
+        id: action-pins
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        # Only the PR that brings the check (.github#172) runs before main has it.
+        run: |
+          check=akenon-github-main/scripts/action_pins.py
+          [ -f "$check" ] || check=akenon-github/scripts/action_pins.py
+          python3 "$check" "$BASE_SHA" repo
+
       - name: Docs are in the map, headed, and name only what exists
         id: docs
         continue-on-error: true
@@ -148,6 +177,8 @@ jobs:
             author-assigned=${{ steps.author-assigned.outcome }}
             stacked=${{ steps.stacked.outcome }}
             gaming=${{ steps.gaming.outcome }}
+            pins-main=${{ steps.pins-main.outcome }}
+            action-pins=${{ steps.action-pins.outcome }}
             docs=${{ steps.docs.outcome }}
             docs-covered=${{ steps.docs-covered.outcome }}
           ADVISORY: docs-covered
