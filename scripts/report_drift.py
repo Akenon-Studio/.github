@@ -14,7 +14,7 @@ import sys
 from one_issue import keep
 from rules import ORG
 
-REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.8)
+REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.2)
 LABEL = "settings-drift"
 TITLE = "Live GitHub settings differ from rulesets/"
 

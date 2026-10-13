@@ -24,7 +24,7 @@ import sys
 from one_issue import keep
 from rules import ORG, managed_repos, renovate_logins, try_gh
 
-REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.8)
+REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.2)
 LABEL = "dependencies"
 TITLE = "Dependabot alerts with no fix PR"
 STALE_DAYS = 3
@@ -64,7 +64,7 @@ def stale(alerts, now, days=STALE_DAYS):
 
 def renovate_titles(repo, cache):
     """Titles of Renovate's open PRs in a repo, read once per repo with the org-wide read-only token
-    (PR_READ_TOKEN; the issue is written with GH_TOKEN, scoped to .github); None if unreadable."""
+    (PR_READ_TOKEN; the issue is written with GH_TOKEN, scoped to .github-private); None if unreadable."""
     if repo not in cache:
         env = dict(os.environ, GH_TOKEN=os.environ.get("PR_READ_TOKEN") or os.environ.get("GH_TOKEN", ""))
         res = subprocess.run([os.environ.get("GH", "gh"), "api", "--paginate", "--slurp",

@@ -2,8 +2,8 @@
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
 # (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
 # no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. All three
-# reports go in .github-private (members only), never this public repo, since each lists weaknesses,
-# and this public log shows only pass or fail (design 6.8). Last, keeps
+# reports go in .github-private (members only), never this public repo, since each lists weaknesses
+# (design 6.2), and the drift step's public log shows only pass or fail. Last, keeps
 # one `automation-failures` issue listing what failed with no one told: scheduled runs, Renovate's
 # problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
 # secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
@@ -57,9 +57,14 @@ jobs:
           python3 scripts/verify-settings.py > verify.txt 2>&1
           code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          # Only the verdict: this log is public, and the drift lines say what is weak (design 6.8).
-          # The details go in the drift issue in .github-private.
-          if [ "$code" -eq 0 ]; then echo "PASS"; else echo "FAIL (exit $code): see the settings-drift issue in .github-private"; fi
+          # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2).
+          # The details go in the drift issue in .github-private. A crash (any other exit) prints its
+          # error, which names no setting, so it can be diagnosed.
+          case "$code" in
+            0) echo "PASS" ;;
+            1) echo "FAIL: live settings differ; see the settings-drift issue in .github-private" ;;
+            *) echo "verify-settings.py crashed (exit $code):"; grep -v '^  - ' verify.txt ;;
+          esac
 
       - name: Log in as the automation app
         id: automation
