@@ -14,6 +14,12 @@ on:
 permissions:
   contents: read
 
+# Only a new commit starts this (no edited or assigned events), so a cancelled run is always one the
+# PR's head has moved past.
+concurrency:
+  group: action-pins-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   action-pins:
     runs-on: ubuntu-latest

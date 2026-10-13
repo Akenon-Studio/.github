@@ -22,7 +22,8 @@ added to only by a reviewed PR a partner approves (design 6.4).
 
 Usage: scripts/action_pins.py <base sha> [repo dir]   (diffs <base>...HEAD; reads GITHUB_TOKEN, or
 falls back to `gh api` when it isn't set)
-In Actions it runs as the `action-pins` step of the reusable pr-title workflow.
+In Actions it runs as .github's main copy of .github/workflows/action-pins.yml, which the org
+ruleset in rulesets/org-rulesets.json requires on every managed repo.
 """
 
 import json
@@ -140,8 +141,15 @@ def check(get, pins, extra):
         try:
             if repo not in defaults:
                 defaults[repo] = get(f"repos/{repo}")["default_branch"]
-            found = next((b for b in [defaults[repo], *extra.get(repo, [])] if on_branch(get, repo, b, sha)),
-                         None)
+            found = None if not on_branch(get, repo, defaults[repo], sha) else defaults[repo]
+            for branch in extra.get(repo, []) if not found else []:
+                try:
+                    if on_branch(get, repo, branch, sha):
+                        found = branch
+                        break
+                except urllib.error.HTTPError as e:
+                    if e.code != 404:  # a listed branch since deleted upstream; try the next
+                        raise
             problem = None if found else (
                 f"not on {repo}'s default branch ({defaults[repo]})"
                 + (f" or its listed branches ({', '.join(extra[repo])})" if extra.get(repo) else "")
@@ -154,22 +162,29 @@ def check(get, pins, extra):
     return results
 
 
+def error(where, message):
+    """A workflow `::error` annotation. The file name and message come from the PR, so they are
+    escaped the way GitHub reads them: one line, and nothing that ends a property early."""
+    data = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    path, _, line = where.rpartition(":") if where.rpartition(":")[2].isdigit() else (where, "", "")
+    prop = path.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
+    return f"::error file={prop}{',line=' + line if line else ''}::{data}"
+
+
 def run(root, base, get, extra):
     """Every line to print, and whether the check passes."""
     added, problems = new_uses(root, base)
-    lines = [f"::error file={path}::{problem}" for path, problem in problems]
+    lines = [error(path, problem) for path, problem in problems]
     pins = {}
     for value, where in sorted(added.items()):
         pin, problem = classify(value)
         if problem:
-            lines += [f"::error file={w.rsplit(':', 1)[0]},line={w.rsplit(':', 1)[1]}::{value}: {problem}"
-                      for w in where]
+            lines += [error(w, f"{value}: {problem}") for w in where]
         elif pin:
             pins.setdefault(pin, []).extend(where)
     for (repo, sha), where, problem, found in check(get, pins, extra) if pins else []:
         if problem:
-            lines += [f"::error file={w.rsplit(':', 1)[0]},line={w.rsplit(':', 1)[1]}::{repo}@{sha}: {problem}"
-                      for w in where]
+            lines += [error(w, f"{repo}@{sha}: {problem}") for w in where]
         else:
             lines.append(f"OK {repo}@{sha[:12]}: on {found} ({', '.join(where)})")
     failed = any(line.startswith("::error") for line in lines)

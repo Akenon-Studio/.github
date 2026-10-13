@@ -10,7 +10,7 @@ import urllib.error
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from action_pins import allowed_branches, check, classify, run, uses_values  # noqa: E402
+from action_pins import allowed_branches, check, classify, error, run, uses_values  # noqa: E402
 
 GOOD = "a" * 40
 TAG_ONLY = "b" * 40
@@ -34,6 +34,8 @@ def fake_api(branches, missing=(), tags=None):
             return {"default_branch": next(iter(branches[repo]))}
         if parts[3] == "branches":
             name = "/".join(parts[4:]).replace("%2F", "/")
+            if name not in branches[repo]:
+                raise urllib.error.HTTPError(path, 404, "Branch not found", {}, None)
             return {"commit": {"sha": branches[repo][name][-1]}}
         base, sha = parts[4].split("...")
         base = tags.get(repo, {}).get(base, base)
@@ -106,6 +108,10 @@ class Check(unittest.TestCase):
         self.assertIn("default branch (master)", self.problems(pins)["rel/action"])
         self.assertIsNone(self.problems(pins, {"rel/action": ["releases/v4"]})["rel/action"])
 
+    def test_a_deleted_listed_branch_doesnt_hide_a_later_one(self):
+        pins = {("rel/action", RELEASE): ["a:1"]}
+        self.assertIsNone(self.problems(pins, {"rel/action": ["releases/v3", "releases/v4"]})["rel/action"])
+
     def test_a_fork_commit_ahead_of_the_branch_fails(self):
         fork = "f" * 40
         self.assertIn("pushed only to a tag", self.problems({("actions/checkout", fork): ["a:1"]})["actions/checkout"])
@@ -175,6 +181,13 @@ class Run(unittest.TestCase):
         lines, ok = run(self.root, self.base, fake_api({}), {})
         self.assertFalse(ok)
         self.assertIn("couldn't be read as YAML", lines[0])
+
+
+class Error(unittest.TestCase):
+    def test_pr_text_stays_on_one_line(self):
+        self.assertEqual(error("a b,c:d.yml:7", "x\ny 100%"),
+                         "::error file=a b%2Cc%3Ad.yml,line=7::x%0Ay 100%25")
+        self.assertEqual(error("f.yml", "bad"), "::error file=f.yml::bad")
 
 
 class AllowedBranches(unittest.TestCase):
