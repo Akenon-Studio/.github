@@ -23,9 +23,11 @@ def run(code):
 
 
 class QuietRunTest(unittest.TestCase):
-    def test_a_success_prints_its_output(self):
+    def test_a_success_prints_only_that_it_passed(self):
         r = run("print('3 open alert(s)')")
-        self.assertEqual((r.returncode, r.stdout), (0, "3 open alert(s)\n"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("collect passed", r.stdout)
+        self.assertNotIn("alert", r.stdout)
 
     def test_a_crash_prints_only_the_exception_type(self):
         r = run("raise KeyError('platform: required check missing')")

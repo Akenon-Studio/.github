@@ -2,9 +2,9 @@
 """Run a command for a public workflow log without letting its errors show a weakness (design 6.2).
 
 The daily settings check runs in the public `.github` repo, so anyone can read its logs. An error
-message there can name a repo, a setting or an alert. This runs the command, and prints its output
-only when it succeeds; when it fails, it prints the exit code and the Python exception's type,
-never its message.
+message there can name a repo, a setting or an alert, and even a count says something. This runs
+the command and prints only whether it passed; when it fails, the exit code and the Python
+exception's type, never its message or output.
 
 Usage: scripts/quiet_run.py <command> [args...]
        scripts/quiet_run.py --verdict <verify.txt> <code>   the verify step's verdict line
@@ -46,7 +46,7 @@ def main(argv):
         return 2
     run = subprocess.run(argv, capture_output=True, text=True)
     if run.returncode == 0:
-        sys.stdout.write(run.stdout)
+        print(f"{' '.join(argv[:3])} passed")
     else:
         print(f"{' '.join(argv[:3])} failed (exit {run.returncode}): {error_type(run.stdout + run.stderr)}")
     return run.returncode
