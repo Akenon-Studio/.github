@@ -12,12 +12,10 @@ Usage: scripts/sensitive_paths.py <repo>                 print the repo's CODEOW
 
 import json
 import pathlib
-import re
 import sys
 
 RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "sensitive-paths.json"
 ORG = "akenon-studio"
-GENERATED = re.compile(rf"(\*|/\S+) @{ORG}/[A-Za-z0-9_.-]+")
 BEGIN = "# Sensitive areas (design 6.2), generated from Akenon-Studio/.github's"
 HEADER = (f"{BEGIN}\n# rulesets/sensitive-paths.json by scripts/sensitive_paths.py, and checked by its\n"
           "# verify-settings.py. Edit that file, not these lines; they stay last, to override the rest.\n")
@@ -56,9 +54,9 @@ def matches(pattern, file):
 
 def sensitive(repo, files, path=RULES):
     """{file: [area names]} for the files a sensitive pattern covers."""
-    hits = {}
+    hits, found = {}, patterns(repo, path=path)
     for f in files:
-        names = [a["area"] for p, a in patterns(repo, path=path) if matches(p, f)]
+        names = [a["area"] for p, a in found if matches(p, f)]
         if names:
             hits[f] = sorted(set(names), key=names.index)
     return hits
@@ -91,19 +89,37 @@ def codeowners_problems(repo, text, path=RULES):
     return []
 
 
-def after_block(text):
-    """Lines after the generated block's header that look hand-written (not `<pattern> @org/team`
-    lines it could have generated), which a rewrite would otherwise drop."""
+def after_block(text, repo, path=RULES):
+    """Lines after the generated block's header that the block doesn't produce now, which a rewrite
+    would otherwise drop: a person's line, or a stale generated one they delete by hand."""
     at = text.find(BEGIN)
     if at < 0:
         return []
+    want = set(block(repo, path).splitlines())
     lines = text[at:].splitlines()[3:]  # the header is three comment lines
-    return [l for l in lines if l.strip() and not GENERATED.fullmatch(l.strip())]
+    return [l for l in lines if l.strip() and l not in want]
+
+
+def path_problems(repo, files, path=RULES):
+    """What is wrong with a repo's sensitive paths against its files: a path that no longer
+    exists (moved or renamed, so it protects nothing), a planned one whose parent folder doesn't
+    exist (a typo, or the layout changed), or a planned one that now exists (move it to 'paths')."""
+    problems = []
+    for a in areas(path):
+        for p in a["paths"].get(repo, []):
+            if p != "*" and not any(matches(p, f) for f in files):
+                problems.append(f"{p} ({a['area']}) doesn't exist")
+        for p in a.get("planned", {}).get(repo, []):
+            if any(matches(p, f) for f in files):
+                problems.append(f"planned {p} ({a['area']}) now exists: move it to 'paths'")
+            elif not any(f.startswith(p[1:].rstrip("/").rsplit("/", 1)[0] + "/") for f in files):
+                problems.append(f"planned {p} ({a['area']}): its parent folder doesn't exist")
+    return problems
 
 
 def write(repo, file, path=RULES):
     old = pathlib.Path(file).read_text() if pathlib.Path(file).exists() else ""
-    stray = after_block(old)
+    stray = after_block(old, repo, path)
     if stray:  # never drop a person's line silently: they move it above the block
         raise SystemExit(f"{file}: these lines are after the generated block; move them above it "
                          "(or delete them if they were generated), then run this again:\n"

@@ -130,11 +130,10 @@ def main():
             problems += [f"{repo}/{owners}: {d}" for d in sensitive_paths.codeowners_problems(repo, text)]
         elif owners is None and sensitive_paths.block(repo):
             problems.append(f"{repo}: no CODEOWNERS, but rulesets/sensitive-paths.json gives it a sign-off")
-        # a sensitive path that no longer exists protects nothing (design 6.2): moved or renamed
-        problems += [f"{repo}: rulesets/sensitive-paths.json names {p} ({a['area']}), which doesn't exist"
-                     for p, a in sensitive_paths.patterns(repo)
-                     if p != "*" and p not in a.get("planned", {}).get(repo, [])
-                     and not any(sensitive_paths.matches(p, f) for f in files)]
+        elif owners:
+            print(f"note: can't read {repo}/{owners}; its sensitive-areas block not checked")
+        problems += [f"{repo}: rulesets/sensitive-paths.json: {d}"
+                     for d in sensitive_paths.path_problems(repo, files)]
 
     for path in CALLERS:
         want = triggers((ROOT / path).read_text())

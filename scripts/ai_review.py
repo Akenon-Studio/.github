@@ -600,8 +600,11 @@ def prompt_main(repo, base, design_path, settled_path=None):
         raise SystemExit(f"can't read the design for {repo} from {design_path}")
     history = ""
     if settled_path:
-        with open(settled_path) as f:
-            history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
+        try:
+            with open(settled_path) as f:
+                history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
+        except OSError as e:
+            raise SystemExit(f"can't read the settled findings from {settled_path}: {e}")
     budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
     whole, omitted = full_files(review_paths(files, repo), budget=budget)
     system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,

@@ -15,7 +15,7 @@ from rules import load, managed_repos  # noqa: E402
 class FileTest(unittest.TestCase):
     def test_every_pattern_is_in_the_allowed_syntax(self):
         for a in sp.areas():
-            for repo, patterns in a["paths"].items():
+            for repo, patterns in list(a["paths"].items()) + list(a.get("planned", {}).items()):
                 for p in patterns:
                     self.assertTrue(sp.valid(p), f"{a['area']}: {repo}: {p}")
 
@@ -23,6 +23,7 @@ class FileTest(unittest.TestCase):
         repos, teams = set(managed_repos()), {t["slug"] for t in load("teams.json")["teams"]}
         for a in sp.areas():
             self.assertLessEqual(set(a["paths"]) - {"*"}, repos, a["area"])
+            self.assertLessEqual(set(a.get("planned", {})), repos, a["area"])
             if a["codeowners"]:
                 self.assertIn(a["team"], teams, a["area"])
 
@@ -74,11 +75,11 @@ class BlockTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             f = pathlib.Path(d, "CODEOWNERS")
             f.write_text("# Docs owners\ndocs/ @akenon-studio/engineers\n\n" + sp.HEADER
-                         + "/old/ @akenon-studio/engineers\n")
+                         + "/.github/ @akenon-studio/engineers\n")  # an older block, part of today's
             sp.write("platform", f)
             text = f.read_text()
             self.assertTrue(text.startswith("# Docs owners\ndocs/ @akenon-studio/engineers\n\n"))
-            self.assertNotIn("/old/", text)
+            self.assertEqual(text.count(sp.BEGIN), 1)
             self.assertEqual(sp.codeowners_problems("platform", text), [])
 
     def test_write_refuses_to_drop_a_hand_line_after_the_block(self):
@@ -89,6 +90,27 @@ class BlockTest(unittest.TestCase):
                 sp.write("platform", f)
             self.assertIn("docs/ @akenon-studio/design", str(stop.exception))
             self.assertIn("docs/ @akenon-studio/design", f.read_text())  # left as it was
+
+    def test_write_refuses_a_hand_line_shaped_like_a_generated_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d, "CODEOWNERS")
+            f.write_text(sp.block("platform") + "/docs/ @akenon-studio/design\n")
+            with self.assertRaises(SystemExit):
+                sp.write("platform", f)
+
+    def test_path_problems(self):
+        files = ["apps/web/src/lib/auth/a.ts", "apps/api/src/modules/catalogue/x.ts",
+                 "apps/api/src/modules/payouts/p.ts"]
+        found = sp.path_problems("platform", files)
+        self.assertIn("/packages/runtime/ (the sandbox and runtime security) doesn't exist", found)
+        self.assertNotIn("/apps/web/src/lib/auth/ (accounts and sign-in) doesn't exist", found)
+        self.assertIn("planned /apps/api/src/modules/payouts/ (payments) now exists: move it to 'paths'", found)
+        self.assertNotIn("planned /apps/api/src/modules/purchases/ (payments): its parent folder doesn't exist",
+                         found)  # modules/ exists
+        self.assertFalse([x for x in found if "review-worker" in x])  # planned, and apps/ exists
+        self.assertIn("planned /apps/review-worker/ (the sandbox and runtime security): its parent folder "
+                      "doesn't exist", sp.path_problems("platform", ["README.md"]))
+        self.assertEqual(sp.path_problems("peras", ["README.md"]), [])  # '*' always exists
 
     def test_whole_repo_lines_come_first(self):
         lines = sp.block("peras").splitlines()[3:]

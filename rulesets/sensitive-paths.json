@@ -1,5 +1,5 @@
 {
-  "_comment": "The sensitive paths (design 6.2, 6.4), listed once. A change touching one needs local AI review runs until one is clean (peras/core/workspace/bin/review-branch.py reads this file); an area with 'codeowners' also gets a CODEOWNERS sign-off, which scripts/sensitive_paths.py generates as the last block of each repo's CODEOWNERS (last match wins, so it overrides the docs-owner lines above it, which stay by hand, design 6.5) and verify-settings.py checks. 'paths' maps a repo ('*': every managed repo) to its patterns, in CODEOWNERS syntax limited to: '*' (the whole repo), '/dir/' (a folder and everything in it) or '/path/file' (one file), all from the repo's root. 'planned' lists folders 4.2 plans but that don't exist yet (the API's payment and account modules), covered from the day they land; verify-settings.py checks every other path exists. 'team' owns the sign-off (rulesets/teams.json).",
+  "_comment": "The sensitive paths (design 6.2, 6.4), listed once. A change touching one needs local AI review runs until one is clean (peras/core/workspace/bin/review-branch.py reads this file); an area with 'codeowners' also gets a CODEOWNERS sign-off, which scripts/sensitive_paths.py generates as the last block of each repo's CODEOWNERS (last match wins, so it overrides the docs-owner lines above it, which stay by hand, design 6.5) and verify-settings.py checks. 'paths' maps a repo ('*': every managed repo) to its patterns, in CODEOWNERS syntax limited to: '*' (the whole repo), '/dir/' (a folder and everything in it) or '/path/file' (one file), all from the repo's root. 'planned' lists folders 4.2 plans but that don't exist yet (the API's payment and account modules, the review worker), covered from the day they land; verify-settings.py checks every other path exists, that a planned path's parent folder does, and reports a planned path that now exists so it moves to 'paths'. 'team' owns the sign-off (rulesets/teams.json).",
   "areas": [
     {"area": "the design", "codeowners": false,
      "paths": {"handbook": ["/design.md"]}},
@@ -20,7 +20,8 @@
      "paths": {"platform": ["/packages/runtime/", "/apps/desktop/src/host/", "/apps/desktop/src/main/",
                             "/apps/desktop/src/preload/",
                             "/apps/web/src/lib/security/"],
-               "animations": ["/tools/validator/"]}},
+               "animations": ["/tools/validator/"]},
+     "planned": {"platform": ["/apps/review-worker/"]}},
     {"area": "Peras", "codeowners": true, "team": "engineers",
      "paths": {"peras": ["*"]}}
   ]
