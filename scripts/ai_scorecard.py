@@ -33,7 +33,7 @@ import os
 import sys
 
 from one_issue import keep
-from rules import ORG, managed_repos, org_people
+from rules import ORG, acts_for, managed_repos
 
 REPO = f"{ORG}/.github"
 LABEL = "ai-scorecard"
@@ -59,7 +59,7 @@ PR_QUERY = """query($owner: String!, $name: String!, $n: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
     reviews(first: 100) { nodes { id author { login } body submittedAt commit { oid } } }
     reviewThreads(first: 100) { nodes { isResolved path
-      comments(first: 30) { nodes { author { login } body url diffHunk pullRequestReview { id } } } } } } } }"""
+      comments(first: 30) { nodes { author { __typename login } body url diffHunk pullRequestReview { id } } } } } } } }"""
 
 
 def gh_json(*args):
@@ -172,7 +172,6 @@ def pr_record(repo, number, url, data, read=file_at):
     round_of = {r["id"]: i + 1 for i, r in enumerate(rounds)}
     costs = [cost(u) for u in map(usage_of, (r["body"] for r in reviews)) if u]
     first_commit = rounds[0]["commit"]["oid"] if rounds else None
-    people = org_people()
     seen = {}  # path -> its text at round one's commit
     threads = []
     for t in data["reviewThreads"]["nodes"]:
@@ -190,9 +189,11 @@ def pr_record(repo, number, url, data, read=file_at):
                 if t["path"] not in seen:
                     seen[t["path"]] = read(repo, first_commit, t["path"]) or ""
                 late = was_there(lines, seen[t["path"]])
-        # only the org's people answer a finding (design 6.2): an outsider's reply is not counted
+        # only the org's people and apps answer a finding (design 6.2): an outsider's reply is not
+        # counted, in any repo (a private one has no outsiders to drop)
         replies = [c["body"] for c in comments[1:]
-                   if ((c.get("author") or {}).get("login") or "").lower() in people]
+                   if (c.get("author") or {}).get("login") not in REVIEWER
+                   and acts_for(c.get("author"), private=False)]
         threads.append({"url": first["url"], "severity": level, "round": round_no, "late": late,
                         "resolved": t["isResolved"], "outcome": outcome(replies)})
     return {"repo": repo, "number": number, "url": url, "rounds": len(rounds),

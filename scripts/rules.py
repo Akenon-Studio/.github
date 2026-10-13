@@ -109,6 +109,16 @@ REPO_SETTINGS_GRAPHQL = {
 # on with PUT and off with DELETE (design 6.4: Dependabot alerts on every repo).
 REPO_SETTING_ENDPOINTS = {"vulnerability_alerts": "vulnerability-alerts"}
 
+# A public repo runs no workflow from an outsider's fork PR until a member approves the run (design
+# 6.2): an unapproved one can't post a check of its own, such as a fake `pr-author`. Private repos
+# take no fork PRs from outside, and the endpoint is for public repos.
+FORK_APPROVAL = "all_external_contributors"
+FORK_APPROVAL_ENDPOINT = "actions/permissions/fork-pr-contributor-approval"
+
+
+def is_public(repo):
+    return not gh(f"repos/{ORG}/{repo}")["private"]
+
 
 def repo_settings(repo):
     """A repo's settings from repo-settings.json, keyed by their REST names."""

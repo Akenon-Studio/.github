@@ -36,6 +36,8 @@ import time
 import urllib.error
 import urllib.request
 
+from rules import acts_for
+
 LABEL = "ready-to-merge"
 POLL = 15                 # seconds between looks at a PR
 CHECKS_TIMEOUT = 40 * 60  # the longest one PR may stay at the front before it leaves the lane
@@ -62,7 +64,7 @@ PR = """query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number state isDraft mergeable mergeStateStatus reviewDecision headRefOid baseRefName
-      author { __typename login }
+      author { __typename login } repository { isPrivate }
       labels(first: 100) { nodes { name } }
       reviewThreads(first: 100) { nodes { isResolved } }
       timelineItems(itemTypes: [ISSUE_COMMENT, LABELED_EVENT], last: 30) { nodes {
@@ -181,6 +183,10 @@ def decide(pr, required, missing_for, threads_required=True):
         return "drop", f"it targets `{pr['baseRefName']}`, and the lane merges only into `main`"
     if pr["isDraft"]:
         return "drop", "it is a draft"
+    if not acts_for(pr.get("author"), (pr.get("repository") or {}).get("isPrivate", False)):
+        return "drop", ("its author isn't in rulesets/teams.json or rulesets/bots.json, and an "
+                        "outsider's PR in a public repo is never merged: a member re-creates the "
+                        "change as their own PR (design 6.2)")
     if pr["mergeable"] == "CONFLICTING" or pr["mergeStateStatus"] == "DIRTY":
         return "drop", "it conflicts with main: merge main in and resolve it"
     if too_many_checks(pr):

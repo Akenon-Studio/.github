@@ -1,6 +1,9 @@
 # Required in this public repo: a PR merges only if its author is a person in rulesets/teams.json or
 # an app in rulesets/bots.json (design 6.2). An outsider's PR is never merged; a member re-creates
-# the change as their own PR. Only .github is public; a repo made public gets this check too.
+# the change as their own PR. Only .github is public: whoever makes another repo public adds this
+# workflow and the check to it by hand. The merge lane refuses such a PR too, and an outsider's
+# fork workflows wait for a member's approval (rules.FORK_APPROVAL), so a fake `pr-author` job
+# never runs unless a member lets it.
 #
 # pull_request_target runs main's copy of this workflow and of the script, so a PR can't change
 # the check that judges it. It checks out no PR code and holds no secret.

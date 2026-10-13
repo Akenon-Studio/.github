@@ -136,3 +136,20 @@ class ReusableWorkflowsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrAuthorTest(unittest.TestCase):
+    """The required check that refuses an outsider's PR (design 6.2) can't be changed by the PR."""
+
+    def test_it_runs_mains_copy_with_no_secret(self):
+        import json
+        workflow = load("pr-author.yml")
+        self.assertEqual(list(workflow["on"]), ["pull_request_target"])
+        steps = workflow["jobs"]["pr-author"]["steps"]
+        checkout = steps[0]["with"]
+        self.assertEqual(checkout["ref"], "main")
+        self.assertIs(checkout["persist-credentials"], False)
+        self.assertNotIn("secrets", (WORKFLOWS / "pr-author.yml").read_text())
+        self.assertTrue(steps[-1]["run"].endswith("--require"))
+        checks = json.loads((WORKFLOWS.parent.parent / "rulesets" / "required-checks.json").read_text())
+        self.assertIn("pr-author", checks[".github"])
