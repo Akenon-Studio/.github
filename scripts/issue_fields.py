@@ -573,7 +573,8 @@ def by_automation(comment):
     """True for a comment the automation app wrote (REST `user` or GraphQL `author`): a marker
     alone doesn't make one ours, since anyone can type it (design 6.2)."""
     who = comment.get("user") or comment.get("author") or {}
-    return bot_login(who.get("login")) == AUTOMATION_APP
+    return (who.get("__typename", who.get("type")) == "Bot"
+            and bot_login(who.get("login")) == AUTOMATION_APP)
 
 
 def our_comment(repo, number):

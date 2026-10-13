@@ -39,7 +39,7 @@ from reason import FIELD as REASON_FIELD
 from rules import ORG, acts_for, automation_owners, gh, managed_repos, status_page, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
-ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body author {{ login }} }} }} }}"
+ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body author {{ __typename login }} }} }} }}"
 
 PR_MARKER = "<!-- pr-conflicts -->"
 RESOLVED = "**Resolved:**"
@@ -48,7 +48,7 @@ RESOLVED = "**Resolved:**"
 PR_SEARCH = """... on PullRequest { number mergeable baseRefName headRefOid
   author { __typename login } repository { nameWithOwner isPrivate }
   assignees(first: 20) { nodes { login } }
-  comments(last: 100) { nodes { databaseId body author { login } } } }"""
+  comments(last: 100) { nodes { databaseId body author { __typename login } } } }"""
 
 
 def search(query, fields=ISSUE_SEARCH):

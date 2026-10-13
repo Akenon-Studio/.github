@@ -18,7 +18,7 @@ FORMS = load_forms()
 BOARD = "PVT_board"
 
 
-APP = {"login": "akenon-studio-automation"}  # the automation, which writes the notices
+APP = {"__typename": "Bot", "login": "akenon-studio-automation"}  # the automation, which writes the notices
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User", assignees=("someone",), ever=("someone",), issue_type="Task", answers=None,
@@ -134,6 +134,13 @@ class OutOfDateTest(unittest.TestCase):
         text = problems_text(link_problems("Task", False, "Todo", 0))
         self.assertFalse(out_of_date(issue(parent=False, labels=["needs-fields"], comments=[text]),
                                      FORMS, BOARD))
+
+    def test_a_comment_someone_else_marked_is_not_ours(self):
+        # design 6.2: the right text, but typed by a person, so the app's comment is still missing
+        text = problems_text(link_problems("Task", False, "Todo", 0))
+        faked = issue(parent=False, labels=["needs-fields"], comments=[text])
+        faked["comments"]["nodes"][0]["author"] = {"__typename": "User", "login": "akenon-studio-automation"}
+        self.assertTrue(out_of_date(faked, FORMS, BOARD))
 
     def test_labelled_with_a_stale_comment_is_synced(self):
         stale = problems_text(["**Why** is required but empty."])

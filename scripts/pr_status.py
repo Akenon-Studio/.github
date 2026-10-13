@@ -13,6 +13,8 @@ Usage: scripts/pr_status.py <event.json>   (a pull_request_target event; issue-f
 
 Each Status change also brings the issue's Reason board field in step (Review while In review).
 
+In a public repo, an outsider's issue is left alone (design 6.2).
+
 The issues are the PR's closing references (its `Closes #n` lines), only in repos the PR's author
 can write to: the text is theirs and the app's token reaches every repo. A fork's PR changes
 nothing. Runs as the org app.
