@@ -50,10 +50,11 @@ class QuietRunTest(unittest.TestCase):
 
 class VerdictTest(unittest.TestCase):
     def test_pass_drift_and_crash(self):
-        self.assertEqual(quiet_run.verdict(0, "PASS: ...")[0], 0)
-        code, line = quiet_run.verdict(1, "\nFAIL: live settings differ from rulesets/:\n  - org: 2FA off")
-        self.assertEqual(code, 1)
-        self.assertNotIn("2FA", line)
+        passed = quiet_run.verdict(0, "PASS: ...")
+        drift = quiet_run.verdict(1, "\nFAIL: live settings differ from rulesets/:\n  - org: 2FA off")
+        self.assertEqual((passed[0], drift[0]), (0, 1))
+        # The public log can't tell drift from a pass: that would itself show a weakness
+        self.assertEqual(passed[1], drift[1])
         # A Python crash also exits 1, but has no FAIL line
         code, line = quiet_run.verdict(1, "Traceback (most recent call last):\nKeyError: 'platform'")
         self.assertEqual((code, line), (2, "verify-settings.py crashed: KeyError"))
@@ -65,18 +66,10 @@ class ReportsArePrivateTest(unittest.TestCase):
         self.assertEqual(report_drift.REPO, "akenon-studio/.github-private")
         self.assertEqual(stale_alerts.REPO, "akenon-studio/.github-private")
 
-    def test_unreadable_repos_are_counted_not_named(self):
-        saved = stale_alerts.managed_repos, stale_alerts.try_gh
-        stale_alerts.managed_repos = lambda: ["platform"]
-        stale_alerts.try_gh = lambda *a: None
-        try:
-            with self.assertRaises(SystemExit) as e:
-                stale_alerts.collect("/dev/null")
-        finally:
-            stale_alerts.managed_repos, stale_alerts.try_gh = saved
-        self.assertIn("1 repo(s)", str(e.exception.code))
-        self.assertNotIn("platform", str(e.exception.code))
-
+    def test_quiet_run_hides_the_unreadable_repos_names(self):
+        r = run("import sys; sys.exit('Could not read Dependabot alerts in platform (alerts off)')")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("platform", r.stdout + r.stderr)
 
 if __name__ == "__main__":
     unittest.main()

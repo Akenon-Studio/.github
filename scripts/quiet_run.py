@@ -28,10 +28,11 @@ def error_type(output):
 def verdict(code, output):
     """(code, line) for a verify-settings.py run: exit 1 is drift only with its FAIL line, any
     other failure a crash (2), logged by the exception's type alone."""
+    # Pass and drift log the same line: whether there was drift is itself a weakness (design 6.2)
     if code == 0:
-        return 0, "PASS"
+        return 0, "Checked; the result is in .github-private"
     if code == 1 and re.search(r"^FAIL: ", output, re.M):
-        return 1, "FAIL: live settings differ; see the settings-drift issue in .github-private"
+        return 1, "Checked; the result is in .github-private"
     return 2, f"verify-settings.py crashed: {error_type(output)}"
 
 

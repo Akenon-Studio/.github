@@ -51,8 +51,8 @@ def collect(path):
     print(f"{len(alerts)} open alert(s)")
     if skipped:
         # Fail rather than report: an incomplete list would close the issue for alerts still open.
-        # A count, not the names: this public log mustn't say which repo has alerts off (design 6.2).
-        sys.exit(f"Could not read Dependabot alerts in {len(skipped)} repo(s) (alerts off, or the "
+        # The names help an owner running it locally; in the public workflow quiet_run.py hides them.
+        sys.exit(f"Could not read Dependabot alerts in {', '.join(skipped)} (alerts off, or the "
                  "settings app lacks Dependabot alerts: read)")
 
 
