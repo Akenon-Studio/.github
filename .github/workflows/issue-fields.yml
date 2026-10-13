@@ -7,6 +7,7 @@
 # (scripts/pr_status.py). On a new comment, a `Waiting on` line sets Waiting for human and a later
 # comment without one takes it back (scripts/comment_status.py). Each keeps the board's Reason field
 # (why the item waits on a person, scripts/reason.py) in step.
+# In a public repo it acts only for members and the org's bots (scripts/trusted_event.py, design 6.2).
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
 #
 #   on: { issues: { types: [opened, edited, reopened, typed, untyped] },
@@ -37,7 +38,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync:
+  # In a public repo, only members' and the org's bots' issues, PRs and comments reach the job that
+  # holds the Automation app's key, which reads .github-private (design 6.2). This job holds no
+  # secret; an outsider's issue or PR is left alone, and issue-sweep skips it too.
+  gate:
     # Renovate's status pages (its dashboard and config-error issue) are not work: no job at all
     # (design 6.8). The titles are rulesets/bots.json's `status_pages`; tests/test_workflows.py
     # checks they match.
@@ -46,6 +50,25 @@ jobs:
          github.event.issue.user.login == 'akenon-studio-renovate[bot]') &&
         (github.event.issue.title == 'Dependency Dashboard' ||
          github.event.issue.title == 'Action Required: Fix Renovate Configuration'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      trusted: ${{ steps.check.outputs.trusted }}
+    steps:
+      - name: Get the scripts and the team list
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          persist-credentials: false
+
+      - name: Members and the org's bots only, in a public repo
+        id: check
+        run: python3 scripts/trusted_event.py "$GITHUB_EVENT_PATH"
+
+  sync:
+    needs: gate  # skipped too when gate is
+    if: needs.gate.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

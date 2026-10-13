@@ -211,6 +211,25 @@ def status_page(author, title):
     return title in (bot_sources().get(login) or {}).get("status_pages", [])
 
 
+def org_people():
+    """Every person in the org, as lowercase logins: the members of the teams in
+    rulesets/teams.json (verify-settings.py keeps the teams exact)."""
+    return {m.lower() for t in load("teams.json")["teams"] for m in t["members"]}
+
+
+def acts_for(author, private):
+    """True if the automation holding the Automation app's key may act on an issue, PR or comment
+    by `author` (the GraphQL or REST actor) in a repo that is `private` (design 6.2): any in a
+    private repo; in a public one, only a person in the org or one of the org's own bots
+    (rulesets/bots.json), so no outsider's text reaches a job holding the key."""
+    if private:
+        return True
+    author = author or {}
+    if author.get("__typename", author.get("type")) == "Bot":
+        return bot_login(author.get("login")) in bot_sources()
+    return (author.get("login") or "").lower() in org_people()
+
+
 def renovate_logins():
     """The REST logins (with [bot]) of every Renovate in rulesets/bots.json (design 6.4)."""
     return [f"{login}[bot]" for login, s in bot_sources().items() if s.get("renovate")]

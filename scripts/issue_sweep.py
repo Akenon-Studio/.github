@@ -32,7 +32,7 @@ from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems,
                           epic_stale, flagged_status_page, load_forms, problems_text, reason_on,
                           reclose_due, status_on, sync, want_reason)
 from reason import FIELD as REASON_FIELD
-from rules import ORG, automation_owners, gh, managed_repos, status_page, try_gh
+from rules import ORG, acts_for, automation_owners, gh, managed_repos, status_page, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
 ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body }} }} }}"
@@ -42,7 +42,7 @@ RESOLVED = "**Resolved:**"
 # mergeable is CONFLICTING when mergeStateStatus is DIRTY. GitHub computes it lazily: UNKNOWN means
 # not computed yet (this query starts it), so the PR is skipped and caught on the next run.
 PR_SEARCH = """... on PullRequest { number mergeable baseRefName headRefOid
-  author { __typename login } repository { nameWithOwner }
+  author { __typename login } repository { nameWithOwner isPrivate }
   assignees(first: 20) { nodes { login } }
   comments(last: 100) { nodes { databaseId body } } }"""
 
@@ -92,10 +92,12 @@ def managed_status_page(issue, managed):
 
 
 def in_managed_repo(issue, managed):
-    """True for an issue or PR in a managed repo, a bot's status page aside (design 6.8)."""
+    """True for an issue or PR in a managed repo, a bot's status page aside (design 6.8), and in a
+    public repo only a member's or the org's bots' (design 6.2: an outsider's is left alone)."""
     owner, name = issue["repository"]["nameWithOwner"].split("/")
     return (owner.lower() == ORG and name in managed
-            and not status_page(issue.get("author"), issue.get("title")))
+            and not status_page(issue.get("author"), issue.get("title"))
+            and acts_for(issue.get("author"), issue["repository"].get("isPrivate", False)))
 
 
 def who_to_tell(pr):

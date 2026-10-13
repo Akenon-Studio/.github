@@ -20,13 +20,13 @@ BOARD = "PVT_board"
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User", assignees=("someone",), ever=("someone",), issue_type="Task", answers=None,
-          label_events=(), subs=(0, 0), login="someone", reason=None):
+          label_events=(), subs=(0, 0), login="someone", reason=None, private=True):
     return {"number": 1, "state": "OPEN", "body": body(**(answers or TASK)), "issueType": {"name": issue_type},
             "author": {"__typename": author, "login": login},
             "assignedActors": {"nodes": [{"__typename": "User", "login": a} for a in assignees]},
             "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": a}}
                                         for a in ever]},
-            "repository": {"nameWithOwner": repo},
+            "repository": {"nameWithOwner": repo, "isPrivate": private},
             "labels": {"nodes": [{"name": l} for l in labels]},
             "labelEvents": {"nodes": list(label_events)},
             "parent": {"number": 24} if parent else None,
@@ -146,11 +146,22 @@ class ManagedRepoTest(unittest.TestCase):
         self.assertFalse(in_managed_repo(issue(repo="Akenon-Studio/old-thing"), managed))
         self.assertFalse(in_managed_repo(issue(repo="someone/handbook"), managed))
 
+    def test_in_a_public_repo_only_members_and_the_orgs_bots(self):
+        # design 6.2: no outsider's issue or PR reaches a job holding the Automation key
+        managed = {".github"}
+        public = dict(repo="Akenon-Studio/.github", private=False)
+        self.assertTrue(in_managed_repo(issue(login="RuvinduH", **public), managed))
+        self.assertTrue(in_managed_repo(issue(author="Bot", login="akenon-studio-automation",
+                                              **public), managed))
+        self.assertFalse(in_managed_repo(issue(login="someone", **public), managed))
+        self.assertFalse(in_managed_repo(issue(author="Bot", login="someapp", **public), managed))
+        self.assertTrue(in_managed_repo(issue(repo="Akenon-Studio/.github", login="someone"), managed))
+
 
 def pr(mergeable="CONFLICTING", assignees=("alice",), author="User", comments=()):
     return {"number": 7, "mergeable": mergeable, "baseRefName": "main", "headRefOid": "h",
             "author": {"__typename": author, "login": "bob"},
-            "repository": {"nameWithOwner": "Akenon-Studio/animations"},
+            "repository": {"nameWithOwner": "Akenon-Studio/animations", "isPrivate": True},
             "assignees": {"nodes": [{"login": a} for a in assignees]},
             "comments": {"nodes": [{"databaseId": i, "body": c} for i, c in enumerate(comments, 1)]}}
 

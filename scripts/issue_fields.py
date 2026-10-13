@@ -331,7 +331,7 @@ def epic_stale(board_id, issue):
 
 # What the checks read about an issue; issue_sweep.py reads the same for many issues at once.
 ISSUE_FIELDS = """id number title state body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
-  repository { nameWithOwner }
+  repository { nameWithOwner isPrivate }
   parent { ANCESTORS }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
   subIssuesSummary { total completed }

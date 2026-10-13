@@ -33,9 +33,9 @@ import sys
 import reason
 from board import find_board_fields, graphql, spec
 from issue_fields import LABEL, report, set_field, set_reason
-from rules import AUTOMATION_OWNERS, ORG, bot_login, bot_sources, gh, managed_repos
+from rules import AUTOMATION_OWNERS, ORG, acts_for, bot_login, bot_sources, gh, managed_repos
 
-PR_FIELDS = """id number isDraft author { __typename login } repository { nameWithOwner }
+PR_FIELDS = """id number isDraft author { __typename login } repository { nameWithOwner isPrivate }
   labels(first: 50) { nodes { name } }
   closingIssuesReferences(first: 1) { totalCount }
   projectItems(first: 20) { nodes { id project { id }
@@ -60,10 +60,17 @@ def open_prs():
         after = data["search"]["pageInfo"]["endCursor"]
 
 
+def ours(pr, managed):
+    """True for a PR in a managed repo that the automation acts on: in a public repo, only the org's
+    own bots' (design 6.2: an outsider's app is left alone)."""
+    owner, name = pr["repository"]["nameWithOwner"].split("/")
+    return (owner.lower() == ORG and name in managed
+            and acts_for(pr["author"], pr["repository"].get("isPrivate", False)))
+
+
 def needs_review(pr, managed, team=AUTOMATION_OWNERS):
     """True for a bot's open PR in a managed repo that the team was never asked to review."""
-    owner, name = pr["repository"]["nameWithOwner"].split("/")
-    if owner.lower() != ORG or name not in managed:
+    if not ours(pr, managed):
         return False
     if (pr["author"] or {}).get("__typename") != "Bot":
         return False
@@ -73,9 +80,8 @@ def needs_review(pr, managed, team=AUTOMATION_OWNERS):
 
 def missing_source_label(pr, managed, sources):
     """The label to add to a listed bot's open PR that carries none of its source labels, or None."""
-    owner, name = pr["repository"]["nameWithOwner"].split("/")
     author = pr["author"] or {}
-    if owner.lower() != ORG or name not in managed or author.get("__typename") != "Bot":
+    if not ours(pr, managed) or author.get("__typename") != "Bot":
         return None
     source = sources.get(bot_login(author.get("login")))
     have = {l["name"] for l in pr["labels"]["nodes"]}
@@ -148,8 +154,7 @@ def board_pass(prs, managed, sources, dry_run):
     Returns how many PRs failed."""
     rule, board, failed = reason.rules(), None, 0
     for pr in prs:
-        owner, name = pr["repository"]["nameWithOwner"].split("/")
-        if owner.lower() != ORG or name not in managed or not reason.is_bot(pr["author"]):
+        if not ours(pr, managed) or not reason.is_bot(pr["author"]):
             continue
         qualifies = reason.pr_on_board(pr, rule)
         if not qualifies and not pr["projectItems"]["nodes"] and LABEL not in {
