@@ -3,6 +3,7 @@
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -12,9 +13,13 @@ import report_drift  # noqa: E402
 import stale_alerts  # noqa: E402
 
 
-def run(*code):
-    return subprocess.run([sys.executable, str(ROOT / "scripts" / "quiet_run.py"), sys.executable, "-c", *code],
-                          capture_output=True, text=True)
+def run(code):
+    """quiet_run.py on a script holding `code`, named as the workflow's steps are."""
+    with tempfile.TemporaryDirectory() as d:
+        script = pathlib.Path(d) / "step.py"
+        script.write_text(code)
+        return subprocess.run([sys.executable, str(ROOT / "scripts" / "quiet_run.py"), sys.executable,
+                               str(script), "collect"], capture_output=True, text=True)
 
 
 class QuietRunTest(unittest.TestCase):
@@ -26,6 +31,7 @@ class QuietRunTest(unittest.TestCase):
         r = run("raise KeyError('platform: required check missing')")
         self.assertEqual(r.returncode, 1)
         self.assertIn("KeyError", r.stdout)
+        self.assertIn("collect", r.stdout)  # names the step
         self.assertNotIn("platform", r.stdout + r.stderr)
 
     def test_an_exit_message_is_not_printed(self):
@@ -38,6 +44,18 @@ class QuietRunTest(unittest.TestCase):
         self.assertEqual(quiet_run.error_type("Traceback\nValueError: x\njson.decoder.JSONDecodeError: y"),
                          "json.decoder.JSONDecodeError")
         self.assertEqual(quiet_run.error_type("gh: Not Found (HTTP 404)"), "unknown")
+
+
+class VerdictTest(unittest.TestCase):
+    def test_pass_drift_and_crash(self):
+        self.assertEqual(quiet_run.verdict(0, "PASS: ...")[0], 0)
+        code, line = quiet_run.verdict(1, "\nFAIL: live settings differ from rulesets/:\n  - org: 2FA off")
+        self.assertEqual(code, 1)
+        self.assertNotIn("2FA", line)
+        # A Python crash also exits 1, but has no FAIL line
+        code, line = quiet_run.verdict(1, "Traceback (most recent call last):\nKeyError: 'platform'")
+        self.assertEqual((code, line), (2, "verify-settings.py crashed: KeyError"))
+        self.assertEqual(quiet_run.verdict(2, "gh: Not Found")[0], 2)
 
 
 class ReportsArePrivateTest(unittest.TestCase):

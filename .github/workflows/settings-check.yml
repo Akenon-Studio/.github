@@ -55,18 +55,10 @@ jobs:
         run: |
           set +e
           python3 scripts/verify-settings.py > verify.txt 2>&1
-          code=$?
-          # Exit 1 is drift only with verify-settings.py's FAIL line; anything else is a crash (2).
-          if [ "$code" -eq 1 ] && ! grep -q '^FAIL: ' verify.txt; then code=2; fi
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2).
-          # The details go in the drift issue in .github-private. A crash (any other exit) logs only
-          # the error's type: its message can name a repo or a setting.
-          case "$code" in
-            0) echo "PASS" ;;
-            1) echo "FAIL: live settings differ; see the settings-drift issue in .github-private" ;;
-            *) echo "verify-settings.py crashed: $(python3 -c 'import sys; sys.path.insert(0, "scripts"); from quiet_run import error_type; print(error_type(open("verify.txt").read()))')" ;;
-          esac
+          # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2);
+          # the details go in the drift issue in .github-private, and a crash shows only its type.
+          python3 scripts/quiet_run.py --verdict verify.txt "$?"
+          echo "code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Log in as the automation app
         id: automation
@@ -80,15 +72,17 @@ jobs:
       - name: Open, update or close the drift issue
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
-        run: python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
+        run: python3 scripts/quiet_run.py python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
 
       # After the drift report, so a failure here can't hide drift.
       - name: List open Dependabot alerts
+        if: ${{ !cancelled() }}  # a drift-step failure mustn't hide stale alerts
         env:
           GH_TOKEN: ${{ steps.settings.outputs.token }}
         run: python3 scripts/quiet_run.py python3 scripts/stale_alerts.py collect alerts.json
 
       - name: Log in as the automation app, every repo, read-only PRs (to see Renovate's)
+        if: ${{ !cancelled() }}  # a drift-step failure mustn't hide stale alerts
         id: pr-read
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -98,6 +92,7 @@ jobs:
           permission-pull-requests: read
 
       - name: Open, update or close the stale-alerts issue
+        if: ${{ !cancelled() }}  # a drift-step failure mustn't hide stale alerts
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
           PR_READ_TOKEN: ${{ steps.pr-read.outputs.token }}

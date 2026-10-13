@@ -7,7 +7,8 @@ only when it succeeds; when it fails, it prints the exit code and the Python exc
 never its message.
 
 Usage: scripts/quiet_run.py <command> [args...]
-Exit: the command's own exit code.
+       scripts/quiet_run.py --verdict <verify.txt> <code>   the verify step's verdict line
+Exit: the command's own exit code; for --verdict, 0 pass, 1 drift, 2 crash.
 """
 
 import re
@@ -24,7 +25,22 @@ def error_type(output):
     return found[-1] if found else "unknown"
 
 
+def verdict(code, output):
+    """(code, line) for a verify-settings.py run: exit 1 is drift only with its FAIL line, any
+    other failure a crash (2), logged by the exception's type alone."""
+    if code == 0:
+        return 0, "PASS"
+    if code == 1 and re.search(r"^FAIL: ", output, re.M):
+        return 1, "FAIL: live settings differ; see the settings-drift issue in .github-private"
+    return 2, f"verify-settings.py crashed: {error_type(output)}"
+
+
 def main(argv):
+    if argv[:1] == ["--verdict"]:
+        with open(argv[1]) as f:
+            code, line = verdict(int(argv[2]), f.read())
+        print(line)
+        return code
     if not argv:
         print("Usage: scripts/quiet_run.py <command> [args...]", file=sys.stderr)
         return 2
@@ -32,7 +48,7 @@ def main(argv):
     if run.returncode == 0:
         sys.stdout.write(run.stdout)
     else:
-        print(f"{' '.join(argv[:2])} failed (exit {run.returncode}): {error_type(run.stdout + run.stderr)}")
+        print(f"{' '.join(argv[:3])} failed (exit {run.returncode}): {error_type(run.stdout + run.stderr)}")
     return run.returncode
 
 

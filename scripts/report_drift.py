@@ -72,7 +72,8 @@ def main():
     output = open(sys.argv[1]).read()
     code = int(sys.argv[2])
     if code not in (0, 1):
-        sys.exit(f"verify-settings.py itself failed (exit {code}); see the log above")
+        sys.exit(f"verify-settings.py itself failed (exit {code}); the public log shows only its "
+                 "error type: run scripts/verify-settings.py as an org owner to see it")
     print(keep(REPO, LABEL, TITLE, body(output) if code == 1 else None))
 
 
