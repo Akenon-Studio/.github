@@ -60,8 +60,13 @@ def main():
             if ruleset["name"] not in have:
                 problems.append(f"org: ruleset '{ruleset['name']}' is missing")
             else:
-                problems += [f"org ruleset '{ruleset['name']}': {d}"
-                             for d in differences(ruleset, have[ruleset["name"]])]
+                live = have[ruleset["name"]]
+                # differences() compares a list of workflows exactly: keep only the keys we set,
+                # so a key GitHub adds to each (e.g. "sha") isn't drift
+                for rule in live.get("rules") or []:
+                    for i, w in enumerate((rule.get("parameters") or {}).get("workflows") or []):
+                        rule["parameters"]["workflows"][i] = {k: w.get(k) for k in ("repository_id", "path", "ref")}
+                problems += [f"org ruleset '{ruleset['name']}': {d}" for d in differences(ruleset, live)]
         for extra in sorted(set(have) - {r["name"] for r in desired_org_rulesets()}):
             print(f"note: org ruleset '{extra}' is not in rulesets/org-rulesets.json")
 

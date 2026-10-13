@@ -78,7 +78,7 @@ def git(root, *args):
 
 def changed_files(root, base):
     """Workflows and composite actions the PR adds or changes."""
-    out = git(root, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=AM", f"{base}...HEAD")
+    out = git(root, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", f"{base}...HEAD")
     return [f for f in out.decode().split("\0") if f and CHECKED.search(f)]
 
 
@@ -88,6 +88,9 @@ def new_uses(root, base):
     merge_base = git(root, "merge-base", base, "HEAD").decode().strip()
     added, problems = {}, []
     for path in changed_files(root, base):
+        if git(root, "ls-tree", "HEAD", "--", path).decode().startswith("120000"):
+            problems.append((path, "is a symlink, so the check can't read what it points to: make it a file"))
+            continue
         try:
             head = uses_values(git(root, "show", f"HEAD:{path}").decode())
         except yaml.YAMLError as e:

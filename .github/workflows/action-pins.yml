@@ -17,7 +17,7 @@ permissions:
 # Only a new commit starts this (no edited or assigned events), so a cancelled run is always one the
 # PR's head has moved past.
 concurrency:
-  group: action-pins-${{ github.event.pull_request.number }}
+  group: action-pins-${{ github.event.pull_request.number }}-${{ github.workflow_ref }}
   cancel-in-progress: true
 
 jobs:
