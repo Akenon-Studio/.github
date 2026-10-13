@@ -3,7 +3,7 @@
 
 Dependabot only raises alerts; Renovate opens the fix PR. An alert open for more than STALE_DAYS
 with no open Renovate PR for its package (usually because no fixed version exists yet) would
-otherwise wait unseen in the Security tab, so it goes on the board: one Task issue in this repo,
+otherwise wait unseen in the Security tab, so it goes on the board: one Task issue in .github-private (members-only),
 with the `dependencies` source label (rulesets/bots.json), opened, updated or closed like the
 settings-drift report (scripts/one_issue.py).
 
@@ -24,7 +24,7 @@ import sys
 from one_issue import keep
 from rules import ORG, managed_repos, renovate_logins, try_gh
 
-REPO = f"{ORG}/.github"
+REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.2)
 LABEL = "dependencies"
 TITLE = "Dependabot alerts with no fix PR"
 STALE_DAYS = 3
@@ -51,6 +51,7 @@ def collect(path):
     print(f"{len(alerts)} open alert(s)")
     if skipped:
         # Fail rather than report: an incomplete list would close the issue for alerts still open.
+        # The names help an owner running it locally; in the public workflow quiet_run.py hides them.
         sys.exit(f"Could not read Dependabot alerts in {', '.join(skipped)} (alerts off, or the "
                  "settings app lacks Dependabot alerts: read)")
 
@@ -64,7 +65,7 @@ def stale(alerts, now, days=STALE_DAYS):
 
 def renovate_titles(repo, cache):
     """Titles of Renovate's open PRs in a repo, read once per repo with the org-wide read-only token
-    (PR_READ_TOKEN; the issue is written with GH_TOKEN, scoped to .github); None if unreadable."""
+    (PR_READ_TOKEN; the issue is written with GH_TOKEN, scoped to .github-private); None if unreadable."""
     if repo not in cache:
         env = dict(os.environ, GH_TOKEN=os.environ.get("PR_READ_TOKEN") or os.environ.get("GH_TOKEN", ""))
         res = subprocess.run([os.environ.get("GH", "gh"), "api", "--paginate", "--slurp",
