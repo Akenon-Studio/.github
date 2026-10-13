@@ -1,0 +1,28 @@
+# Required in this public repo: a PR merges only if its author is a person in rulesets/teams.json or
+# an app in rulesets/bots.json (design 6.2). An outsider's PR is never merged; a member re-creates
+# the change as their own PR. Only .github is public; a repo made public gets this check too.
+#
+# pull_request_target runs main's copy of this workflow and of the script, so a PR can't change
+# the check that judges it. It checks out no PR code and holds no secret.
+name: pr-author
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-author:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get main's scripts and team list
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: The author is a member or one of the org's apps
+        run: python3 scripts/trusted_event.py "$GITHUB_EVENT_PATH" --require

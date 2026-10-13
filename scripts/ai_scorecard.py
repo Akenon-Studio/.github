@@ -33,7 +33,7 @@ import os
 import sys
 
 from one_issue import keep
-from rules import ORG, managed_repos
+from rules import ORG, managed_repos, org_people
 
 REPO = f"{ORG}/.github"
 LABEL = "ai-scorecard"
@@ -172,12 +172,14 @@ def pr_record(repo, number, url, data, read=file_at):
     round_of = {r["id"]: i + 1 for i, r in enumerate(rounds)}
     costs = [cost(u) for u in map(usage_of, (r["body"] for r in reviews)) if u]
     first_commit = rounds[0]["commit"]["oid"] if rounds else None
+    people = org_people()
     seen = {}  # path -> its text at round one's commit
     threads = []
     for t in data["reviewThreads"]["nodes"]:
         comments = t["comments"]["nodes"]
-        if not comments or MARKER not in (comments[0]["body"] or ""):
-            continue
+        if (not comments or MARKER not in (comments[0]["body"] or "")
+                or (comments[0].get("author") or {}).get("login") not in REVIEWER):
+            continue  # design 6.2: a thread anyone else opened, marker or not, isn't the review's
         first = comments[0]
         level = severity(first["body"])
         round_no = round_of.get((first.get("pullRequestReview") or {}).get("id"), 1)
@@ -188,7 +190,9 @@ def pr_record(repo, number, url, data, read=file_at):
                 if t["path"] not in seen:
                     seen[t["path"]] = read(repo, first_commit, t["path"]) or ""
                 late = was_there(lines, seen[t["path"]])
-        replies = [c["body"] for c in comments[1:] if (c.get("author") or {}).get("login") not in REVIEWER]
+        # only the org's people answer a finding (design 6.2): an outsider's reply is not counted
+        replies = [c["body"] for c in comments[1:]
+                   if ((c.get("author") or {}).get("login") or "").lower() in people]
         threads.append({"url": first["url"], "severity": level, "round": round_no, "late": late,
                         "resolved": t["isResolved"], "outcome": outcome(replies)})
     return {"repo": repo, "number": number, "url": url, "rounds": len(rounds),

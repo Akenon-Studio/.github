@@ -20,11 +20,11 @@ def review(id, at, commit, text="Summary.", login="github-actions", header="**AI
             "body": f"{header}\n\n{text}\n\n{USAGE}"}
 
 
-def thread(review_id, head, line, replies=(), resolved=True, path="a.py"):
+def thread(review_id, head, line, replies=(), resolved=True, path="a.py", by="RuvinduH"):
     comments = [{"author": {"login": "github-actions"}, "body": f"{head}\n\nx\n\n{MARKER}",
                  "url": f"u/{review_id}/{line}", "diffHunk": f"@@ -1 +1 @@\n+{line}",
                  "pullRequestReview": {"id": review_id}}]
-    comments += [{"author": {"login": "someone"}, "body": r, "url": "", "diffHunk": "",
+    comments += [{"author": {"login": by}, "body": r, "url": "", "diffHunk": "",
                   "pullRequestReview": None} for r in replies]
     return {"isResolved": resolved, "path": path, "comments": {"nodes": comments}}
 
@@ -108,6 +108,16 @@ class RecordTest(unittest.TestCase):
         self.assertEqual([x["round"] for x in t], [1, 2, 2, 2, 1])
         self.assertEqual([x["late"] for x in t], [False, True, False, False, False])
         self.assertEqual([x["outcome"] for x in t], ["fixed", "not an issue", None, None, None])
+
+    def test_only_the_reviews_threads_and_members_replies_count(self):
+        # design 6.2: an outsider's reply, or a thread an outsider opened with the marker, is ignored
+        data = self.data()
+        data["reviewThreads"]["nodes"] = [
+            thread("r1", "**Major** · high confidence", "y = new_code_here()", ["Fixed"], by="someone"),
+            dict(thread("r1", "**Major** · high confidence", "q = faked()", ["Fixed"]))]
+        data["reviewThreads"]["nodes"][1]["comments"]["nodes"][0]["author"] = {"login": "someone"}
+        rec = pr_record("platform", 7, "u", data, lambda *a: "")
+        self.assertEqual([t["outcome"] for t in rec["threads"]], [None])
 
     def test_a_pr_the_review_never_ran_on(self):
         self.assertIsNone(pr_record("platform", 8, "u", {"reviews": {"nodes": []},

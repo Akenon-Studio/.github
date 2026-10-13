@@ -67,6 +67,15 @@ class TrustedEventTest(unittest.TestCase):
                 del os.environ["GITHUB_OUTPUT"]
             self.assertEqual(out.read_text(), "trusted=false\n")
 
+    def test_require_fails_an_outsiders_pr(self):
+        with tempfile.TemporaryDirectory() as d:
+            outsider, member = pathlib.Path(d, "o.json"), pathlib.Path(d, "m.json")
+            outsider.write_text(json.dumps(event(OUTSIDER, kind="pull_request")))
+            member.write_text(json.dumps(event(MEMBER, kind="pull_request")))
+            self.assertEqual(trusted_event.main([str(outsider), "--require"]), 1)
+            self.assertEqual(trusted_event.main([str(member), "--require"]), 0)
+            self.assertEqual(trusted_event.main([str(outsider)]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

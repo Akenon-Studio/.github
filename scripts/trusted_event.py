@@ -4,8 +4,9 @@ private repo always; in a public one only if everyone the event comes from is a 
 or one of the org's own bots (rules.acts_for): the issue's or PR's author, a comment's author, and
 whoever triggered it. Runs with no secrets, before the job that holds the key.
 
-Usage: trusted_event.py <event JSON path>. Prints `trusted=true` or `trusted=false`, and appends it
-to $GITHUB_OUTPUT when that is set.
+Usage: trusted_event.py <event JSON path> [--require]. Prints `trusted=true` or `trusted=false`, and
+appends it to $GITHUB_OUTPUT when that is set. With --require it fails (exit 1) when not trusted:
+the pr-author check, which keeps an outsider's PR in a public repo from merging (design 6.2).
 """
 
 import json
@@ -31,11 +32,16 @@ def trusted(event):
 
 def main(argv):
     with open(argv[0]) as f:
-        line = f"trusted={'true' if trusted(json.load(f)) else 'false'}"
+        ok = trusted(json.load(f))
+    line = f"trusted={'true' if ok else 'false'}"
     print(line)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as out:
             out.write(line + "\n")
+    if "--require" in argv[1:] and not ok:
+        print("::error::Only people in rulesets/teams.json and apps in rulesets/bots.json open PRs "
+              "that merge here (design 6.2). A member re-creates this change as their own PR.")
+        return 1
     return 0
 
 

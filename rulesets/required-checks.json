@@ -6,7 +6,8 @@
     "security-scan / dependencies"
   ],
   ".github": [
-    "unit"
+    "unit",
+    "pr-author"
   ],
   "platform": [
     "checks",
