@@ -17,7 +17,7 @@
     "no_header": [
       "README.md",
       "CLAUDE.md",
-      "CHANGELOG.md",
+      "**/CHANGELOG.md",
       ".github/PULL_REQUEST_TEMPLATE.md",
       ".github/ISSUE_TEMPLATE/**"
     ],
