@@ -455,6 +455,22 @@ class MainTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             ai_review.prompt_main("platform", "HEAD", "/nonexistent/design.md")
 
+    def test_a_local_review_gets_the_settled_findings_as_an_earlier_round(self):
+        # design 6.4: findings a partner settled don't count against a later local run
+        import contextlib, io, json, subprocess
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+                       check=True)
+        with open("design.md", "w") as f:
+            f.write("# design\n")
+        with open("settled.txt", "w") as f:
+            f.write("MAJOR a.py:1 settled: not an issue, the partner said why")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ai_review.prompt_main("handbook", "HEAD", "design.md", "settled.txt"), 0)
+        user = json.loads(out.getvalue())["user"]
+        self.assertIn("the partner said why", user)
+        self.assertIn("Don't repeat them", user)
+
 
 if __name__ == "__main__":
     unittest.main()

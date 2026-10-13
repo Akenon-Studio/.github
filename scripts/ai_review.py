@@ -23,8 +23,9 @@ of the PR's head with its history; reads GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUM
 (the handbook's design.md), ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN and ANTHROPIC_FEDERATION_RULE_ID,
 ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID; optional
 AI_REVIEW_MODEL)
-       scripts/ai_review.py --prompt <repo> <base ref> <design.md>   (in a checkout of the branch:
-prints the round-one request, for a local review or a replay)
+       scripts/ai_review.py --prompt <repo> <base ref> <design.md> [<settled findings file>]   (in a
+checkout of the branch: prints the round-one request, for a local review or a replay; the settled
+findings go in as an earlier round)
 """
 
 import base64
@@ -585,8 +586,10 @@ def usage_marker(usage):
     return f"\n\n<!-- ai-review-usage: {json.dumps(usage)} -->" if usage else ""
 
 
-def prompt_main(repo, base, design_path):
-    """Print the round-one request for the checked-out branch against `base` (local review, replay)."""
+def prompt_main(repo, base, design_path, settled_path=None):
+    """Print the round-one request for the checked-out branch against `base` (local review, replay).
+    `settled_path`: the findings partners have settled and their answers (review-branch.py,
+    design 6.4), given as an earlier round so the run doesn't count them again."""
     diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
     files = split_diff(diff)
     text, _ = review_input(files)
@@ -596,15 +599,16 @@ def prompt_main(repo, base, design_path):
     if design == NO_DESIGN:
         raise SystemExit(f"can't read the design for {repo} from {design_path}")
     whole, omitted = full_files(review_paths(files, repo), budget=MAX_INPUT_CHARS - len(text) - len(design))
-    system, user = request(claude_md, design, title, "",
-                           whole, text, omitted=omitted, generated=generated_paths(diff), repo=repo)
+    history = open(settled_path).read() if settled_path else ""
+    system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
+                           generated=generated_paths(diff), repo=repo, history=history)
     print(json.dumps({"system": system, "user": user}))
     return 0
 
 
 def main(argv):
     if argv[:1] == ["--prompt"]:
-        return prompt_main(*argv[1:4])
+        return prompt_main(*argv[1:5])
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)

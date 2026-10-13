@@ -1,2 +1,4 @@
-# Everything here is rules and CI configuration, a sensitive area (design 6.2).
+# Sensitive areas (design 6.2), generated from Akenon-Studio/.github's
+# rulesets/sensitive-paths.json by scripts/sensitive_paths.py. Edit that file, not these
+# lines; they stay last, so they override the lines above.
 * @akenon-studio/engineers

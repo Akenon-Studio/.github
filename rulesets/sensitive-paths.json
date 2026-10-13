@@ -1,0 +1,19 @@
+{
+  "_comment": "The sensitive paths (design 6.2, 6.4), listed once. A change touching one needs local AI review runs until one is clean (peras/core/workspace/bin/review-branch.py reads this file); an area with 'codeowners' also gets a CODEOWNERS sign-off, which scripts/codeowners.py generates as the last block of each repo's CODEOWNERS (last match wins, so it overrides the docs-owner lines above it, which stay by hand, design 6.5) and verify-settings.py checks. 'paths' maps a repo ('*': every managed repo) to its patterns, in CODEOWNERS syntax limited to: '*' (the whole repo), '/dir/' (a folder and everything in it) or '/path/file' (one file), all from the repo's root. 'team' owns the sign-off (rulesets/teams.json).",
+  "areas": [
+    {"area": "the design", "codeowners": false,
+     "paths": {"handbook": ["/design.md"]}},
+    {"area": "CI and rules config", "codeowners": true, "team": "engineers",
+     "paths": {"*": ["/.github/"], ".github": ["*"]}},
+    {"area": "payments", "codeowners": true, "team": "engineers",
+     "paths": {"platform": ["/apps/web/src/app/(store)/checkout/"]}},
+    {"area": "accounts and sign-in", "codeowners": true, "team": "engineers",
+     "paths": {"platform": ["/apps/web/src/lib/auth/", "/apps/web/src/app/(account)/"]}},
+    {"area": "the sandbox and runtime security", "codeowners": true, "team": "engineers",
+     "paths": {"platform": ["/packages/runtime/", "/apps/desktop/src/main/", "/apps/desktop/src/preload/",
+                            "/apps/web/src/lib/security/"],
+               "animations": ["/tools/validator/"]}},
+    {"area": "Peras", "codeowners": true, "team": "engineers",
+     "paths": {"peras": ["*"]}}
+  ]
+}

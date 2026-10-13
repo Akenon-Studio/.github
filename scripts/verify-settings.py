@@ -14,7 +14,9 @@ import re
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public, codeowners_team_differences, org_role_differences,
+import sensitive_paths
+from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
+                   codeowners_team_differences, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
                    desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, repo_files, repo_rulesets, repo_settings, team_differences,
@@ -123,6 +125,13 @@ def main():
         if text is not None:
             problems += [f"{repo}/{owners}: {d}"
                          for d in codeowners_team_differences(text, load("teams.json")["teams"], repo)]
+            problems += [f"{repo}/{owners}: {d}" for d in sensitive_paths.codeowners_problems(repo, text)]
+        elif owners is None and sensitive_paths.block(repo):
+            problems.append(f"{repo}: no CODEOWNERS, but rulesets/sensitive-paths.json gives it a sign-off")
+        # a sensitive path that no longer exists protects nothing (design 6.2): moved or renamed
+        problems += [f"{repo}: rulesets/sensitive-paths.json names {p} ({a['area']}), which doesn't exist"
+                     for p, a in sensitive_paths.patterns(repo)
+                     if p != "*" and not any(sensitive_paths.matches(p, f) for f in files)]
 
     for path in CALLERS:
         want = triggers((ROOT / path).read_text())
