@@ -50,4 +50,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 akenon-github/scripts/action_pins.py "$BASE_SHA" repo
+        # Only the PR that brings the check (.github#172) runs before main has it: then, in this
+        # repo only, the PR's own copy runs.
+        run: |
+          check=akenon-github/scripts/action_pins.py
+          if [ ! -f "$check" ] && [ "${GITHUB_REPOSITORY,,}" = "akenon-studio/.github" ]; then
+            check=repo/scripts/action_pins.py
+          fi
+          python3 "$check" "$BASE_SHA" repo
