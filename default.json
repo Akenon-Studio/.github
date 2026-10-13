@@ -81,13 +81,14 @@
       "commitMessageSuffix": ""
     },
     {
-      "description": "Pins (an action or dependency fixed to the commit or version a tag or range points to now) open at any time in their own group: grouped with real updates they waited on every fresh release (design 6.4, .github#168). They keep the release-age wait like any update; it doesn't protect a pin of a tag moved to a backdated commit, so a pin PR's reviewer checks each pinned commit is on the action's default branch. Last, so it overrides the groups above.",
+      "description": "Pins (an action or dependency fixed to the commit or version a tag or range points to now) open at any time in their own group: grouped with real updates they waited on every fresh release (design 6.4, .github#168). A pin to a commit has no release date, so the wait counts it as old enough (timestamp-optional: the default treats an undated release as never old enough, .github#171), and it wouldn't catch a tag moved to a backdated commit anyway: a pin PR's reviewer checks each pinned commit is on the action's default branch. Last, so it overrides the groups above.",
       "matchUpdateTypes": ["pin", "pinDigest"],
       "groupName": "pins",
       "groupSlug": "pins",
       "additionalBranchPrefix": "",
       "commitMessageSuffix": "",
-      "schedule": ["at any time"]
+      "schedule": ["at any time"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     }
   ]
 }
