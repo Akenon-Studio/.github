@@ -112,6 +112,11 @@ class BlockTest(unittest.TestCase):
                       "doesn't exist", sp.path_problems("platform", ["README.md"]))
         self.assertEqual(sp.path_problems("peras", ["README.md"]), [])  # '*' always exists
 
+    def test_a_hand_line_under_a_generated_star_is_flagged(self):
+        text = "docs/ @akenon-studio/design\n\n" + sp.block("peras")
+        self.assertIn("overrides these lines", sp.codeowners_problems("peras", text)[0])
+        self.assertEqual(sp.codeowners_problems("peras", "# a comment\n\n" + sp.block("peras")), [])
+
     def test_whole_repo_lines_come_first(self):
         lines = sp.block("peras").splitlines()[3:]
         self.assertEqual(lines[0], "* @akenon-studio/engineers")

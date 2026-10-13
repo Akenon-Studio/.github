@@ -79,13 +79,20 @@ def without_block(text):
 
 
 def codeowners_problems(repo, text, path=RULES):
-    """What is wrong with a repo's CODEOWNERS: it must end with exactly the generated block."""
+    """What is wrong with a repo's CODEOWNERS: it must end with exactly the generated block, and no
+    hand line above it may be dead under a generated '*' line (last match wins, so the '*' would
+    replace that line's owners, design 6.5)."""
     want = block(repo, path)
     if not want:
         return [] if BEGIN not in text else ["has a sensitive-areas block, but no area needs one"]
     if not text.endswith(want):
         return [f"doesn't end with the sensitive-areas block; run scripts/sensitive_paths.py {repo} "
                 "<that file> to fix it"]
+    if "* @" in want.split("\n", 3)[-1].splitlines()[0]:
+        dead = [l for l in without_block(text).splitlines() if l.strip() and not l.lstrip().startswith("#")]
+        if dead:
+            return [f"the generated '*' line overrides these lines above it (last match wins): "
+                    + "; ".join(dead) + ". Give the area its own paths instead of '*', or drop them"]
     return []
 
 
