@@ -1,14 +1,14 @@
 # Daily: compares live GitHub settings with rulesets/ (scripts/verify-settings.py) and keeps one
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
 # (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
-# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. All three
-# reports go in .github-private (members only), never this public repo, since each lists weaknesses
-# (design 6.2), and the drift step's public log shows only pass or fail. Last, keeps
+# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. Last, keeps
 # one `automation-failures` issue listing what failed with no one told: scheduled runs, Renovate's
 # problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
 # secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
 # Actions: read, Secret scanning alerts: read and Contents: read for those; without them the issue
-# says so.
+# says so. All three reports go in .github-private (members only), never this public repo, since
+# each lists weaknesses, and this public log shows only a verdict or an error's type (scripts/
+# quiet_run.py; design 6.2).
 # Reports only: an owner fixes drift by re-running scripts/apply-rules.py.
 #
 # Reads settings as the read-only "Akenon Studio Settings" app, whose key lives only in this repo's
@@ -56,6 +56,8 @@ jobs:
           set +e
           python3 scripts/verify-settings.py > verify.txt 2>&1
           code=$?
+          # Exit 1 is drift only with verify-settings.py's FAIL line; anything else is a crash (2).
+          if [ "$code" -eq 1 ] && ! grep -q '^FAIL: ' verify.txt; then code=2; fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2).
           # The details go in the drift issue in .github-private. A crash (any other exit) logs only
@@ -63,7 +65,7 @@ jobs:
           case "$code" in
             0) echo "PASS" ;;
             1) echo "FAIL: live settings differ; see the settings-drift issue in .github-private" ;;
-            *) echo "verify-settings.py crashed (exit $code): $(tail -n 1 verify.txt | cut -d: -f1)" ;;
+            *) echo "verify-settings.py crashed: $(python3 -c 'import sys; sys.path.insert(0, "scripts"); from quiet_run import error_type; print(error_type(open("verify.txt").read()))')" ;;
           esac
 
       - name: Log in as the automation app
@@ -84,7 +86,7 @@ jobs:
       - name: List open Dependabot alerts
         env:
           GH_TOKEN: ${{ steps.settings.outputs.token }}
-        run: python3 scripts/stale_alerts.py collect alerts.json
+        run: python3 scripts/quiet_run.py python3 scripts/stale_alerts.py collect alerts.json
 
       - name: Log in as the automation app, every repo, read-only PRs (to see Renovate's)
         id: pr-read
@@ -99,7 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
           PR_READ_TOKEN: ${{ steps.pr-read.outputs.token }}
-        run: python3 scripts/stale_alerts.py report alerts.json
+        run: python3 scripts/quiet_run.py python3 scripts/stale_alerts.py report alerts.json
 
       # Last, and whatever happened above, so a failure there can't hide these (design 6.8).
       - name: List failed scheduled runs and secret-scanning alerts
@@ -107,7 +109,7 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ steps.settings.outputs.token }}
-        run: python3 scripts/automation_failures.py collect failures.json
+        run: python3 scripts/quiet_run.py python3 scripts/automation_failures.py collect failures.json
 
       # Its own token: it files the issue in .github-private, reads Renovate's issues and the PRs in
       # every repo, and ticks each Renovate dashboard's run-again box.
@@ -127,4 +129,4 @@ jobs:
         if: ${{ !cancelled() && steps.failures.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ steps.failures-app.outputs.token }}
-        run: python3 scripts/automation_failures.py report failures.json
+        run: python3 scripts/quiet_run.py python3 scripts/automation_failures.py report failures.json

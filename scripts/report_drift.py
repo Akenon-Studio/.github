@@ -29,7 +29,7 @@ def notes(output):
 
 
 def body(output):
-    found = "\n".join(f"- {p}" for p in problems(output)) or "- (no details; see the run log)"
+    found = "\n".join(f"- {p}" for p in problems(output)) or "- (no details: run scripts/verify-settings.py as an org owner to see them)"
     extra = notes(output)
     also = ("\n\nAlso noted (not failures):\n" + "\n".join(f"- {n}" for n in extra)) if extra else ""
     return f"""### What
