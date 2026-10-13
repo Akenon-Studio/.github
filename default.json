@@ -85,6 +85,16 @@
       "matchRepositories": ["Akenon-Studio/platform"],
       "matchUpdateTypes": ["lockFileMaintenance"],
       "enabled": false
+    },
+    {
+      "description": "Pins (an action or dependency fixed to the commit or version already in use) bring no new code, so they open at any time in their own group with no release-age wait; grouped with real updates they waited on every fresh release (design 6.4, .github#168). Last, so it overrides the groups above.",
+      "matchUpdateTypes": ["pin", "pinDigest"],
+      "groupName": "pins",
+      "groupSlug": "pins",
+      "additionalBranchPrefix": "",
+      "commitMessageSuffix": "",
+      "schedule": ["at any time"],
+      "minimumReleaseAge": null
     }
   ]
 }
