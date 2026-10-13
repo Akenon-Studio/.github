@@ -221,12 +221,14 @@ def acts_for(author, private):
     """True if the automation holding the Automation app's key may act on an issue, PR or comment
     by `author` (the GraphQL or REST actor) in a repo that is `private` (design 6.2): any in a
     private repo; in a public one, only a person in the org or one of the org's own bots
-    (rulesets/bots.json), so no outsider's text reaches a job holding the key."""
+    (rulesets/bots.json's sources and org_apps), so no outsider's text reaches a job holding the
+    key."""
     if private:
         return True
     author = author or {}
     if author.get("__typename", author.get("type")) == "Bot":
-        return bot_login(author.get("login")) in bot_sources()
+        login = bot_login(author.get("login"))
+        return login in bot_sources() or login in load("bots.json")["org_apps"]
     return (author.get("login") or "").lower() in org_people()
 
 

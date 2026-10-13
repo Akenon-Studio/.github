@@ -15,6 +15,7 @@ import trusted_event  # noqa: E402
 MEMBER = {"login": "RuvinduH", "type": "User"}
 OUTSIDER = {"login": "someone", "type": "User"}
 OUR_BOT = {"login": "akenon-studio-automation[bot]", "type": "Bot"}
+MERGE_LANE = {"login": "akenon-studio-merge-lane[bot]", "type": "Bot"}
 OTHER_BOT = {"login": "someapp[bot]", "type": "Bot"}
 
 
@@ -30,6 +31,8 @@ class TrustedEventTest(unittest.TestCase):
         self.assertTrue(trusted_event.trusted(event(MEMBER)))
         self.assertTrue(trusted_event.trusted(event(OUR_BOT)))
         self.assertTrue(trusted_event.trusted(event(MEMBER, kind="pull_request")))
+        # the merge lane merging a member's PR
+        self.assertTrue(trusted_event.trusted(event(MEMBER, sender=MERGE_LANE, kind="pull_request")))
 
     def test_outsiders_in_a_public_repo(self):
         self.assertFalse(trusted_event.trusted(event(OUTSIDER)))
