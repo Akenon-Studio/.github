@@ -51,7 +51,7 @@ import yaml
 
 import reason
 from board import find_board_fields, graphql, spec
-from rules import ROOT, bot_login, ensure_label, gh, source_labels
+from rules import ROOT, bot_login, ensure_label, gh, source_labels, status_page
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
@@ -331,7 +331,7 @@ def epic_stale(board_id, issue):
 
 # What the checks read about an issue; issue_sweep.py reads the same for many issues at once.
 ISSUE_FIELDS = """id number title state body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
-  repository { nameWithOwner }
+  repository { nameWithOwner isPrivate }
   parent { ANCESTORS }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
   subIssuesSummary { total completed }
@@ -569,9 +569,17 @@ def set_field(board, item_id, name, option):
         clientMutationId } }""", p=board["id"], i=item_id, f=field["id"], o=option_id)
 
 
+def by_automation(comment):
+    """True for a comment the automation app wrote (REST `user` or GraphQL `author`): a marker
+    alone doesn't make one ours, since anyone can type it (design 6.2)."""
+    who = comment.get("user") or comment.get("author") or {}
+    return (who.get("__typename", who.get("type")) == "Bot"
+            and bot_login(who.get("login")) == AUTOMATION_APP)
+
+
 def our_comment(repo, number):
     for c in gh(f"repos/{repo}/issues/{number}/comments?per_page=100") or []:
-        if c["body"].startswith(MARKER):
+        if c["body"].startswith(MARKER) and by_automation(c):
             return c
     return None
 
@@ -595,9 +603,49 @@ def report(repo, number, issue, problems, what="issue"):
         gh(f"repos/{repo}/issues/comments/{comment['id']}", "-X", "PATCH", body={"body": text})
 
 
+STATUS_PAGE_TEXT = (f"{MARKER}\nThis is a bot's status page, not work (design 6.8): the board and its "
+                    "checks leave it alone.")
+
+
+def flagged_status_page(issue, board_id):
+    """True for a status page that still carries what the checks put on it before they knew its
+    bot: the `needs-fields` label, an item on the board, or (when the issue was read with its
+    comments, as the sweep does) the checks' old comment."""
+    comments = [c["body"] for c in (issue.get("comments") or {}).get("nodes", []) if by_automation(c)]
+    return (status_page(issue.get("author"), issue.get("title"))
+            and (LABEL in {l["name"] for l in issue["labels"]["nodes"]}
+                 or any(i["project"]["id"] == board_id for i in issue["projectItems"]["nodes"])
+                 or any(c.startswith(MARKER) and c != STATUS_PAGE_TEXT for c in comments)))
+
+
+def clean_status_page(repo, number, issue, board):
+    """Take the label, the checks' comment and the board item off a status page (design 6.8).
+    True if anything changed."""
+    changed = False
+    if LABEL in {l["name"] for l in issue["labels"]["nodes"]}:
+        gh(f"repos/{repo}/issues/{number}/labels/{LABEL}", "-X", "DELETE")
+        changed = True
+    comment = our_comment(repo, number)
+    if comment and comment["body"] != STATUS_PAGE_TEXT:
+        gh(f"repos/{repo}/issues/comments/{comment['id']}", "-X", "PATCH",
+           body={"body": STATUS_PAGE_TEXT})
+        changed = True
+    for item in issue["projectItems"]["nodes"]:
+        if item["project"]["id"] == board["id"]:
+            graphql("""mutation($p: ID!, $i: ID!) { deleteProjectV2Item(
+                input: {projectId: $p, itemId: $i}) { deletedItemId } }""", p=board["id"], i=item["id"])
+            changed = True
+    return changed
+
+
 def sync(repo, number, forms, board):
-    """Run every check on one issue and update the board, label and comment. Returns a summary."""
+    """Run every check on one issue and update the board, label and comment. Returns a summary.
+    A bot's status page (Renovate's dashboard) is not work (design 6.8): nothing is checked, and
+    anything the checks put on it before they knew its bot is taken off."""
     issue = load_issue(repo, number)
+    if status_page(issue.get("author"), issue.get("title")):
+        return {"issue": f"{repo}#{number}", "skipped": "a bot's status page, not work",
+                "cleaned": clean_status_page(repo, number, issue, board)}
     reopened = reopen_if_early(repo, number, issue)
     reclosed = not reopened and reclose_if_done(repo, number, issue)
     issue_type = (issue["issueType"] or {}).get("name")

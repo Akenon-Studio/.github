@@ -7,6 +7,7 @@
 # (scripts/pr_status.py). On a new comment, a `Waiting on` line sets Waiting for human and a later
 # comment without one takes it back (scripts/comment_status.py). Each keeps the board's Reason field
 # (why the item waits on a person, scripts/reason.py) in step.
+# In a public repo it acts only for members and the org's bots (scripts/trusted_event.py, design 6.2).
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
 #
 #   on: { issues: { types: [opened, edited, reopened, typed, untyped] },
@@ -38,25 +39,41 @@ concurrency:
 
 jobs:
   sync:
+    # Renovate's status pages (its dashboard and config-error issue) are not work: no job at all
+    # (design 6.8). The titles are rulesets/bots.json's `status_pages`; tests/test_workflows.py
+    # checks they match.
+    if: >-
+      !((github.event.issue.user.login == 'renovate[bot]' ||
+         github.event.issue.user.login == 'akenon-studio-renovate[bot]') &&
+        (github.event.issue.title == 'Dependency Dashboard' ||
+         github.event.issue.title == 'Action Required: Fix Renovate Configuration'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Get the scripts and forms
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/.github
           ref: main
           persist-credentials: false
 
+      # In a public repo, only members' and the org's apps' issues, PRs and comments go past here
+      # (design 6.2). The key reaches only the login step, so this step never holds it.
+      - name: Members and the org's apps only, in a public repo
+        id: check
+        run: python3 scripts/trusted_event.py "$GITHUB_EVENT_PATH"
+
       - name: Log in as the org app
         id: app
-        uses: actions/create-github-app-token@v2
+        if: steps.check.outputs.trusted == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       - name: Sync the issue to the board, the issues a PR closes, or a comment's status
+        if: steps.check.outputs.trusted == 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}

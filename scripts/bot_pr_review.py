@@ -8,11 +8,14 @@ later removal or a finished review is left alone.
 A CODEOWNERS entry was not used: it cannot tell a bot's PR from a person's, so it would also ask
 the team to review people's changes to the same files.
 
+In a public repo, only the org's own apps' PRs are handled (design 6.2).
+
 It also adds a listed bot's source label (rulesets/bots.json) to its PR when the PR carries none of
 them, so every bot PR says where it came from (design 6.8).
 
 A bot's PR that closes no issue (Renovate's, release-please's Release PR) has no issue to carry it
-on the board, so it goes on the board itself: Status In review, Reason Review, so it shows in Needs
+on the board, so it goes on the board itself: Status In review, Reason Review (Release for the
+Release PR, which merging cuts a release, design 6.3), so it shows in Needs
 a human (design 6.6, 6.8; scripts/reason.py). The board marks it Done when it merges or closes. One
 from a bot not listed with `no_issue` in rulesets/bots.json is flagged `needs-fields` with a comment
 saying what to fix, as issue_fields.py flags an issue, and gets Reason Needs fields. A PR with an
@@ -32,9 +35,9 @@ import sys
 import reason
 from board import find_board_fields, graphql, spec
 from issue_fields import LABEL, report, set_field, set_reason
-from rules import AUTOMATION_OWNERS, ORG, bot_login, bot_sources, gh, managed_repos
+from rules import AUTOMATION_OWNERS, ORG, acts_for, bot_login, bot_sources, gh, managed_repos
 
-PR_FIELDS = """id number isDraft author { __typename login } repository { nameWithOwner }
+PR_FIELDS = """id number isDraft author { __typename login } repository { nameWithOwner isPrivate }
   labels(first: 50) { nodes { name } }
   closingIssuesReferences(first: 1) { totalCount }
   projectItems(first: 20) { nodes { id project { id }
@@ -59,10 +62,17 @@ def open_prs():
         after = data["search"]["pageInfo"]["endCursor"]
 
 
+def ours(pr, managed):
+    """True for a PR in a managed repo that the automation acts on: in a public repo, only the org's
+    own bots' (design 6.2: an outsider's app is left alone)."""
+    owner, name = pr["repository"]["nameWithOwner"].split("/")
+    return (owner.lower() == ORG and name in managed
+            and acts_for(pr["author"], pr["repository"].get("isPrivate", False)))
+
+
 def needs_review(pr, managed, team=AUTOMATION_OWNERS):
     """True for a bot's open PR in a managed repo that the team was never asked to review."""
-    owner, name = pr["repository"]["nameWithOwner"].split("/")
-    if owner.lower() != ORG or name not in managed:
+    if not ours(pr, managed):
         return False
     if (pr["author"] or {}).get("__typename") != "Bot":
         return False
@@ -72,9 +82,8 @@ def needs_review(pr, managed, team=AUTOMATION_OWNERS):
 
 def missing_source_label(pr, managed, sources):
     """The label to add to a listed bot's open PR that carries none of its source labels, or None."""
-    owner, name = pr["repository"]["nameWithOwner"].split("/")
     author = pr["author"] or {}
-    if owner.lower() != ORG or name not in managed or author.get("__typename") != "Bot":
+    if not ours(pr, managed) or author.get("__typename") != "Bot":
         return None
     source = sources.get(bot_login(author.get("login")))
     have = {l["name"] for l in pr["labels"]["nodes"]}
@@ -100,7 +109,7 @@ def board_changes(pr, board_id, problems):
     reason.pr_problems()'s, which flag it."""
     found = on_board(board_id, pr)
     labels = {l["name"] for l in pr["labels"]["nodes"]} - {LABEL}
-    want = reason.pr_reason(labels | ({LABEL} if problems else set()))
+    want = reason.pr_reason(labels | ({LABEL} if problems else set()), pr["author"], reason.rules())
     return found, ("In review" if not found or found[1] in (None, "Todo", "Done") else None), want
 
 
@@ -147,8 +156,7 @@ def board_pass(prs, managed, sources, dry_run):
     Returns how many PRs failed."""
     rule, board, failed = reason.rules(), None, 0
     for pr in prs:
-        owner, name = pr["repository"]["nameWithOwner"].split("/")
-        if owner.lower() != ORG or name not in managed or not reason.is_bot(pr["author"]):
+        if not ours(pr, managed) or not reason.is_bot(pr["author"]):
             continue
         qualifies = reason.pr_on_board(pr, rule)
         if not qualifies and not pr["projectItems"]["nodes"] and LABEL not in {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a verify-settings.py run into one open Task issue in this repo (design 6.2).
+"""Turn a verify-settings.py run into one open Task issue in .github-private (design 6.2, 6.8).
 
 Usage: scripts/report_drift.py <verify output file> <verify exit code>
 Exit code 1 (drift): open the `settings-drift` issue, or update it if the problems changed.
@@ -14,7 +14,7 @@ import sys
 from one_issue import keep
 from rules import ORG
 
-REPO = f"{ORG}/.github"
+REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.2)
 LABEL = "settings-drift"
 TITLE = "Live GitHub settings differ from rulesets/"
 
@@ -29,7 +29,7 @@ def notes(output):
 
 
 def body(output):
-    found = "\n".join(f"- {p}" for p in problems(output)) or "- (no details; see the run log)"
+    found = "\n".join(f"- {p}" for p in problems(output)) or "- (no details: run scripts/verify-settings.py as an org owner to see them)"
     extra = notes(output)
     also = ("\n\nAlso noted (not failures):\n" + "\n".join(f"- {n}" for n in extra)) if extra else ""
     return f"""### What
@@ -72,7 +72,8 @@ def main():
     output = open(sys.argv[1]).read()
     code = int(sys.argv[2])
     if code not in (0, 1):
-        sys.exit(f"verify-settings.py itself failed (exit {code}); see the log above")
+        sys.exit(f"verify-settings.py itself failed (exit {code}); the public log shows only its "
+                 "error type: run scripts/verify-settings.py as an org owner to see it")
     print(keep(REPO, LABEL, TITLE, body(output) if code == 1 else None))
 
 

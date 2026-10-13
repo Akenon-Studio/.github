@@ -27,7 +27,7 @@ class OptionsTest(unittest.TestCase):
         field = next(f for f in board["fields"] if f["name"] == reason.FIELD)
         self.assertEqual([o["name"] for o in field["options"]],
                          [reason.NEEDS_FIELDS, reason.REVIEW, reason.REPORT, reason.NEW_BUG,
-                          reason.WAITING_ON])
+                          reason.WAITING_ON, reason.RELEASE])
 
     def test_needs_a_human_groups_by_it(self):
         board = json.loads((ROOT / "rulesets" / "board.json").read_text())
@@ -103,8 +103,18 @@ class PrTest(unittest.TestCase):
         self.assertEqual(len(reason.pr_problems(pr("someapp[bot]"), self.SOURCES)), 1)
 
     def test_its_reason(self):
-        self.assertEqual(reason.pr_reason({"dependencies"}), reason.REVIEW)
-        self.assertEqual(reason.pr_reason({"needs-fields"}), reason.NEEDS_FIELDS)
+        renovate = {"login": "renovate[bot]"}
+        release = {"login": "akenon-studio-release[bot]"}
+        self.assertEqual(reason.pr_reason({"dependencies"}, renovate, RULE), reason.REVIEW)
+        self.assertEqual(reason.pr_reason({"needs-fields"}, renovate, RULE), reason.NEEDS_FIELDS)
+        self.assertEqual(reason.pr_reason({"release"}, release, RULE), reason.RELEASE)
+        self.assertEqual(reason.pr_reason({"needs-fields"}, release, RULE), reason.NEEDS_FIELDS)
+
+    def test_each_release_author_may_open_issue_less_prs(self):
+        # otherwise its PR is flagged and never shows as Release
+        bots = json.loads((ROOT / "rulesets" / "bots.json").read_text())["sources"]
+        for login in RULE["release_authors"]:
+            self.assertTrue(bots[login]["no_issue"], login)
 
 
 if __name__ == "__main__":

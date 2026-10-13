@@ -34,8 +34,16 @@ class FormsMatchConfigTest(unittest.TestCase):
 
     def test_automation_labels_are_defined(self):
         self.assertIn("needs-fields", {l["name"] for l in desired_labels("platform")})
+
+    def test_label_descriptions_fit_githubs_limit(self):
+        # GitHub refuses a label description over 100 characters (.github#138)
+        labels = json.loads((ROOT / "rulesets" / "labels.json").read_text())
+        for group in (v for v in labels.values() if isinstance(v, list)):
+            for label in group:
+                self.assertLessEqual(len(label["description"]), 100, label["name"])
         self.assertIn("confirmed", {l["name"] for l in desired_labels("platform")})
-        self.assertIn("settings-drift", {l["name"] for l in desired_labels(".github")})
+        self.assertIn("settings-drift", {l["name"] for l in desired_labels(".github-private")})
+        self.assertNotIn("settings-drift", {l["name"] for l in desired_labels(".github")})  # public
         self.assertNotIn("settings-drift", {l["name"] for l in desired_labels("platform")})
 
     def test_every_view_type_filter_names_an_issue_type(self):

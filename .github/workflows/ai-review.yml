@@ -1,18 +1,22 @@
 # Reusable: Claude reviews a PR and comments (design 6.4: advisory, never approves, never a required
-# check). The code repos (platform, animations, peras, this one) call it with:
+# check). The code repos (platform, animations, peras, this one) and handbook, whose review reads
+# the whole design as documents (ai_review.py's DOCS_LOOK_FOR), call it with:
 #
 #   on: { pull_request: { types: [opened, synchronize, ready_for_review, reopened] } }
 #   permissions: { contents: read, pull-requests: write, id-token: write }
 #   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main,
 #     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
+#   (handbook passes no secrets: its review reads the design from its own checkout)
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
-# a token for the handbook repo only, contents read only.
+# a token for the handbook repo only, contents read only. A handbook PR is checked against its own
+# design.md instead, from its checkout, and its caller passes no key, so a PR that deletes or
+# empties design.md is reviewed without a design.
 #
 # scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
 # (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request runs
-# of those four repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
+# of those five repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
 # org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
 # job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
 # every caller, this repo's included, uses the main copy. The review is posted with the
@@ -44,7 +48,8 @@ jobs:
       WANTED: >-
         ${{ !github.event.pull_request.draft &&
             github.event.pull_request.head.repo.full_name == github.repository &&
-            github.event.pull_request.user.login != 'renovate[bot]' }}
+            github.event.pull_request.user.login != 'renovate[bot]' &&
+            github.event.pull_request.user.login != 'akenon-studio-renovate[bot]' }}
     steps:
       - name: Nothing to review (draft, fork or dependency update)
         if: env.WANTED != 'true'
@@ -52,7 +57,7 @@ jobs:
 
       - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -63,7 +68,7 @@ jobs:
         if: env.WANTED == 'true' && env.HAS_KEY == 'true'
         continue-on-error: true
         id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
@@ -75,7 +80,7 @@ jobs:
         if: env.WANTED == 'true' && env.HAS_KEY == 'true' && steps.app.outcome == 'success'
         continue-on-error: true
         id: design
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/handbook
           ref: main
@@ -87,7 +92,7 @@ jobs:
 
       - name: Get the script
         if: env.WANTED == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/.github
           # Always main, even for this repo's own PRs: the sign-in trusts only this workflow on main
@@ -96,7 +101,7 @@ jobs:
           path: .akenon-github
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         if: env.WANTED == 'true'
         with:
           python-version: "3.12"

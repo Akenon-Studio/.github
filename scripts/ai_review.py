@@ -23,8 +23,9 @@ of the PR's head with its history; reads GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUM
 (the handbook's design.md), ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN and ANTHROPIC_FEDERATION_RULE_ID,
 ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID; optional
 AI_REVIEW_MODEL)
-       scripts/ai_review.py --prompt <repo> <base ref> <design.md>   (in a checkout of the branch:
-prints the round-one request, for a local review or a replay)
+       scripts/ai_review.py --prompt <repo> <base ref> <design.md> [<settled findings file>]   (in a
+checkout of the branch: prints the round-one request, for a local review or a replay; the settled
+findings go in as an earlier round)
 """
 
 import base64
@@ -67,6 +68,7 @@ SKIP_PATH = re.compile(r"(^|/)(node_modules|dist|out|build|\.witness)/|\.min\.js
 # Peras is also governed by 7.
 DESIGN_SECTIONS = {"peras": ("4", "5", "6", "7")}
 DEFAULT_SECTIONS = ("4", "5", "6")
+DESIGN_REPO, DESIGN_PATH = "handbook", "design.md"  # the design's own repo: its review reads all of it
 SEVERITIES = ("critical", "major", "minor", "nit")
 THREADS = {"critical", "major"}  # these become review threads; the rest go in the summary
 
@@ -115,6 +117,44 @@ with low confidence.
 Each finding: the file, and a line the PR adds (a `+` line, numbered in the new file) where the
 problem is; what goes wrong and the fix, in under 100 words; the design section it breaks, or "".
 If there is nothing worth saying, return no findings and a one-line summary saying so."""
+
+# For the design's own repo (handbook), "Look for" is about documents, and the design is all of it
+DOCS_LOOK_FOR = """Look for:
+1. Contradictions: text that disagrees with another part of the design, unchanged parts included
+   (an end date, a number, a name, who decides), or with a decision record.
+2. One fact in two places (design 6.5): a fact restated instead of pointed to, so the copies can
+   drift; and a pointer to a section, file or issue that doesn't exist or says something else.
+3. History: a decision that replaces an earlier one without the earlier position in Appendix A, or
+   history written into the body, which holds only current decisions; a decision with no date.
+4. Rules that can't be followed or checked: a rule too vague to enforce or test, a case it doesn't
+   cover that will plausibly happen, a step that depends on something not yet built without saying
+   so, or a rule the tools it names can't enforce.
+5. Clarity: a term used before it is explained, or a sentence a reader could take two ways.
+6. Code: in a workflow or script the PR changes, bugs and security (permissions, secrets,
+   untrusted input), as in any code repo.
+
+Leave out what the deterministic checks already enforce: formatting, PR titles, secret scanning,
+links to design sections that don't exist. No praise, no style preferences.
+
+The design you get is design.md as this PR leaves it, in full (unless it says it could not be
+read): judge each change against the rest of it."""
+
+DOCS_SEVERITY = """For documents, these meanings replace the code examples in the scale above:
+- critical: a change that would make work unsafe if followed: a security, privacy or credential
+  rule weakened or contradicted, or an approval or check removed by accident.
+- major: a contradiction or gap a person or agent will plausibly act on wrongly.
+- minor: real but unlikely to mislead.
+- nit: polish."""
+
+
+def instructions(repo):
+    """The review's instructions: for the design's own repo, about documents instead of code."""
+    if repo != DESIGN_REPO:
+        return INSTRUCTIONS
+    head, rest = INSTRUCTIONS.split("Look for:", 1)
+    scale, finding = rest.split("Severity is absolute.", 1)[1].split("\n\nEach finding:", 1)
+    return (head + DOCS_LOOK_FOR + "\n\nSeverity is absolute." + scale + "\n\n" + DOCS_SEVERITY +
+            "\n\nEach finding:" + finding)
 
 LATER_ROUND = """
 
@@ -217,7 +257,10 @@ def review_input(files):
 
 
 def design_sections(design, repo):
-    """The top-level sections of design.md that govern `repo` (DESIGN_SECTIONS), as one text."""
+    """The top-level sections of design.md that govern `repo` (DESIGN_SECTIONS), as one text; for
+    the design's own repo, all of it."""
+    if repo == DESIGN_REPO:
+        return design
     want = DESIGN_SECTIONS.get(repo, DEFAULT_SECTIONS)
     parts = re.split(r"(?m)^(?=## )", design)
     return "".join(p for p in parts if re.match(r"## (\d+)\.", p) and
@@ -249,8 +292,22 @@ def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
 NO_DESIGN = "(The design could not be read for this run: judge design fit from CLAUDE.md.)"
 
 
-def read_design(path, repo):
-    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none."""
+def read_design(path, repo, root="."):
+    """The design sections for `repo`, or NO_DESIGN when the file is missing or has none. For the
+    design's own repo, design.md as the checked-out PR leaves it, so a PR is judged against its own
+    version; it is then not sent again as a changed file. Only if the PR deletes or empties it is
+    `path` read, which the handbook caller doesn't fetch (it passes no key)."""
+    if repo == DESIGN_REPO:
+        own, top = os.path.join(root, DESIGN_PATH), os.path.realpath(root)
+        # A symlink in the PR could point at a runner file: only a real file in the repo
+        if not os.path.islink(own) and os.path.realpath(own).startswith(top + os.sep):
+            try:
+                with open(own, encoding="utf-8") as f:
+                    text = f.read()
+                if text.strip():  # an emptied design.md: `path` below (none from the handbook caller)
+                    return text
+            except (OSError, UnicodeDecodeError):
+                pass
     try:
         with open(path) as f:
             return design_sections(f.read(), repo) or NO_DESIGN
@@ -258,21 +315,30 @@ def read_design(path, repo):
         return NO_DESIGN
 
 
+def review_paths(paths, repo):
+    """The changed files to send in full: for the design's own repo, not design.md, which is the
+    design already (read_design)."""
+    return [p for p in paths if not (repo == DESIGN_REPO and p == DESIGN_PATH)]
+
+
 def tagged(tag, text):
     return f"<{tag}>\n{text}\n</{tag}>"
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
-            history="", generated=()):
+            history="", generated=(), repo=""):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
     message to keep the cached prefix the same. A later round's `files` are those the changes
     touch, and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
-    the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled."""
-    system = [{"type": "text", "text": INSTRUCTIONS},
-              {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design),
-               "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+    the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled. For
+    the design's own repo the design is the PR's, which most pushes change, so it isn't cached:
+    writing it to the cache costs more than reading it plainly."""
+    shared = {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design)}
+    if repo != DESIGN_REPO:
+        shared["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+    system = [{"type": "text", "text": instructions(repo)}, shared]
     user = ((LATER_ROUND.strip() + "\n\n" if later else "") + f"<pr_title>{title}</pr_title>\n" + tagged("pr_description", description) + "\n\n" +
             "\n".join(f'<file path="{p}">\n{t}\n</file>' for p, t in files.items()) + "\n\n" +
             (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
@@ -521,23 +587,36 @@ def usage_marker(usage):
     return f"\n\n<!-- ai-review-usage: {json.dumps(usage)} -->" if usage else ""
 
 
-def prompt_main(repo, base, design_path):
-    """Print the round-one request for the checked-out branch against `base` (local review, replay)."""
+def prompt_main(repo, base, design_path, settled_path=None):
+    """Print the round-one request for the checked-out branch against `base` (local review, replay).
+    `settled_path`: the findings partners have settled and their answers (review-branch.py,
+    design 6.4), given as an earlier round so the run doesn't count them again."""
     diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
     files = split_diff(diff)
     text, _ = review_input(files)
     claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
     title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
-    whole, omitted = full_files(files, budget=MAX_INPUT_CHARS - len(text))
-    system, user = request(claude_md, design_sections(open(design_path).read(), repo), title, "",
-                           whole, text, omitted=omitted, generated=generated_paths(diff))
+    design = read_design(design_path, repo)
+    if design == NO_DESIGN:
+        raise SystemExit(f"can't read the design for {repo} from {design_path}")
+    history = ""
+    if settled_path:
+        try:
+            with open(settled_path) as f:
+                history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
+        except OSError as e:
+            raise SystemExit(f"can't read the settled findings from {settled_path}: {e}")
+    budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
+    whole, omitted = full_files(review_paths(files, repo), budget=budget)
+    system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
+                           generated=generated_paths(diff), repo=repo, history=history)
     print(json.dumps({"system": system, "user": user}))
     return 0
 
 
 def main(argv):
     if argv[:1] == ["--prompt"]:
-        return prompt_main(*argv[1:4])
+        return prompt_main(*argv[1:5])
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
@@ -556,7 +635,11 @@ def main(argv):
     except OSError:
         claude_md = ""
     reviews = all_reviews(repo, number, token)
-    fp = fingerprint(files, claude_md) if files else None
+    # For the design's own repo, a change elsewhere in the design (main brought in) is a new review:
+    # what it is judged against changed, as with CLAUDE.md
+    name = repo.split("/")[1]
+    against = claude_md + (read_design(os.environ.get("DESIGN_FILE"), name) if name == DESIGN_REPO else "")
+    fp = fingerprint(files, against) if files else None
     if fp and fp == last_fingerprint(reviews):
         print(f"The diff and CLAUDE.md are unchanged since the last review ({fp}); nothing new to review.")
         return 0
@@ -583,9 +666,9 @@ def main(argv):
         generated = generated_paths(diff)  # the whole PR's, every round
         used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
                 + sum(len(g) + 1 for g in generated))
-        whole, omitted = full_files(paths, budget=MAX_INPUT_CHARS - used)
+        whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used)
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated)
+                               omitted, history, generated, repo.split("/")[1])
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:

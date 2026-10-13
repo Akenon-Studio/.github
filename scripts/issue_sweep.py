@@ -7,6 +7,13 @@ the managed repos and syncs only those whose `needs-fields` label or comment is 
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
 or a Process failure whose prevention is not decided yet.
 
+In a public repo, an outsider's issue or PR is left alone, and only the automation's own comments
+count as its notices (design 6.2).
+
+A bot's status page (Renovate's dashboard or config-error issue, design 6.8) is never checked, but
+one still carrying the label, a board item or the checks' comment from before its bot was known is
+synced, which cleans it up.
+
 It also checks every open PR in the managed repos for a conflict with its base branch, which
 GitHub tells nobody about (design 6.8, "Every hand-off goes to an assigned human"). A conflicting
 PR gets one comment, found again by PR_MARKER, that mentions its assignees (for a bot's PR with
@@ -24,23 +31,24 @@ import json
 import sys
 
 from board import find_board_fields, graphql, spec
-from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early,
-                          epic_stale, load_forms, problems_text, reason_on, reclose_due, status_on,
-                          sync, want_reason)
+from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, by_automation,
+                          closed_too_early,
+                          epic_stale, flagged_status_page, load_forms, problems_text, reason_on,
+                          reclose_due, status_on, sync, want_reason)
 from reason import FIELD as REASON_FIELD
-from rules import ORG, automation_owners, gh, managed_repos, try_gh
+from rules import ORG, acts_for, automation_owners, gh, managed_repos, status_page, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
-ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body }} }} }}"
+ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body author {{ __typename login }} }} }} }}"
 
 PR_MARKER = "<!-- pr-conflicts -->"
 RESOLVED = "**Resolved:**"
 # mergeable is CONFLICTING when mergeStateStatus is DIRTY. GitHub computes it lazily: UNKNOWN means
 # not computed yet (this query starts it), so the PR is skipped and caught on the next run.
 PR_SEARCH = """... on PullRequest { number mergeable baseRefName headRefOid
-  author { __typename login } repository { nameWithOwner }
+  author { __typename login } repository { nameWithOwner isPrivate }
   assignees(first: 20) { nodes { login } }
-  comments(last: 100) { nodes { databaseId body } } }"""
+  comments(last: 100) { nodes { databaseId body author { __typename login } } } }"""
 
 
 def search(query, fields=ISSUE_SEARCH):
@@ -74,15 +82,27 @@ def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
     if reason_field and reason_on(board_id, issue) != want_reason(issue, bool(problems), status):
         return True
     labelled = LABEL in {l["name"] for l in issue["labels"]["nodes"]}
-    ours = [c["body"] for c in issue["comments"]["nodes"] if c["body"].startswith(MARKER)]
+    ours = [c["body"] for c in issue["comments"]["nodes"]
+            if c["body"].startswith(MARKER) and by_automation(c)]
     if bool(problems) != labelled:
         return True
     return bool(problems) and (not ours or ours[0] != problems_text(problems))
 
 
-def in_managed_repo(issue, managed):
+def managed_status_page(issue, managed):
+    """True for a bot's status page in a managed repo, which in_managed_repo() leaves out."""
     owner, name = issue["repository"]["nameWithOwner"].split("/")
-    return owner.lower() == ORG and name in managed
+    return (owner.lower() == ORG and name in managed
+            and status_page(issue.get("author"), issue.get("title")))
+
+
+def in_managed_repo(issue, managed):
+    """True for an issue or PR in a managed repo, a bot's status page aside (design 6.8), and in a
+    public repo only a member's or the org's bots' (design 6.2: an outsider's is left alone)."""
+    owner, name = issue["repository"]["nameWithOwner"].split("/")
+    return (owner.lower() == ORG and name in managed
+            and not status_page(issue.get("author"), issue.get("title"))
+            and acts_for(issue.get("author"), issue["repository"].get("isPrivate", False)))
 
 
 def who_to_tell(pr):
@@ -142,7 +162,7 @@ def resolved_text(pr, earlier):
 
 def our_pr_comment(pr):
     """The PR's latest conflict notice, or None."""
-    ours = [c for c in pr["comments"]["nodes"] if c["body"].startswith(PR_MARKER)]
+    ours = [c for c in pr["comments"]["nodes"] if c["body"].startswith(PR_MARKER) and by_automation(c)]
     return ours[-1] if ours else None
 
 
@@ -199,6 +219,8 @@ def main():
         if in_managed_repo(issue, managed) and out_of_date(
                 issue, forms, board["id"], epic_field, reason_field):
             results.append(issue_sync(issue, forms, board, dry_run))
+        elif managed_status_page(issue, managed) and flagged_status_page(issue, board["id"]):
+            results.append(issue_sync(issue, forms, board, dry_run))  # sync() cleans it
     since = (datetime.datetime.now(datetime.timezone.utc) - CLOSED_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     for issue in search(f"org:{ORG} is:issue is:closed closed:>={since}"):
         if in_managed_repo(issue, managed) and closed_too_early(issue):

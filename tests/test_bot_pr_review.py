@@ -13,9 +13,10 @@ from bot_pr_review import board_changes, missing_source_label, needs_review  # n
 MANAGED = {"platform", "handbook"}
 
 
-def pr(author="Bot", asked=(), repo="Akenon-Studio/platform", labels=(), login="renovate"):
+def pr(author="Bot", asked=(), repo="Akenon-Studio/platform", labels=(), login="renovate", private=True):
     return {"number": 1, "author": {"__typename": author, "login": login},
-            "repository": {"nameWithOwner": repo}, "labels": {"nodes": [{"name": l} for l in labels]},
+            "repository": {"nameWithOwner": repo, "isPrivate": private},
+            "labels": {"nodes": [{"name": l} for l in labels]},
             "timelineItems": {"nodes": [{"requestedReviewer": {"__typename": "Team", "slug": s}}
                                         for s in asked]}}
 
@@ -121,6 +122,15 @@ class BoardPassTest(unittest.TestCase):
         bot_pr_review.board_pass([p], MANAGED, SOURCES, False)
         self.assertEqual(len(self.calls[0][2]), 1)  # report() got the problem
         self.assertEqual(self.calls[-1], ("Reason", None, "Needs fields"))
+
+    def test_an_outside_apps_pr_in_a_public_repo_is_left_alone(self):
+        # design 6.2: only the org's own bots' PRs, in a public repo
+        p = self.bot_pr()
+        p["author"]["login"], p["repository"]["isPrivate"] = "someapp", False
+        self.assertEqual(bot_pr_review.board_pass([p], MANAGED, SOURCES, False), 0)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(bot_pr_review.needs_review(p, MANAGED))
+        self.assertIsNone(bot_pr_review.missing_source_label(p, MANAGED, SOURCES))
 
     def test_nothing_until_the_board_has_the_field(self):
         bot_pr_review.find_board_fields = lambda title: {"id": "B", "fields": {"nodes": []}}

@@ -43,14 +43,14 @@ jobs:
       pull-requests: read
     steps:
       - name: Get the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: repo
           fetch-depth: 0 # gaming diffs the PR against its base; docs-covered needs HEAD^1
           persist-credentials: false
 
       - name: Get the scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: akenon-studio/.github
           # this repo's own PRs test their own version of the scripts; every other repo uses main

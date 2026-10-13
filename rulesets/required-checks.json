@@ -6,16 +6,19 @@
     "security-scan / dependencies"
   ],
   ".github": [
-    "unit"
+    "unit",
+    "pr-author"
   ],
   "platform": [
-    "checks"
+    "checks",
+    "desktop-package"
   ],
   "animations": [
     "checks"
   ],
   "peras": [
-    "workspace-hooks"
+    "workspace-hooks",
+    "checks"
   ],
   "hardware": [
     "lfs",

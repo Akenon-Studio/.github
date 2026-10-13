@@ -33,7 +33,7 @@ import os
 import sys
 
 from one_issue import keep
-from rules import ORG, managed_repos
+from rules import ORG, acts_for, managed_repos
 
 REPO = f"{ORG}/.github"
 LABEL = "ai-scorecard"
@@ -59,7 +59,7 @@ PR_QUERY = """query($owner: String!, $name: String!, $n: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
     reviews(first: 100) { nodes { id author { login } body submittedAt commit { oid } } }
     reviewThreads(first: 100) { nodes { isResolved path
-      comments(first: 30) { nodes { author { login } body url diffHunk pullRequestReview { id } } } } } } } }"""
+      comments(first: 30) { nodes { author { __typename login } body url diffHunk pullRequestReview { id } } } } } } } }"""
 
 
 def gh_json(*args):
@@ -176,8 +176,9 @@ def pr_record(repo, number, url, data, read=file_at):
     threads = []
     for t in data["reviewThreads"]["nodes"]:
         comments = t["comments"]["nodes"]
-        if not comments or MARKER not in (comments[0]["body"] or ""):
-            continue
+        if (not comments or MARKER not in (comments[0]["body"] or "")
+                or (comments[0].get("author") or {}).get("login") not in REVIEWER):
+            continue  # design 6.2: a thread anyone else opened, marker or not, isn't the review's
         first = comments[0]
         level = severity(first["body"])
         round_no = round_of.get((first.get("pullRequestReview") or {}).get("id"), 1)
@@ -188,7 +189,11 @@ def pr_record(repo, number, url, data, read=file_at):
                 if t["path"] not in seen:
                     seen[t["path"]] = read(repo, first_commit, t["path"]) or ""
                 late = was_there(lines, seen[t["path"]])
-        replies = [c["body"] for c in comments[1:] if (c.get("author") or {}).get("login") not in REVIEWER]
+        # only the org's people and apps answer a finding (design 6.2): an outsider's reply is not
+        # counted, in any repo (a private one has no outsiders to drop)
+        replies = [c["body"] for c in comments[1:]
+                   if (c.get("author") or {}).get("login") not in REVIEWER
+                   and acts_for(c.get("author"), private=False)]
         threads.append({"url": first["url"], "severity": level, "round": round_no, "late": late,
                         "resolved": t["isResolved"], "outcome": outcome(replies)})
     return {"repo": repo, "number": number, "url": url, "rounds": len(rounds),
