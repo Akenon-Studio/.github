@@ -1,0 +1,60 @@
+# Required on every managed repo by the org ruleset in rulesets/org-rulesets.json (design 6.4): every
+# action a PR adds or changes is pinned to a full commit on that action's default branch, or on a
+# branch listed in rulesets/action-branches.json (scripts/action_pins.py).
+#
+# The ruleset runs main's copy of this workflow from this repo, and it takes the script and the
+# list from main too, so no PR can change the check that judges it (in this repo, GitHub also runs
+# the PR's own copy as an ordinary workflow, which nothing requires). The PR's files are read as
+# data only, never run. It holds no secret: only the workflow's read token, for the action lookups.
+name: action-pins
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Only a new commit starts this (no edited or assigned events), so a cancelled run is always one the
+# PR's head has moved past.
+concurrency:
+  group: action-pins-${{ github.event.pull_request.number }}-${{ github.workflow_ref }}
+  cancel-in-progress: true
+
+jobs:
+  action-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get the PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: repo
+          fetch-depth: 0 # the check reads each changed file at the PR's head and at its base
+          persist-credentials: false
+
+      - name: Get main's check and branch list
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          path: akenon-github
+          sparse-checkout: |
+            scripts
+            rulesets
+          persist-credentials: false
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml==6.0.2
+
+      - name: Every action added is pinned to a commit on a known branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        # Only the PR that brings the check (.github#172) runs before main has it: then, in this
+        # repo only, the PR's own copy runs.
+        run: |
+          check=akenon-github/scripts/action_pins.py
+          if [ ! -f "$check" ] && [ "${GITHUB_REPOSITORY,,}" = "akenon-studio/.github" ]; then
+            check=repo/scripts/action_pins.py
+          fi
+          python3 "$check" "$BASE_SHA" repo

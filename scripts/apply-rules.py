@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Apply rulesets/ to GitHub: org settings, issue types and teams (rulesets/teams.json), then each
-managed repo's merge settings, rulesets and labels.
+"""Apply rulesets/ to GitHub: org settings and rulesets (rulesets/org-rulesets.json), issue types
+and teams (rulesets/teams.json), then each managed repo's merge settings, rulesets and labels.
 
 Usage: scripts/apply-rules.py [repo ...]     (default: every repo in rulesets/repos.txt)
 Needs an org owner logged in to gh with the admin:org scope.
@@ -10,9 +10,9 @@ import sys
 import urllib.parse
 
 from rules import (FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ISSUE_TYPE_KEYS, ORG,
-                   REPO_SETTING_ENDPOINTS, TEAM_KEYS, desired_labels, desired_rulesets, gh,
-                   is_public, load, managed_repos, org_roles, repo_rulesets,
-                   team_org_roles, team_repos, try_gh)
+                   REPO_SETTING_ENDPOINTS, TEAM_KEYS, desired_labels, desired_org_rulesets,
+                   desired_rulesets, gh, is_public, load, managed_repos, org_roles, org_rulesets,
+                   repo_rulesets, team_org_roles, team_repos, try_gh)
 
 
 def apply_org():
@@ -26,6 +26,17 @@ def apply_org():
         elif any(live[t["name"]].get(k) != t[k] for k in ISSUE_TYPE_KEYS):
             gh(f"orgs/{ORG}/issue-types/{live[t['name']]['id']}", "-X", "PUT", body=t)
             print(f"org {ORG}: issue type '{t['name']}' updated")
+
+
+def apply_org_rulesets():
+    existing = org_rulesets()
+    for ruleset in desired_org_rulesets():
+        if ruleset["name"] in existing:
+            gh(f"orgs/{ORG}/rulesets/{existing[ruleset['name']]['id']}", "-X", "PUT", body=ruleset)
+            print(f"org {ORG}: ruleset '{ruleset['name']}' updated")
+        else:
+            gh(f"orgs/{ORG}/rulesets", "-X", "POST", body=ruleset)
+            print(f"org {ORG}: ruleset '{ruleset['name']}' created")
 
 
 def apply_teams():
@@ -107,6 +118,7 @@ def apply_repo(repo):
 def main():
     repos = sys.argv[1:] or managed_repos()
     apply_org()
+    apply_org_rulesets()
     apply_teams()
     for repo in repos:
         apply_repo(repo)

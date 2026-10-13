@@ -82,6 +82,24 @@ def desired_rulesets(repo):
     return [main, load("release-tags.json")]
 
 
+def desired_org_rulesets():
+    """The org rulesets in org-rulesets.json, as GitHub takes them: each applies to every managed
+    repo, and a workflow's 'repository' becomes its numeric 'repository_id'."""
+    out = []
+    for ruleset in json.loads(json.dumps(load("org-rulesets.json")["rulesets"])):
+        ruleset["conditions"]["repository_name"] = {"include": managed_repos(), "exclude": []}
+        for rule in ruleset["rules"]:
+            for w in rule.get("parameters", {}).get("workflows", []):
+                w["repository_id"] = gh(f"repos/{ORG}/{w.pop('repository')}")["id"]
+        out.append(ruleset)
+    return out
+
+
+def org_rulesets():
+    """The org's rulesets, full detail, keyed by name."""
+    return {r["name"]: gh(f"orgs/{ORG}/rulesets/{r['id']}") for r in gh(f"orgs/{ORG}/rulesets") or []}
+
+
 def repo_rulesets(repo):
     """The repo's own rulesets (not inherited ones), full detail, keyed by name."""
     out = {}
