@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a verify-settings.py run into one open Task issue in this repo (design 6.2).
+"""Turn a verify-settings.py run into one open Task issue in .github-private (design 6.2, 6.8).
 
 Usage: scripts/report_drift.py <verify output file> <verify exit code>
 Exit code 1 (drift): open the `settings-drift` issue, or update it if the problems changed.
@@ -14,7 +14,7 @@ import sys
 from one_issue import keep
 from rules import ORG
 
-REPO = f"{ORG}/.github"
+REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.8)
 LABEL = "settings-drift"
 TITLE = "Live GitHub settings differ from rulesets/"
 

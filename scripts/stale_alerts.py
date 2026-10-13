@@ -3,7 +3,7 @@
 
 Dependabot only raises alerts; Renovate opens the fix PR. An alert open for more than STALE_DAYS
 with no open Renovate PR for its package (usually because no fixed version exists yet) would
-otherwise wait unseen in the Security tab, so it goes on the board: one Task issue in this repo,
+otherwise wait unseen in the Security tab, so it goes on the board: one Task issue in .github-private (members-only),
 with the `dependencies` source label (rulesets/bots.json), opened, updated or closed like the
 settings-drift report (scripts/one_issue.py).
 
@@ -24,7 +24,7 @@ import sys
 from one_issue import keep
 from rules import ORG, managed_repos, renovate_logins, try_gh
 
-REPO = f"{ORG}/.github"
+REPO = f"{ORG}/.github-private"  # members-only: the report lists weaknesses (design 6.8)
 LABEL = "dependencies"
 TITLE = "Dependabot alerts with no fix PR"
 STALE_DAYS = 3

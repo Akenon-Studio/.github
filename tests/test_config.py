@@ -42,7 +42,8 @@ class FormsMatchConfigTest(unittest.TestCase):
             for label in group:
                 self.assertLessEqual(len(label["description"]), 100, label["name"])
         self.assertIn("confirmed", {l["name"] for l in desired_labels("platform")})
-        self.assertIn("settings-drift", {l["name"] for l in desired_labels(".github")})
+        self.assertIn("settings-drift", {l["name"] for l in desired_labels(".github-private")})
+        self.assertNotIn("settings-drift", {l["name"] for l in desired_labels(".github")})  # public
         self.assertNotIn("settings-drift", {l["name"] for l in desired_labels("platform")})
 
     def test_every_view_type_filter_names_an_issue_type(self):

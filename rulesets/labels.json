@@ -18,10 +18,10 @@
     {"name": "ready-to-merge", "color": "0e8a16", "description": "Approved and green: the merge lane merges it in turn (design 6.2)"}
   ],
   ".github-private": [
-    {"name": "automation-failures", "color": "b60205", "description": "The automation failures report: what failed with no one told (design 6.8)"}
+    {"name": "automation-failures", "color": "b60205", "description": "The automation failures report: what failed with no one told (design 6.8)"},
+    {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"}
   ],
   ".github": [
-    {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"},
     {"name": "claude-md-drift", "color": "b60205", "description": "A CLAUDE.md names a design section that no longer exists"},
     {"name": "peras-tests-broken", "color": "b60205", "description": "A change to .github's main broke peras's agent-hook tests"},
     {"name": "ai-scorecard", "color": "1d76db", "description": "The monthly AI review scorecard (design 6.4)"}

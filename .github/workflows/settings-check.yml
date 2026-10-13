@@ -1,8 +1,10 @@
 # Daily: compares live GitHub settings with rulesets/ (scripts/verify-settings.py) and keeps one
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
 # (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
-# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. Last, keeps
-# one `automation-failures` issue in .github-private (members only) listing what failed with no one told: scheduled runs, Renovate's
+# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. All three
+# reports go in .github-private (members only), never this public repo, since each lists weaknesses,
+# and this public log shows only pass or fail (design 6.8). Last, keeps
+# one `automation-failures` issue listing what failed with no one told: scheduled runs, Renovate's
 # problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
 # secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
 # Actions: read, Secret scanning alerts: read and Contents: read for those; without them the issue
@@ -53,8 +55,11 @@ jobs:
         run: |
           set +e
           python3 scripts/verify-settings.py > verify.txt 2>&1
-          echo "code=$?" >> "$GITHUB_OUTPUT"
-          cat verify.txt
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # Only the verdict: this log is public, and the drift lines say what is weak (design 6.8).
+          # The details go in the drift issue in .github-private.
+          if [ "$code" -eq 0 ]; then echo "PASS"; else echo "FAIL (exit $code): see the settings-drift issue in .github-private"; fi
 
       - name: Log in as the automation app
         id: automation
@@ -63,7 +68,7 @@ jobs:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: .github
+          repositories: .github-private
 
       - name: Open, update or close the drift issue
         env:
