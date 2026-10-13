@@ -2,7 +2,7 @@
 """Check that live GitHub settings match rulesets/ (design 6.7). Exits 1 if anything differs.
 
 Usage: scripts/verify-settings.py
-Reports: org settings, issue types and teams (rulesets/teams.json), each managed repo's merge
+Reports: org settings and rulesets (rulesets/org-rulesets.json), issue types and teams (rulesets/teams.json), each managed repo's merge
 settings, rulesets and labels, the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
 (rulesets/repo-lists.json), that every team a repo's CODEOWNERS names is in rulesets/teams.json
@@ -20,7 +20,7 @@ import sensitive_paths
 from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
                    codeowners_team_differences, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
-                   desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
+                   desired_org_rulesets, desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, repo_files, repo_rulesets, repo_settings, team_differences,
                    team_repo_permission, try_gh)
 
@@ -50,6 +50,20 @@ def main():
     settings = load("org-settings.json")
     want = {**settings["apply"], **settings["check_only"]}
     problems += [f"org: {d}" for d in differences(want, org)]
+
+    listed = try_gh(f"orgs/{ORG}/rulesets")
+    if listed is None:
+        print("note: can't read the org's rulesets; not checked")
+    else:
+        have = {r["name"]: try_gh(f"orgs/{ORG}/rulesets/{r['id']}") for r in listed}
+        for ruleset in desired_org_rulesets():
+            if ruleset["name"] not in have:
+                problems.append(f"org: ruleset '{ruleset['name']}' is missing")
+            else:
+                problems += [f"org ruleset '{ruleset['name']}': {d}"
+                             for d in differences(ruleset, have[ruleset["name"]])]
+        for extra in sorted(set(have) - {r["name"] for r in desired_org_rulesets()}):
+            print(f"note: org ruleset '{extra}' is not in rulesets/org-rulesets.json")
 
     types = try_gh(f"orgs/{ORG}/issue-types")
     if types is None:

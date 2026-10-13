@@ -1,0 +1,24 @@
+{
+  "_comment": "Org rulesets, set by apply-rules.py and checked by verify-settings.py (design 6.4). A 'workflows' rule names its workflow by 'repository' (this org's repo) instead of GitHub's numeric id; rules.desired_org_rulesets() fills the id in, and applies each ruleset to every repo in repos.txt. Other org rulesets are left alone and listed as a note.",
+  "rulesets": [
+    {
+      "name": "Action pins",
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
+      },
+      "rules": [
+        {
+          "type": "workflows",
+          "parameters": {
+            "do_not_enforce_on_create": true,
+            "workflows": [
+              {"repository": ".github", "path": ".github/workflows/action-pins.yml", "ref": "refs/heads/main"}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
