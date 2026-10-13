@@ -9,8 +9,9 @@ Needs an org owner logged in to gh with the admin:org scope.
 import sys
 import urllib.parse
 
-from rules import (ISSUE_TYPE_KEYS, ORG, REPO_SETTING_ENDPOINTS, TEAM_KEYS, desired_labels,
-                   desired_rulesets, gh, load, managed_repos, org_roles, repo_rulesets,
+from rules import (FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ISSUE_TYPE_KEYS, ORG,
+                   REPO_SETTING_ENDPOINTS, TEAM_KEYS, desired_labels, desired_rulesets, gh,
+                   is_public, load, managed_repos, org_roles, repo_rulesets,
                    team_org_roles, team_repos, try_gh)
 
 
@@ -97,6 +98,9 @@ def apply_repo(repo):
         else:
             gh(f"repos/{ORG}/{repo}/rulesets", "-X", "POST", body=ruleset)
             print(f"{repo}: ruleset '{ruleset['name']}' created")
+    if is_public(repo):
+        gh(f"repos/{ORG}/{repo}/{FORK_APPROVAL_ENDPOINT}", "-X", "PUT",
+           body={"approval_policy": FORK_APPROVAL})
     apply_labels(repo)
 
 

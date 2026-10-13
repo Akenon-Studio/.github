@@ -14,7 +14,7 @@ import re
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (CODEOWNERS_PATHS, ORG, ROOT, codeowners_team_differences, org_role_differences,
+from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public, codeowners_team_differences, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
                    desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, repo_files, repo_rulesets, repo_settings, team_differences,
@@ -78,6 +78,14 @@ def main():
     for repo in managed:
         problems += [f"{repo} settings: {d}"
                      for d in differences(load("repo-settings.json"), repo_settings(repo))]
+        if is_public(repo):
+            fork = try_gh(f"repos/{ORG}/{repo}/{FORK_APPROVAL_ENDPOINT}") or {}
+            policy = fork.get("approval_policy")
+            if policy is None:
+                print(f"note: can't read {repo}'s fork PR workflow approval; not checked")
+            elif policy != FORK_APPROVAL:
+                problems.append(f"{repo} settings: fork PR workflow approval is {policy}, want "
+                                f"{FORK_APPROVAL} (design 6.2)")
         have = repo_rulesets(repo)
         for ruleset in desired_rulesets(repo):
             if ruleset["name"] not in have:

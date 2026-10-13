@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from issue_fields import all_problems, link_problems, load_forms, problems_text  # noqa: E402
 from issue_sweep import (PR_MARKER, both_sides, conflict_text, in_managed_repo,  # noqa: E402
-                         out_of_date, pr_action, resolved_text, who_to_tell)
+                         our_pr_comment, out_of_date, pr_action, resolved_text, who_to_tell)
 from rules import automation_owners  # noqa: E402
 from test_issue_fields import AUDIT, TASK, body, labelled  # noqa: E402
 
@@ -18,15 +18,17 @@ FORMS = load_forms()
 BOARD = "PVT_board"
 
 
+APP = {"__typename": "Bot", "login": "akenon-studio-automation"}  # the automation, which writes the notices
+
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User", assignees=("someone",), ever=("someone",), issue_type="Task", answers=None,
-          label_events=(), subs=(0, 0), login="someone", reason=None):
+          label_events=(), subs=(0, 0), login="someone", reason=None, private=True):
     return {"number": 1, "state": "OPEN", "body": body(**(answers or TASK)), "issueType": {"name": issue_type},
             "author": {"__typename": author, "login": login},
             "assignedActors": {"nodes": [{"__typename": "User", "login": a} for a in assignees]},
             "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": a}}
                                         for a in ever]},
-            "repository": {"nameWithOwner": repo},
+            "repository": {"nameWithOwner": repo, "isPrivate": private},
             "labels": {"nodes": [{"name": l} for l in labels]},
             "labelEvents": {"nodes": list(label_events)},
             "parent": {"number": 24} if parent else None,
@@ -35,7 +37,7 @@ def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo
             "projectItems": {"nodes": [{"id": "item", "project": {"id": BOARD},
                                         "fieldValueByName": {"name": status},
                                         "reason": {"name": reason} if reason else None}]},
-            "comments": {"nodes": [{"body": c} for c in comments]}}
+            "comments": {"nodes": [{"body": c, "author": APP} for c in comments]}}
 
 
 def with_epic(item, on_board):
@@ -133,6 +135,13 @@ class OutOfDateTest(unittest.TestCase):
         self.assertFalse(out_of_date(issue(parent=False, labels=["needs-fields"], comments=[text]),
                                      FORMS, BOARD))
 
+    def test_a_comment_someone_else_marked_is_not_ours(self):
+        # design 6.2: the right text, but typed by a person, so the app's comment is still missing
+        text = problems_text(link_problems("Task", False, "Todo", 0))
+        faked = issue(parent=False, labels=["needs-fields"], comments=[text])
+        faked["comments"]["nodes"][0]["author"] = {"__typename": "User", "login": "akenon-studio-automation"}
+        self.assertTrue(out_of_date(faked, FORMS, BOARD))
+
     def test_labelled_with_a_stale_comment_is_synced(self):
         stale = problems_text(["**Why** is required but empty."])
         self.assertTrue(out_of_date(issue(parent=False, labels=["needs-fields"], comments=[stale]),
@@ -146,13 +155,25 @@ class ManagedRepoTest(unittest.TestCase):
         self.assertFalse(in_managed_repo(issue(repo="Akenon-Studio/old-thing"), managed))
         self.assertFalse(in_managed_repo(issue(repo="someone/handbook"), managed))
 
+    def test_in_a_public_repo_only_members_and_the_orgs_bots(self):
+        # design 6.2: no outsider's issue or PR reaches a job holding the Automation key
+        managed = {".github"}
+        public = dict(repo="Akenon-Studio/.github", private=False)
+        self.assertTrue(in_managed_repo(issue(login="RuvinduH", **public), managed))
+        self.assertTrue(in_managed_repo(issue(author="Bot", login="akenon-studio-automation",
+                                              **public), managed))
+        self.assertFalse(in_managed_repo(issue(login="someone", **public), managed))
+        self.assertFalse(in_managed_repo(issue(author="Bot", login="someapp", **public), managed))
+        self.assertTrue(in_managed_repo(issue(repo="Akenon-Studio/.github", login="someone"), managed))
+
 
 def pr(mergeable="CONFLICTING", assignees=("alice",), author="User", comments=()):
     return {"number": 7, "mergeable": mergeable, "baseRefName": "main", "headRefOid": "h",
             "author": {"__typename": author, "login": "bob"},
-            "repository": {"nameWithOwner": "Akenon-Studio/animations"},
+            "repository": {"nameWithOwner": "Akenon-Studio/animations", "isPrivate": True},
             "assignees": {"nodes": [{"login": a} for a in assignees]},
-            "comments": {"nodes": [{"databaseId": i, "body": c} for i, c in enumerate(comments, 1)]}}
+            "comments": {"nodes": [{"databaseId": i, "body": c, "author": APP}
+                                   for i, c in enumerate(comments, 1)]}}
 
 
 class ConflictNoticeTest(unittest.TestCase):
@@ -163,6 +184,13 @@ class ConflictNoticeTest(unittest.TestCase):
         self.assertIn("- `scripts/a.py`", action[1])
         self.assertIn("git merge origin/main", action[1])
         self.assertIn("don't rebase and force-push", action[1])
+
+    def test_a_notice_typed_by_someone_else_is_not_ours(self):
+        # design 6.2: the marker alone doesn't make a comment the automation's
+        p = pr(comments=[f"{PR_MARKER}\nfake"])
+        p["comments"]["nodes"][0]["author"] = {"login": "someone"}
+        self.assertIsNone(our_pr_comment(p))
+        self.assertEqual(pr_action(p, ["scripts/a.py"])[0], "post")
 
     def test_without_the_base_files_it_names_only_the_base(self):
         text = pr_action(pr(), None)[1]

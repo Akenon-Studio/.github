@@ -46,6 +46,17 @@ class ReusableWorkflowsTest(unittest.TestCase):
                          len(bots["sources"]["renovate"]["status_pages"]))
         self.assertNotIn("pull_request", condition)
 
+    def test_issue_fields_holds_the_key_only_for_members(self):
+        # design 6.2: the trust check runs first, holds no secret, and gates every later step
+        steps = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["steps"]
+        ids = [s.get("id") for s in steps]
+        check = ids.index("check")
+        self.assertIn("trusted_event.py", steps[check]["run"])
+        self.assertNotIn("secrets", str(steps[:check + 1]))
+        self.assertLess(check, ids.index("app"))
+        for step in steps[check + 1:]:
+            self.assertEqual(step.get("if"), "steps.check.outputs.trusted == 'true'", step["name"])
+
     def test_ai_review_skips_every_renovate(self):
         import json
         bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
@@ -122,6 +133,23 @@ class ReusableWorkflowsTest(unittest.TestCase):
         for step in job["steps"]:  # never the PR's code: only the scripts from main
             if "checkout" in step.get("uses", ""):
                 self.assertEqual(step["with"]["ref"], "main")
+
+class PrAuthorTest(unittest.TestCase):
+    """The required check that refuses an outsider's PR (design 6.2) can't be changed by the PR."""
+
+    def test_it_runs_mains_copy_with_no_secret(self):
+        import json
+        workflow = load("pr-author.yml")
+        self.assertEqual(list(workflow["on"]), ["pull_request_target"])
+        steps = workflow["jobs"]["pr-author"]["steps"]
+        checkout = steps[0]["with"]
+        self.assertEqual(checkout["ref"], "main")
+        self.assertIs(checkout["persist-credentials"], False)
+        self.assertNotIn("secrets", (WORKFLOWS / "pr-author.yml").read_text())
+        self.assertTrue(steps[-1]["run"].endswith("--require"))
+        checks = json.loads((WORKFLOWS.parent.parent / "rulesets" / "required-checks.json").read_text())
+        self.assertIn("pr-author", checks[".github"])
+
 
 if __name__ == "__main__":
     unittest.main()

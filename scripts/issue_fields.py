@@ -331,7 +331,7 @@ def epic_stale(board_id, issue):
 
 # What the checks read about an issue; issue_sweep.py reads the same for many issues at once.
 ISSUE_FIELDS = """id number title state body author { __typename login } issueType { name } labels(first: 50) { nodes { name } }
-  repository { nameWithOwner }
+  repository { nameWithOwner isPrivate }
   parent { ANCESTORS }
   subIssues(first: 50) { nodes { number state repository { nameWithOwner } } }
   subIssuesSummary { total completed }
@@ -569,9 +569,17 @@ def set_field(board, item_id, name, option):
         clientMutationId } }""", p=board["id"], i=item_id, f=field["id"], o=option_id)
 
 
+def by_automation(comment):
+    """True for a comment the automation app wrote (REST `user` or GraphQL `author`): a marker
+    alone doesn't make one ours, since anyone can type it (design 6.2)."""
+    who = comment.get("user") or comment.get("author") or {}
+    return (who.get("__typename", who.get("type")) == "Bot"
+            and bot_login(who.get("login")) == AUTOMATION_APP)
+
+
 def our_comment(repo, number):
     for c in gh(f"repos/{repo}/issues/{number}/comments?per_page=100") or []:
-        if c["body"].startswith(MARKER):
+        if c["body"].startswith(MARKER) and by_automation(c):
             return c
     return None
 
@@ -603,7 +611,7 @@ def flagged_status_page(issue, board_id):
     """True for a status page that still carries what the checks put on it before they knew its
     bot: the `needs-fields` label, an item on the board, or (when the issue was read with its
     comments, as the sweep does) the checks' old comment."""
-    comments = [c["body"] for c in (issue.get("comments") or {}).get("nodes", [])]
+    comments = [c["body"] for c in (issue.get("comments") or {}).get("nodes", []) if by_automation(c)]
     return (status_page(issue.get("author"), issue.get("title"))
             and (LABEL in {l["name"] for l in issue["labels"]["nodes"]}
                  or any(i["project"]["id"] == board_id for i in issue["projectItems"]["nodes"])

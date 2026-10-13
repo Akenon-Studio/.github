@@ -1,6 +1,7 @@
 """Shared code for apply-rules.py and verify-settings.py. Talks to GitHub through the gh CLI."""
 
 import base64
+import functools
 import json
 import os
 import pathlib
@@ -52,8 +53,13 @@ def repo_files(repo):
     return {t["path"] for t in json.loads(res.stdout)["tree"]}
 
 
+@functools.lru_cache(maxsize=None)
+def _read(name):
+    return (RULES / name).read_text()
+
+
 def load(name):
-    return json.loads((RULES / name).read_text())
+    return json.loads(_read(name))
 
 
 def managed_repos():
@@ -102,6 +108,16 @@ REPO_SETTINGS_GRAPHQL = {
 # Settings in repo-settings.json that the repo PATCH doesn't take; each has its own endpoint, turned
 # on with PUT and off with DELETE (design 6.4: Dependabot alerts on every repo).
 REPO_SETTING_ENDPOINTS = {"vulnerability_alerts": "vulnerability-alerts"}
+
+# A public repo runs no workflow from an outsider's fork PR until a member approves the run (design
+# 6.2): an unapproved one can't post a check of its own, such as a fake `pr-author`. Private repos
+# take no fork PRs from outside, and the endpoint is for public repos.
+FORK_APPROVAL = "all_external_contributors"
+FORK_APPROVAL_ENDPOINT = "actions/permissions/fork-pr-contributor-approval"
+
+
+def is_public(repo):
+    return not gh(f"repos/{ORG}/{repo}")["private"]
 
 
 def repo_settings(repo):
@@ -209,6 +225,27 @@ def status_page(author, title):
     if (author or {}).get("__typename", (author or {}).get("type")) != "Bot":
         return False
     return title in (bot_sources().get(login) or {}).get("status_pages", [])
+
+
+def org_people():
+    """Every person in the org, as lowercase logins: the members of the teams in
+    rulesets/teams.json (verify-settings.py keeps the teams exact)."""
+    return {m.lower() for t in load("teams.json")["teams"] for m in t["members"]}
+
+
+def acts_for(author, private):
+    """True if the automation holding the Automation app's key may act on an issue, PR or comment
+    by `author` (the GraphQL or REST actor) in a repo that is `private` (design 6.2): any in a
+    private repo; in a public one, only a person in the org or one of the org's own bots
+    (rulesets/bots.json's sources and org_apps), so no outsider's text reaches a job holding the
+    key."""
+    if private:
+        return True
+    author = author or {}
+    if author.get("__typename", author.get("type")) == "Bot":
+        login = bot_login(author.get("login"))
+        return login in bot_sources() or login in load("bots.json")["org_apps"]
+    return (author.get("login") or "").lower() in org_people()
 
 
 def renovate_logins():
