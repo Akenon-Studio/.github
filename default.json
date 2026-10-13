@@ -81,12 +81,6 @@
       "commitMessageSuffix": ""
     },
     {
-      "description": "Lock-file maintenance rebuilds platform's whole lockfile in one pass, more than Mend's 3 GB allows: off there until it fits (.github#124).",
-      "matchRepositories": ["Akenon-Studio/platform"],
-      "matchUpdateTypes": ["lockFileMaintenance"],
-      "enabled": false
-    },
-    {
       "description": "Pins (an action or dependency fixed to the commit or version a tag or range points to now) open at any time in their own group: grouped with real updates they waited on every fresh release (design 6.4, .github#168). They keep the release-age wait like any update; it doesn't protect a pin of a tag moved to a backdated commit, so a pin PR's reviewer checks each pinned commit is on the action's default branch. Last, so it overrides the groups above.",
       "matchUpdateTypes": ["pin", "pinDigest"],
       "groupName": "pins",
