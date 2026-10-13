@@ -87,7 +87,7 @@
       "enabled": false
     },
     {
-      "description": "Pins (an action or dependency fixed to the commit or version a tag or range points to now) open at any time in their own group: grouped with real updates they waited on every fresh release (design 6.4, .github#168). They keep the release-age wait: a tag moved to a new commit (the tj-actions attack) is caught by it. Last, so it overrides the groups above.",
+      "description": "Pins (an action or dependency fixed to the commit or version a tag or range points to now) open at any time in their own group: grouped with real updates they waited on every fresh release (design 6.4, .github#168). They keep the release-age wait like any update; a pin PR's reviewer checks each pinned commit is the release its tag names. Last, so it overrides the groups above.",
       "matchUpdateTypes": ["pin", "pinDigest"],
       "groupName": "pins",
       "groupSlug": "pins",
