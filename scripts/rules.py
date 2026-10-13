@@ -1,6 +1,7 @@
 """Shared code for apply-rules.py and verify-settings.py. Talks to GitHub through the gh CLI."""
 
 import base64
+import functools
 import json
 import os
 import pathlib
@@ -52,8 +53,13 @@ def repo_files(repo):
     return {t["path"] for t in json.loads(res.stdout)["tree"]}
 
 
+@functools.lru_cache(maxsize=None)
+def _read(name):
+    return (RULES / name).read_text()
+
+
 def load(name):
-    return json.loads((RULES / name).read_text())
+    return json.loads(_read(name))
 
 
 def managed_repos():

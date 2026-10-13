@@ -24,7 +24,7 @@ import sys
 from board import find_board_fields
 from issue_fields import board_item, graphql, load_issue, set_field, sync_reason
 from pr_closes_issue import CLOSES, refs as closes_in
-from rules import try_gh
+from rules import acts_for, try_gh
 
 IN_REVIEW = "In review"
 CLOSING = """query($owner: String!, $name: String!, $number: Int!) {
@@ -114,6 +114,9 @@ def main(path):
         board = board or find_board_fields("Akenon Studio")
         issue = load_issue(target, number)
         if issue["state"] != "OPEN":
+            continue
+        if not acts_for(issue["author"], issue["repository"]["isPrivate"]):
+            print(f"{where}: left alone (an outsider's issue in a public repo, design 6.2)")
             continue
         item, status = board_item(board, issue)
         status_to = new_status(change, status, bool(issue["assignedActors"]["nodes"]))

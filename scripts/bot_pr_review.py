@@ -8,6 +8,8 @@ later removal or a finished review is left alone.
 A CODEOWNERS entry was not used: it cannot tell a bot's PR from a person's, so it would also ask
 the team to review people's changes to the same files.
 
+In a public repo, only the org's own apps' PRs are handled (design 6.2).
+
 It also adds a listed bot's source label (rulesets/bots.json) to its PR when the PR carries none of
 them, so every bot PR says where it came from (design 6.8).
 

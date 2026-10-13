@@ -7,6 +7,9 @@ the managed repos and syncs only those whose `needs-fields` label or comment is 
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
 or a Process failure whose prevention is not decided yet.
 
+In a public repo, an outsider's issue or PR is left alone, and only the automation's own comments
+count as its notices (design 6.2).
+
 A bot's status page (Renovate's dashboard or config-error issue, design 6.8) is never checked, but
 one still carrying the label, a board item or the checks' comment from before its bot was known is
 synced, which cleans it up.
@@ -28,14 +31,15 @@ import json
 import sys
 
 from board import find_board_fields, graphql, spec
-from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, closed_too_early,
+from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, by_automation,
+                          closed_too_early,
                           epic_stale, flagged_status_page, load_forms, problems_text, reason_on,
                           reclose_due, status_on, sync, want_reason)
 from reason import FIELD as REASON_FIELD
 from rules import ORG, acts_for, automation_owners, gh, managed_repos, status_page, try_gh
 
 CLOSED_WINDOW = datetime.timedelta(hours=6)  # covers late or skipped scheduled runs
-ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body }} }} }}"
+ISSUE_SEARCH = f"... on Issue {{ {ISSUE_FIELDS} comments(first: 100) {{ nodes {{ body author {{ login }} }} }} }}"
 
 PR_MARKER = "<!-- pr-conflicts -->"
 RESOLVED = "**Resolved:**"
@@ -44,7 +48,7 @@ RESOLVED = "**Resolved:**"
 PR_SEARCH = """... on PullRequest { number mergeable baseRefName headRefOid
   author { __typename login } repository { nameWithOwner isPrivate }
   assignees(first: 20) { nodes { login } }
-  comments(last: 100) { nodes { databaseId body } } }"""
+  comments(last: 100) { nodes { databaseId body author { login } } } }"""
 
 
 def search(query, fields=ISSUE_SEARCH):
@@ -78,7 +82,8 @@ def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
     if reason_field and reason_on(board_id, issue) != want_reason(issue, bool(problems), status):
         return True
     labelled = LABEL in {l["name"] for l in issue["labels"]["nodes"]}
-    ours = [c["body"] for c in issue["comments"]["nodes"] if c["body"].startswith(MARKER)]
+    ours = [c["body"] for c in issue["comments"]["nodes"]
+            if c["body"].startswith(MARKER) and by_automation(c)]
     if bool(problems) != labelled:
         return True
     return bool(problems) and (not ours or ours[0] != problems_text(problems))
@@ -157,7 +162,7 @@ def resolved_text(pr, earlier):
 
 def our_pr_comment(pr):
     """The PR's latest conflict notice, or None."""
-    ours = [c for c in pr["comments"]["nodes"] if c["body"].startswith(PR_MARKER)]
+    ours = [c for c in pr["comments"]["nodes"] if c["body"].startswith(PR_MARKER) and by_automation(c)]
     return ours[-1] if ours else None
 
 

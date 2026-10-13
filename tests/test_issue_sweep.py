@@ -10,13 +10,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from issue_fields import all_problems, link_problems, load_forms, problems_text  # noqa: E402
 from issue_sweep import (PR_MARKER, both_sides, conflict_text, in_managed_repo,  # noqa: E402
-                         out_of_date, pr_action, resolved_text, who_to_tell)
+                         our_pr_comment, out_of_date, pr_action, resolved_text, who_to_tell)
 from rules import automation_owners  # noqa: E402
 from test_issue_fields import AUDIT, TASK, body, labelled  # noqa: E402
 
 FORMS = load_forms()
 BOARD = "PVT_board"
 
+
+APP = {"login": "akenon-studio-automation"}  # the automation, which writes the notices
 
 def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo="Akenon-Studio/handbook",
           author="User", assignees=("someone",), ever=("someone",), issue_type="Task", answers=None,
@@ -35,7 +37,7 @@ def issue(parent=True, status="Todo", blocked_by=0, labels=(), comments=(), repo
             "projectItems": {"nodes": [{"id": "item", "project": {"id": BOARD},
                                         "fieldValueByName": {"name": status},
                                         "reason": {"name": reason} if reason else None}]},
-            "comments": {"nodes": [{"body": c} for c in comments]}}
+            "comments": {"nodes": [{"body": c, "author": APP} for c in comments]}}
 
 
 def with_epic(item, on_board):
@@ -163,7 +165,8 @@ def pr(mergeable="CONFLICTING", assignees=("alice",), author="User", comments=()
             "author": {"__typename": author, "login": "bob"},
             "repository": {"nameWithOwner": "Akenon-Studio/animations", "isPrivate": True},
             "assignees": {"nodes": [{"login": a} for a in assignees]},
-            "comments": {"nodes": [{"databaseId": i, "body": c} for i, c in enumerate(comments, 1)]}}
+            "comments": {"nodes": [{"databaseId": i, "body": c, "author": APP}
+                                   for i, c in enumerate(comments, 1)]}}
 
 
 class ConflictNoticeTest(unittest.TestCase):
@@ -174,6 +177,13 @@ class ConflictNoticeTest(unittest.TestCase):
         self.assertIn("- `scripts/a.py`", action[1])
         self.assertIn("git merge origin/main", action[1])
         self.assertIn("don't rebase and force-push", action[1])
+
+    def test_a_notice_typed_by_someone_else_is_not_ours(self):
+        # design 6.2: the marker alone doesn't make a comment the automation's
+        p = pr(comments=[f"{PR_MARKER}\nfake"])
+        p["comments"]["nodes"][0]["author"] = {"login": "someone"}
+        self.assertIsNone(our_pr_comment(p))
+        self.assertEqual(pr_action(p, ["scripts/a.py"])[0], "post")
 
     def test_without_the_base_files_it_names_only_the_base(self):
         text = pr_action(pr(), None)[1]

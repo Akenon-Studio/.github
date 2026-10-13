@@ -23,10 +23,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_the_shared_checks_are_reusable(self):
         self.assertLessEqual({"pr-title.yml", "issue-fields.yml", "security-scan.yml"}, set(REUSABLE))
 
-    # issue-fields isn't a required check. Its gate skips Renovate's status pages (design 6.8),
-    # reading only the issue, which a PR event doesn't have; sync skips with it, and for an
-    # outsider's issue, PR or comment in a public repo (design 6.2).
-    MAY_SKIP = {("issue-fields.yml", "gate"), ("issue-fields.yml", "sync")}
+    # issue-fields isn't a required check, and its condition reads only the issue, which a PR
+    # event doesn't have: it skips Renovate's status pages (design 6.8), never a PR.
+    MAY_SKIP = {("issue-fields.yml", "sync")}
 
     def test_no_job_is_skipped(self):
         # a skipped job reports "skipped", which passes a required check
@@ -38,7 +37,7 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_issue_fields_skips_exactly_renovates_status_pages(self):
         import json
         bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
-        condition = REUSABLE["issue-fields.yml"]["jobs"]["gate"]["if"]
+        condition = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["if"]
         for login in (l for l, s in bots["sources"].items() if s.get("renovate")):
             self.assertIn(f"github.event.issue.user.login == '{login}[bot]'", condition)
         for title in bots["sources"]["renovate"]["status_pages"]:
@@ -46,6 +45,17 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertEqual(condition.count("github.event.issue.title =="),
                          len(bots["sources"]["renovate"]["status_pages"]))
         self.assertNotIn("pull_request", condition)
+
+    def test_issue_fields_holds_the_key_only_for_members(self):
+        # design 6.2: the trust check runs first, holds no secret, and gates every later step
+        steps = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["steps"]
+        ids = [s.get("id") for s in steps]
+        check = ids.index("check")
+        self.assertIn("trusted_event.py", steps[check]["run"])
+        self.assertNotIn("secrets", str(steps[:check + 1]))
+        self.assertLess(check, ids.index("app"))
+        for step in steps[check + 1:]:
+            self.assertEqual(step.get("if"), "steps.check.outputs.trusted == 'true'", step["name"])
 
     def test_ai_review_skips_every_renovate(self):
         import json
