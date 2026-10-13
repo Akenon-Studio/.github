@@ -58,12 +58,12 @@ jobs:
           code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2).
-          # The details go in the drift issue in .github-private. A crash (any other exit) prints its
-          # error, which names no setting, so it can be diagnosed.
+          # The details go in the drift issue in .github-private. A crash (any other exit) logs only
+          # the error's type: its message can name a repo or a setting.
           case "$code" in
             0) echo "PASS" ;;
             1) echo "FAIL: live settings differ; see the settings-drift issue in .github-private" ;;
-            *) echo "verify-settings.py crashed (exit $code):"; grep -v '^  - ' verify.txt ;;
+            *) echo "verify-settings.py crashed (exit $code): $(tail -n 1 verify.txt | cut -d: -f1)" ;;
           esac
 
       - name: Log in as the automation app
