@@ -64,7 +64,9 @@ def sensitive(repo, files, path=RULES):
 
 def block(repo, path=RULES):
     """The repo's generated CODEOWNERS block, or "" if none of its areas need a sign-off."""
-    lines = [f"{p} @{ORG}/{a['team']}" for p, a in patterns(repo, codeowners_only=True, path=path)]
+    found = patterns(repo, codeowners_only=True, path=path)
+    whole = {a["team"] for p, a in found if p == "*"}  # a team owning the whole repo needs no more lines
+    lines = [f"{p} @{ORG}/{a['team']}" for p, a in found if p == "*" or a["team"] not in whole]
     return HEADER + "\n".join(lines) + "\n" if lines else ""
 
 

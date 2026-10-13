@@ -56,6 +56,10 @@ class BlockTest(unittest.TestCase):
         self.assertNotIn("design.md", sp.block("handbook"))
         self.assertIn("/.github/ @akenon-studio/engineers", sp.block("handbook"))
 
+    def test_a_whole_repo_owner_needs_no_other_lines(self):
+        self.assertEqual(sp.block("peras").splitlines()[-1], "* @akenon-studio/engineers")
+        self.assertNotIn("/.github/", sp.block("peras"))
+
     def test_this_repos_codeowners_ends_with_its_block(self):
         text = (ROOT / ".github" / "CODEOWNERS").read_text()
         self.assertEqual(sp.codeowners_problems(".github", text), [])
