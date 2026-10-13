@@ -12,10 +12,12 @@ Usage: scripts/sensitive_paths.py <repo>                 print the repo's CODEOW
 
 import json
 import pathlib
+import re
 import sys
 
 RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "sensitive-paths.json"
 ORG = "akenon-studio"
+GENERATED = re.compile(rf"(\*|/\S+) @{ORG}/[A-Za-z0-9_.-]+")
 BEGIN = "# Sensitive areas (design 6.2), generated from Akenon-Studio/.github's"
 HEADER = (f"{BEGIN}\n# rulesets/sensitive-paths.json by scripts/sensitive_paths.py. Edit that file, not these\n"
           "# lines; they stay last, so they override the lines above.\n")
@@ -33,7 +35,7 @@ def patterns(repo, codeowners_only=False, path=RULES):
             continue
         own = a["paths"].get(repo, [])
         shared = [] if "*" in own else a["paths"].get("*", [])  # the whole repo covers the rest
-        found += [(p, a) for p in shared + own]
+        found += [(p, a) for p in shared + own + a.get("planned", {}).get(repo, [])]
     return found
 
 
@@ -66,7 +68,9 @@ def block(repo, path=RULES):
     """The repo's generated CODEOWNERS block, or "" if none of its areas need a sign-off."""
     found = patterns(repo, codeowners_only=True, path=path)
     whole = {a["team"] for p, a in found if p == "*"}  # a team owning the whole repo needs no more lines
-    lines = [f"{p} @{ORG}/{a['team']}" for p, a in found if p == "*" or a["team"] not in whole]
+    # '*' first: last match wins, so a whole-repo line after another team's line would override it
+    lines = ([f"* @{ORG}/{a['team']}" for p, a in found if p == "*"] +
+             [f"{p} @{ORG}/{a['team']}" for p, a in found if p != "*" and a["team"] not in whole])
     return HEADER + "\n".join(lines) + "\n" if lines else ""
 
 
@@ -87,8 +91,23 @@ def codeowners_problems(repo, text, path=RULES):
     return []
 
 
+def after_block(text):
+    """Lines after the generated block's header that look hand-written (not `<pattern> @org/team`
+    lines it could have generated), which a rewrite would otherwise drop."""
+    at = text.find(BEGIN)
+    if at < 0:
+        return []
+    lines = text[at:].splitlines()[3:]  # the header is three comment lines
+    return [l for l in lines if l.strip() and not GENERATED.fullmatch(l.strip())]
+
+
 def write(repo, file, path=RULES):
     old = pathlib.Path(file).read_text() if pathlib.Path(file).exists() else ""
+    stray = after_block(old)
+    if stray:  # never drop a person's line silently: they move it above the block
+        raise SystemExit(f"{file}: these lines are after the generated block; move them above it "
+                         "(or delete them if they were generated), then run this again:\n"
+                         + "\n".join(stray))
     before = without_block(old)
     pathlib.Path(file).write_text((before + "\n\n" if before else "") + block(repo, path))
 

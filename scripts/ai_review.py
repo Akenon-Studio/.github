@@ -598,8 +598,12 @@ def prompt_main(repo, base, design_path, settled_path=None):
     design = read_design(design_path, repo)
     if design == NO_DESIGN:
         raise SystemExit(f"can't read the design for {repo} from {design_path}")
-    whole, omitted = full_files(review_paths(files, repo), budget=MAX_INPUT_CHARS - len(text) - len(design))
-    history = open(settled_path).read() if settled_path else ""
+    history = ""
+    if settled_path:
+        with open(settled_path) as f:
+            history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
+    budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
+    whole, omitted = full_files(review_paths(files, repo), budget=budget)
     system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
                            generated=generated_paths(diff), repo=repo, history=history)
     print(json.dumps({"system": system, "user": user}))

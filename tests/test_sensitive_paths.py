@@ -73,12 +73,30 @@ class BlockTest(unittest.TestCase):
     def test_write_keeps_the_hand_lines_and_replaces_the_block(self):
         with tempfile.TemporaryDirectory() as d:
             f = pathlib.Path(d, "CODEOWNERS")
-            f.write_text("# Docs owners\ndocs/ @akenon-studio/engineers\n\n" + sp.HEADER + "/old/ @x/y\n")
+            f.write_text("# Docs owners\ndocs/ @akenon-studio/engineers\n\n" + sp.HEADER
+                         + "/old/ @akenon-studio/engineers\n")
             sp.write("platform", f)
             text = f.read_text()
             self.assertTrue(text.startswith("# Docs owners\ndocs/ @akenon-studio/engineers\n\n"))
             self.assertNotIn("/old/", text)
             self.assertEqual(sp.codeowners_problems("platform", text), [])
+
+    def test_write_refuses_to_drop_a_hand_line_after_the_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d, "CODEOWNERS")
+            f.write_text(sp.HEADER + "/.github/ @akenon-studio/engineers\ndocs/ @akenon-studio/design\n")
+            with self.assertRaises(SystemExit) as stop:
+                sp.write("platform", f)
+            self.assertIn("docs/ @akenon-studio/design", str(stop.exception))
+            self.assertIn("docs/ @akenon-studio/design", f.read_text())  # left as it was
+
+    def test_whole_repo_lines_come_first(self):
+        lines = sp.block("peras").splitlines()[3:]
+        self.assertEqual(lines[0], "* @akenon-studio/engineers")
+
+    def test_planned_paths_are_sensitive_before_they_exist(self):
+        self.assertIn("payments", sp.sensitive("platform", ["apps/api/src/modules/payouts/x.ts"])[
+            "apps/api/src/modules/payouts/x.ts"])
 
 
 if __name__ == "__main__":

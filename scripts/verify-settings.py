@@ -6,7 +6,9 @@ Reports: org settings, issue types and teams (rulesets/teams.json), each managed
 settings, rulesets and labels, the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
 (rulesets/repo-lists.json), that every team a repo's CODEOWNERS names is in rulesets/teams.json
-with write access, that every repo's caller workflows listen to the same events as this
+with write access, that each CODEOWNERS ends with its generated sensitive-areas block and every
+sensitive path exists (rulesets/sensitive-paths.json), a public repo's fork PR workflow approval,
+that every repo's caller workflows listen to the same events as this
 repo's, and any repo in the org that is neither managed nor archived.
 """
 
@@ -131,7 +133,8 @@ def main():
         # a sensitive path that no longer exists protects nothing (design 6.2): moved or renamed
         problems += [f"{repo}: rulesets/sensitive-paths.json names {p} ({a['area']}), which doesn't exist"
                      for p, a in sensitive_paths.patterns(repo)
-                     if p != "*" and not any(sensitive_paths.matches(p, f) for f in files)]
+                     if p != "*" and p not in a.get("planned", {}).get(repo, [])
+                     and not any(sensitive_paths.matches(p, f) for f in files)]
 
     for path in CALLERS:
         want = triggers((ROOT / path).read_text())
