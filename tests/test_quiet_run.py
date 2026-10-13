@@ -66,6 +66,17 @@ class ReportsArePrivateTest(unittest.TestCase):
         self.assertEqual(report_drift.REPO, "akenon-studio/.github-private")
         self.assertEqual(stale_alerts.REPO, "akenon-studio/.github-private")
 
+    def test_collect_refuses_a_partial_list(self):
+        saved = stale_alerts.managed_repos, stale_alerts.try_gh
+        stale_alerts.managed_repos = lambda: ["platform"]
+        stale_alerts.try_gh = lambda *a: None
+        try:
+            with self.assertRaises(SystemExit) as e:
+                stale_alerts.collect("/dev/null")
+        finally:
+            stale_alerts.managed_repos, stale_alerts.try_gh = saved
+        self.assertIn("platform", str(e.exception.code))  # named for an owner running it locally
+
     def test_quiet_run_hides_the_unreadable_repos_names(self):
         r = run("import sys; sys.exit('Could not read Dependabot alerts in platform (alerts off)')")
         self.assertEqual(r.returncode, 1)

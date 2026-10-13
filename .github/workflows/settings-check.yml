@@ -58,6 +58,8 @@ jobs:
           # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2);
           # the details go in the drift issue in .github-private, and a crash shows only its type.
           python3 scripts/quiet_run.py --verdict verify.txt "$?"
+          # The verdict's code goes to the next step privately; this step (and the drift report,
+          # which exits 0 on drift) stays green either way, so the run's colour shows nothing.
           echo "code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Log in as the automation app
