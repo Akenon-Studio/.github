@@ -1,14 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own. The schedule is \"at any time\" only for the first run (#118); #119 puts it back to before 9am on monday (design 6.4). `env` caps pnpm at one worker so platform's lockfile updates fit Mend-hosted Renovate's 3 GB (.github#123); Mend allows the name (`global:safeEnv`).",
+  "description": "Akenon Studio's shared Renovate preset (design 6.4). Every managed repo's renovate.json extends it with \"github>Akenon-Studio/.github\". A person approves every update; nothing merges on its own. `env` caps pnpm at one worker to keep lockfile updates within Mend-hosted Renovate's 3 GB (.github#123; platform outgrew it and runs its own, design 6.4); Mend allows the name (`global:safeEnv`). The dashboard issue is how the automation failures report sees Renovate's problems, since Mend has no API (.github#130, design 6.8); the issue checks skip it.",
   "extends": [
     "config:recommended",
     ":semanticCommits",
     "helpers:pinGitHubActionDigests"
   ],
   "timezone": "Australia/Melbourne",
-  "schedule": ["at any time"],
-  "dependencyDashboard": false,
+  "schedule": ["before 9am on monday"],
+  "dependencyDashboard": true,
   "labels": ["dependencies"],
   "automerge": false,
   "platformAutomerge": false,
@@ -32,6 +32,12 @@
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "groupName": "non-major dependencies",
       "groupSlug": "non-major"
+    },
+    {
+      "description": "Every repo calls our shared workflows at @main on purpose, so a fix there reaches every repo at once (design 6.2): never pin or update them (.github#143).",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["akenon-studio/.github", "Akenon-Studio/.github"],
+      "enabled": false
     },
     {
       "description": "three.js is part of the animation contract shared by platform and animations: both move together, by hand (platform#53).",
@@ -75,10 +81,14 @@
       "commitMessageSuffix": ""
     },
     {
-      "description": "Lock-file maintenance rebuilds platform's whole lockfile in one pass, more than Mend's 3 GB allows: off there until it fits (.github#124).",
-      "matchRepositories": ["Akenon-Studio/platform"],
-      "matchUpdateTypes": ["lockFileMaintenance"],
-      "enabled": false
+      "description": "Pins (an action or dependency fixed to the commit or version a tag or range points to now) open at any time in their own group: grouped with real updates they waited on every fresh release (design 6.4, .github#168). A pin to a commit has no release date, so the wait counts it as old enough (timestamp-optional: the default treats an undated release as never old enough, .github#171), and it wouldn't catch a tag moved to a backdated commit anyway: a pin PR's reviewer checks each pinned commit is on the action's default branch. Last, so it overrides the groups above.",
+      "matchUpdateTypes": ["pin", "pinDigest"],
+      "groupName": "pins",
+      "groupSlug": "pins",
+      "additionalBranchPrefix": "",
+      "commitMessageSuffix": "",
+      "schedule": ["at any time"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     }
   ]
 }

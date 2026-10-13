@@ -1,7 +1,14 @@
 # Daily: compares live GitHub settings with rulesets/ (scripts/verify-settings.py) and keeps one
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
 # (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
-# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts.
+# no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. Last, keeps
+# one `automation-failures` issue listing what failed with no one told: scheduled runs, Renovate's
+# problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
+# secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
+# Actions: read, Secret scanning alerts: read and Contents: read for those; without them the issue
+# says so. All three reports go in .github-private (members only), never this public repo, since
+# each lists weaknesses, and this public log shows only a verdict or an error's type (scripts/
+# quiet_run.py; design 6.2).
 # Reports only: an owner fixes drift by re-running scripts/apply-rules.py.
 #
 # Reads settings as the read-only "Akenon Studio Settings" app, whose key lives only in this repo's
@@ -48,8 +55,12 @@ jobs:
         run: |
           set +e
           python3 scripts/verify-settings.py > verify.txt 2>&1
+          # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2);
+          # the details go in the drift issue in .github-private, and a crash shows only its type.
+          python3 scripts/quiet_run.py --verdict verify.txt "$?"
+          # The verdict's code goes to the next step privately; this step (and the drift report,
+          # which exits 0 on drift) stays green either way, so the run's colour shows nothing.
           echo "code=$?" >> "$GITHUB_OUTPUT"
-          cat verify.txt
 
       - name: Log in as the automation app
         id: automation
@@ -58,20 +69,23 @@ jobs:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: .github
+          repositories: .github-private
 
       - name: Open, update or close the drift issue
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
-        run: python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
+        run: python3 scripts/quiet_run.py python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
 
       # After the drift report, so a failure here can't hide drift.
       - name: List open Dependabot alerts
+        id: alerts
+        if: ${{ !cancelled() }}  # a drift-step failure mustn't hide stale alerts
         env:
           GH_TOKEN: ${{ steps.settings.outputs.token }}
-        run: python3 scripts/stale_alerts.py collect alerts.json
+        run: python3 scripts/quiet_run.py python3 scripts/stale_alerts.py collect alerts.json
 
       - name: Log in as the automation app, every repo, read-only PRs (to see Renovate's)
+        if: ${{ !cancelled() && steps.alerts.outcome == 'success' }}
         id: pr-read
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -81,7 +95,37 @@ jobs:
           permission-pull-requests: read
 
       - name: Open, update or close the stale-alerts issue
+        # Never from a partial list (collect fails when a repo can't be read)
+        if: ${{ !cancelled() && steps.alerts.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
           PR_READ_TOKEN: ${{ steps.pr-read.outputs.token }}
-        run: python3 scripts/stale_alerts.py report alerts.json
+        run: python3 scripts/quiet_run.py python3 scripts/stale_alerts.py report alerts.json
+
+      # Last, and whatever happened above, so a failure there can't hide these (design 6.8).
+      - name: List failed scheduled runs and secret-scanning alerts
+        id: failures
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ steps.settings.outputs.token }}
+        run: python3 scripts/quiet_run.py python3 scripts/automation_failures.py collect failures.json
+
+      # Its own token: it files the issue in .github-private, reads Renovate's issues and the PRs in
+      # every repo, and ticks each Renovate dashboard's run-again box.
+      - name: Log in as the automation app, every repo (issues, PRs read)
+        id: failures-app
+        if: ${{ !cancelled() && steps.failures.outcome == 'success' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.AKENON_APP_ID }}
+          private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-issues: write
+          permission-pull-requests: read
+          permission-contents: read
+
+      - name: Open, update or close the automation failures issue
+        if: ${{ !cancelled() && steps.failures.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ steps.failures-app.outputs.token }}
+        run: python3 scripts/quiet_run.py python3 scripts/automation_failures.py report failures.json

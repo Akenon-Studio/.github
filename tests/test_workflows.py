@@ -23,11 +23,53 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_the_shared_checks_are_reusable(self):
         self.assertLessEqual({"pr-title.yml", "issue-fields.yml", "security-scan.yml"}, set(REUSABLE))
 
+    # issue-fields isn't a required check, and its condition reads only the issue, which a PR
+    # event doesn't have: it skips Renovate's status pages (design 6.8), never a PR.
+    MAY_SKIP = {("issue-fields.yml", "sync")}
+
     def test_no_job_is_skipped(self):
         # a skipped job reports "skipped", which passes a required check
         for name, workflow in REUSABLE.items():
             for job_id, job in workflow["jobs"].items():
-                self.assertNotIn("if", job, f"{name}: job {job_id}")
+                if (name, job_id) not in self.MAY_SKIP:
+                    self.assertNotIn("if", job, f"{name}: job {job_id}")
+
+    def test_issue_fields_skips_exactly_renovates_status_pages(self):
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        condition = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["if"]
+        for login in (l for l, s in bots["sources"].items() if s.get("renovate")):
+            self.assertIn(f"github.event.issue.user.login == '{login}[bot]'", condition)
+        for title in bots["sources"]["renovate"]["status_pages"]:
+            self.assertIn(f"github.event.issue.title == '{title}'", condition)
+        self.assertEqual(condition.count("github.event.issue.title =="),
+                         len(bots["sources"]["renovate"]["status_pages"]))
+        self.assertNotIn("pull_request", condition)
+
+    def test_issue_fields_holds_the_key_only_for_members(self):
+        # design 6.2: the trust check runs first, holds no secret, and gates every later step
+        steps = REUSABLE["issue-fields.yml"]["jobs"]["sync"]["steps"]
+        ids = [s.get("id") for s in steps]
+        check = ids.index("check")
+        self.assertIn("trusted_event.py", steps[check]["run"])
+        self.assertNotIn("secrets", str(steps[:check + 1]))
+        self.assertLess(check, ids.index("app"))
+        for step in steps[check + 1:]:
+            self.assertEqual(step.get("if"), "steps.check.outputs.trusted == 'true'", step["name"])
+
+    def test_ai_review_skips_every_renovate(self):
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        wanted = REUSABLE["ai-review.yml"]["jobs"]["review"]["env"]["WANTED"]
+        for login in (l for l, s in bots["sources"].items() if s.get("renovate")):
+            self.assertIn(f"github.event.pull_request.user.login != '{login}[bot]'", wanted)
+
+    def test_every_renovate_has_the_same_status_pages(self):
+        # the issue-fields condition, the failures report and status_page() each read one copy
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        pages = {tuple(s["status_pages"]) for s in bots["sources"].values() if s.get("renovate")}
+        self.assertEqual(len(pages), 1)
 
     # ai-review is called from main even here: its sign-in trusts only the main copy (ai-review.yml).
     # merge-lane too: it holds the Merge Lane app's key, so only main's copy runs (merge-lane.yml).
@@ -91,6 +133,23 @@ class ReusableWorkflowsTest(unittest.TestCase):
         for step in job["steps"]:  # never the PR's code: only the scripts from main
             if "checkout" in step.get("uses", ""):
                 self.assertEqual(step["with"]["ref"], "main")
+
+class PrAuthorTest(unittest.TestCase):
+    """The required check that refuses an outsider's PR (design 6.2) can't be changed by the PR."""
+
+    def test_it_runs_mains_copy_with_no_secret(self):
+        import json
+        workflow = load("pr-author.yml")
+        self.assertEqual(list(workflow["on"]), ["pull_request_target"])
+        steps = workflow["jobs"]["pr-author"]["steps"]
+        checkout = steps[0]["with"]
+        self.assertEqual(checkout["ref"], "main")
+        self.assertIs(checkout["persist-credentials"], False)
+        self.assertNotIn("secrets", (WORKFLOWS / "pr-author.yml").read_text())
+        self.assertTrue(steps[-1]["run"].endswith("--require"))
+        checks = json.loads((WORKFLOWS.parent.parent / "rulesets" / "required-checks.json").read_text())
+        self.assertIn("pr-author", checks[".github"])
+
 
 if __name__ == "__main__":
     unittest.main()

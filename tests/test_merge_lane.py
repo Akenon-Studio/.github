@@ -26,7 +26,8 @@ def pr(contexts=None, state="OPEN", draft=False, mergeable="MERGEABLE", status="
         contexts = [run("pr-title / checks"), run("security-scan / code")]
     return {"number": 7, "state": state, "isDraft": draft, "mergeable": mergeable,
             "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head, "baseRefName": "main",
-            "author": {"__typename": "User", "login": "someone"}, "labels": {"nodes": [{"name": n} for n in labels]},
+            "author": {"__typename": "User", "login": "someone"}, "repository": {"isPrivate": True},
+            "labels": {"nodes": [{"name": n} for n in labels]},
             "reviewThreads": {"nodes": [{"isResolved": r} for r in threads]},
             "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
                 "contexts": {"nodes": contexts}}}}]}}
@@ -85,6 +86,11 @@ class DecideTest(unittest.TestCase):
     def test_conflicts_drafts_and_unlabelled(self):
         self.assertEqual(self.action(pr(mergeable="CONFLICTING", status="DIRTY")), "drop")
         self.assertEqual(self.action(pr(draft=True)), "drop")
+        public = pr()
+        public["repository"]["isPrivate"] = False  # design 6.2: an outsider's PR, public repo
+        self.assertEqual(self.action(public), "drop")
+        public["author"]["login"] = "RuvinduH"
+        self.assertEqual(self.action(public), "merge")
         self.assertEqual(self.action(pr(labels=())), "gone")
         self.assertEqual(self.action(pr(state="MERGED")), "gone")
 

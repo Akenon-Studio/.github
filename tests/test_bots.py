@@ -29,6 +29,12 @@ class BotsFileTest(unittest.TestCase):
         for login in bot_sources():
             self.assertEqual(login, bot_login(login))
 
+    def test_org_apps_are_bare_lower_case_and_no_source(self):
+        apps = json.loads((RULES / "bots.json").read_text())["org_apps"]
+        for login in apps:
+            self.assertEqual(login, bot_login(login))
+            self.assertNotIn(login, bot_sources())
+
     def test_every_source_label_exists(self):
         labels = json.loads((RULES / "labels.json").read_text())
         names = {l["name"] for group in labels.values() if isinstance(group, list) for l in group}

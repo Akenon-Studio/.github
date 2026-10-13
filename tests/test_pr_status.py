@@ -64,6 +64,8 @@ class MainTest(unittest.TestCase):
         pr_status.find_board_fields = lambda title: {"id": "B"}
         self.status = "In progress"
         pr_status.load_issue = lambda repo, n: {"n": f"{repo}#{n}", "state": "OPEN",
+                                                "author": {"__typename": "User", "login": "x"},
+                                                "repository": {"isPrivate": True},
                                                 "assignedActors": {"nodes": [{"login": "x"}]}}
         pr_status.board_item = lambda board, issue: (issue["n"], self.status)
         pr_status.set_field = lambda board, item, field, value: self.set.append((item, field, value))
@@ -85,6 +87,15 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.run_event(event("opened")), 0)
         self.assertEqual(self.set, [(f"{REPO}#1", "Status", "In review")])
         self.assertEqual(self.reasons, [(f"{REPO}#1", "In review")])
+
+    def test_an_outsiders_issue_in_a_public_repo_is_left_alone(self):
+        # design 6.2: a member's PR closing it doesn't bring it onto the board
+        pr_status.load_issue = lambda repo, n: {"n": f"{repo}#{n}", "state": "OPEN",
+                                                "author": {"__typename": "User", "login": "someone"},
+                                                "repository": {"isPrivate": False},
+                                                "assignedActors": {"nodes": []}}
+        self.run_event(event("opened"))
+        self.assertEqual(self.set, [])
 
     def test_a_bot_only_in_its_own_repo(self):
         pr_status.try_gh = lambda path: self.fail("a bot has no collaborator permission to ask about")

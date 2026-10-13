@@ -4,10 +4,13 @@ person. An item has the first Reason that applies:
 
 1. Needs fields: labelled `needs-fields` (issue_fields.py); its comment says what to fix.
 2. Review: board Status In review (a ready PR closes the issue), or a bot's PR that closes no
-   issue (dependency updates, release-please's Release PR).
+   issue (dependency updates), the Release PR aside.
 3. Report: an issue a bot in `report_authors` opened for a person (the scorecard, settings drift).
 4. New bug: a bug report still carrying the triage label.
 5. Waiting on: anything else in Waiting for human.
+6. Release: release-please's Release PR (a bot in `release_authors`), checked before Review: it stays
+   open until the partners decide to cut a release, and merging it is that decision (design 6.3).
+   Listed last so its group shows last in the view.
 
 The option names are the Reason field's in rulesets/board.json; the rules beyond a label or a
 Status are its `reasons` block. A bot's open issue, or a bot's PR that closes no issue, that gets
@@ -19,8 +22,8 @@ from board import spec
 from rules import bot_login
 
 FIELD = "Reason"
-NEEDS_FIELDS, REVIEW, REPORT, NEW_BUG, WAITING_ON = (
-    "Needs fields", "Review", "Report", "New bug", "Waiting on")
+NEEDS_FIELDS, REVIEW, REPORT, NEW_BUG, WAITING_ON, RELEASE = (
+    "Needs fields", "Review", "Report", "New bug", "Waiting on", "Release")
 FLAG = "needs-fields"  # issue_fields.LABEL; not imported, since issue_fields imports this
 
 
@@ -85,6 +88,11 @@ def pr_problems(pr, sources):
             "(design 6.8)."]
 
 
-def pr_reason(labels):
-    """The Reason for a bot's PR on the board (pr_on_board): Needs fields if flagged, else Review."""
-    return NEEDS_FIELDS if FLAG in set(labels) else REVIEW
+def pr_reason(labels, author, rule):
+    """The Reason for a bot's PR on the board (pr_on_board): Needs fields if flagged, Release for
+    the Release PR, else Review."""
+    if FLAG in set(labels):
+        return NEEDS_FIELDS
+    if bot_login((author or {}).get("login")) in rule.get("release_authors", []):
+        return RELEASE
+    return REVIEW

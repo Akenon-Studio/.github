@@ -6,7 +6,9 @@ Reports: org settings, issue types and teams (rulesets/teams.json), each managed
 settings, rulesets and labels, the project board's fields
 and linked repos (rulesets/board.json), the files that list every repo and the files every repo needs
 (rulesets/repo-lists.json), that every team a repo's CODEOWNERS names is in rulesets/teams.json
-with write access, that every repo's caller workflows listen to the same events as this
+with write access, that each CODEOWNERS ends with its generated sensitive-areas block and every
+sensitive path exists (rulesets/sensitive-paths.json), a public repo's fork PR workflow approval,
+that every repo's caller workflows listen to the same events as this
 repo's, and any repo in the org that is neither managed nor archived.
 """
 
@@ -14,7 +16,9 @@ import re
 import sys
 
 from board import board_differences, find_board, spec
-from rules import (CODEOWNERS_PATHS, ORG, ROOT, codeowners_team_differences, org_role_differences,
+import sensitive_paths
+from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
+                   codeowners_team_differences, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
                    desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, repo_files, repo_rulesets, repo_settings, team_differences,
@@ -78,6 +82,14 @@ def main():
     for repo in managed:
         problems += [f"{repo} settings: {d}"
                      for d in differences(load("repo-settings.json"), repo_settings(repo))]
+        if is_public(repo):
+            fork = try_gh(f"repos/{ORG}/{repo}/{FORK_APPROVAL_ENDPOINT}") or {}
+            policy = fork.get("approval_policy")
+            if policy is None:
+                print(f"note: can't read {repo}'s fork PR workflow approval; not checked")
+            elif policy != FORK_APPROVAL:
+                problems.append(f"{repo} settings: fork PR workflow approval is {policy}, want "
+                                f"{FORK_APPROVAL} (design 6.2)")
         have = repo_rulesets(repo)
         for ruleset in desired_rulesets(repo):
             if ruleset["name"] not in have:
@@ -115,6 +127,13 @@ def main():
         if text is not None:
             problems += [f"{repo}/{owners}: {d}"
                          for d in codeowners_team_differences(text, load("teams.json")["teams"], repo)]
+            problems += [f"{repo}/{owners}: {d}" for d in sensitive_paths.codeowners_problems(repo, text)]
+        elif owners is None and sensitive_paths.block(repo):
+            problems.append(f"{repo}: no CODEOWNERS, but rulesets/sensitive-paths.json gives it a sign-off")
+        elif owners:
+            print(f"note: can't read {repo}/{owners}; its sensitive-areas block not checked")
+        problems += [f"{repo}: rulesets/sensitive-paths.json: {d}"
+                     for d in sensitive_paths.path_problems(repo, files)]
 
     for path in CALLERS:
         want = triggers((ROOT / path).read_text())
