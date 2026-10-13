@@ -1,4 +1,4 @@
 # Sensitive areas (design 6.2), generated from Akenon-Studio/.github's
-# rulesets/sensitive-paths.json by scripts/sensitive_paths.py. Edit that file, not these
-# lines; they stay last, so they override the lines above.
+# rulesets/sensitive-paths.json by scripts/sensitive_paths.py, and checked by its
+# verify-settings.py. Edit that file, not these lines; they stay last, to override the rest.
 * @akenon-studio/engineers

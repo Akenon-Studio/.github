@@ -19,8 +19,8 @@ RULES = pathlib.Path(__file__).resolve().parent.parent / "rulesets" / "sensitive
 ORG = "akenon-studio"
 GENERATED = re.compile(rf"(\*|/\S+) @{ORG}/[A-Za-z0-9_.-]+")
 BEGIN = "# Sensitive areas (design 6.2), generated from Akenon-Studio/.github's"
-HEADER = (f"{BEGIN}\n# rulesets/sensitive-paths.json by scripts/sensitive_paths.py. Edit that file, not these\n"
-          "# lines; they stay last, so they override the lines above.\n")
+HEADER = (f"{BEGIN}\n# rulesets/sensitive-paths.json by scripts/sensitive_paths.py, and checked by its\n"
+          "# verify-settings.py. Edit that file, not these lines; they stay last, to override the rest.\n")
 
 
 def areas(path=RULES):
