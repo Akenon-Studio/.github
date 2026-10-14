@@ -62,6 +62,11 @@
         "path": "core/workspace/skills/new-intent/SKILL.md",
         "why": "A skill peras owns (design 7.16), which setup.sh links into each workspace's .claude/skills: agent instructions Claude Code loads from that file name, not a doc",
         "no_header": true
+      },
+      {
+        "path": "skills/tdd/SKILL.md",
+        "why": "The tdd skill peras owns (design 7.16), which the builder stage gives its agent in its prompt (core/builder/prompt.ts): agent instructions, not a doc",
+        "no_header": true
       }
     ]
   },
