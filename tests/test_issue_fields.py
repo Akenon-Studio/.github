@@ -1,6 +1,7 @@
 """Tests for scripts/issue_fields.py: reading the issue forms, parsing issue bodies, and checking
 them. Run: python3 -m unittest discover tests"""
 
+import datetime
 import pathlib
 import sys
 import unittest
@@ -12,7 +13,8 @@ from issue_fields import (all_problems, assignee_problems, board_values, check, 
                           link_problems, load_forms, reclose_due, source_problems,
                           open_sub_issues, parse_body, people_assigned, problems_text,
                           reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options,
-                          want_reason)
+                          want_reason, ready_problems, unread_cancel, cancel_problems,
+                          cancel_to_assign)
 
 FORMS = load_forms()
 
@@ -461,6 +463,7 @@ class SyncReasonTest(unittest.TestCase):
                                  set_field=mock.Mock(), sync_epic=mock.Mock(), report=mock.Mock(),
                                  epic_of=mock.Mock(return_value=None),
                                  all_problems=mock.Mock(return_value=problems),
+                                 cancel_to_assign=mock.Mock(return_value=None),
                                  set_reason=lambda b, i, cur, want: reasons.append((cur, want))):
             issue_fields.sync("Akenon-Studio/handbook", 1, FORMS, {"id": "B", "fields": {"nodes": []}})
         return reasons
@@ -647,3 +650,157 @@ class RecloseTest(unittest.TestCase):
         self.assertFalse(reclose_due(dict(parent(), reopenEvents={"nodes": [{"actor": None}]})))
         self.assertFalse(reclose_due(parent(total=0, completed=0)))
         self.assertFalse(reclose_due(parent(state="CLOSED")))
+
+
+def applied(label, at, login="RuvinduH", kind="User"):
+    """A LabeledEvent node as the timeline gives it."""
+    return {"createdAt": at, "label": {"name": label}, "actor": {"__typename": kind, "login": login}}
+
+
+NOW = datetime.datetime(2026, 10, 14, 12, 0, tzinfo=datetime.timezone.utc)
+RUNNERS = {"ruvinduh", "thytus777"}
+
+
+class ReadyTest(unittest.TestCase):
+    """design 7.13 Stage 0: a `peras:ready` intent needs exactly one runner assigned."""
+
+    def test_one_runner_among_other_assignees_passes(self):
+        self.assertEqual(ready_problems("Intent", "OPEN", {"peras:ready"},
+                                        ["someone", "RuvinduH"], RUNNERS), [])
+
+    def test_no_runner_is_flagged(self):
+        found = ready_problems("Intent", "OPEN", {"peras:ready"}, ["someone"], RUNNERS)
+        self.assertEqual(len(found), 1)
+        self.assertIn("none of its assignees is in `peras-runners`", found[0])
+        self.assertIn("Leave exactly one runner assigned", found[0])
+
+    def test_two_runners_are_flagged_by_name(self):
+        found = ready_problems("Intent", "OPEN", {"peras:ready"}, ["Thytus777", "RuvinduH"], RUNNERS)
+        self.assertIn("2 of its assignees are in `peras-runners`", found[0])
+        self.assertIn("@RuvinduH, @Thytus777), and a machine takes an intent only when", found[0])
+        self.assertNotIn("no Peras machine takes it", found[0])
+
+    def test_a_pending_cancel_leaves_it_to_the_cancel_rule(self):
+        # the cancel's partner, a runner too, is assigned: no second flag for two runners
+        self.assertEqual(ready_problems("Intent", "OPEN", {"peras:ready", "peras:cancel"},
+                                        ["Thytus777", "RuvinduH"], RUNNERS), [])
+
+    def test_logins_compare_without_case(self):
+        self.assertEqual(ready_problems("Intent", "OPEN", {"peras:ready"}, ["ruvinduH"], RUNNERS), [])
+
+    def test_only_an_open_intent_with_the_label_is_checked(self):
+        self.assertEqual(ready_problems("Intent", "OPEN", set(), [], RUNNERS), [])
+        self.assertEqual(ready_problems("Intent", "CLOSED", {"peras:ready"}, [], RUNNERS), [])
+        self.assertEqual(ready_problems("Task", "OPEN", {"peras:ready"}, [], RUNNERS), [])
+
+
+class CancelTest(unittest.TestCase):
+    """design 7.13 Stage 0: a `peras:cancel` no machine has read in an hour is flagged."""
+
+    def test_an_hour_old_cancel_still_on_is_flagged(self):
+        event = applied("peras:cancel", "2026-10-14T11:00:00Z")
+        self.assertEqual(unread_cancel("OPEN", {"peras:cancel"}, [event], NOW), event)
+        found = cancel_problems(event)
+        self.assertIn("applied by @RuvinduH at 2026-10-14T11:00:00Z", found[0])
+
+    def test_a_newer_cancel_is_not_yet(self):
+        event = applied("peras:cancel", "2026-10-14T11:00:01Z")
+        self.assertIsNone(unread_cancel("OPEN", {"peras:cancel"}, [event], NOW))
+
+    def test_the_last_application_counts(self):
+        events = [applied("peras:cancel", "2026-10-14T09:00:00Z"),
+                  applied("peras:cancel", "2026-10-14T11:30:00Z")]
+        self.assertIsNone(unread_cancel("OPEN", {"peras:cancel"}, events, NOW))
+
+    def test_a_removed_cancel_or_a_closed_issue_is_not(self):
+        event = applied("peras:cancel", "2026-10-14T09:00:00Z")
+        self.assertIsNone(unread_cancel("OPEN", set(), [event], NOW))
+        self.assertIsNone(unread_cancel("CLOSED", {"peras:cancel"}, [event], NOW))
+
+    def test_no_event_is_not_flagged(self):
+        self.assertIsNone(unread_cancel("OPEN", {"peras:cancel"}, [], NOW))
+
+    def test_the_text_stays_the_same_as_time_passes(self):
+        event = applied("peras:cancel", "2026-10-14T09:00:00Z")
+        self.assertEqual(cancel_problems(unread_cancel("OPEN", {"peras:cancel"}, [event], NOW)),
+                         cancel_problems(unread_cancel("OPEN", {"peras:cancel"}, [event],
+                                                       NOW + datetime.timedelta(days=1))))
+
+    def test_a_bots_or_outsiders_cancel_names_no_one(self):
+        for event in (applied("peras:cancel", "2026-10-14T09:00:00Z", "peras", "Bot"),
+                      applied("peras:cancel", "2026-10-14T09:00:00Z", "stranger")):
+            self.assertIn("`peras:cancel` was applied at", cancel_problems(event)[0])
+
+
+def intent_issue(labels, events, assignees):
+    return {"issueType": {"name": "Intent"}, "body": body(**INTENT), "state": "OPEN",
+            "author": {"__typename": "User", "login": "RuvinduH"},
+            "repository": {"nameWithOwner": "Akenon-Studio/platform"}, "number": 7,
+            "parent": None, "subIssues": {"nodes": []},
+            "subIssuesSummary": {"total": 0, "completed": 0}, "blockedBy": {"totalCount": 0},
+            "assignedActors": {"nodes": [{"__typename": "User", "login": a} for a in assignees]},
+            "timelineItems": {"nodes": [{"assignee": {"__typename": "User", "login": "RuvinduH"}}]},
+            "labels": {"nodes": [{"name": l} for l in labels]}, "labelEvents": {"nodes": events}}
+
+
+class PerasWholeIssueTest(unittest.TestCase):
+    def test_both_rules_reach_the_issue_check(self):
+        issue = intent_issue(["peras:ready"], [], ["someone"])
+        self.assertEqual(len(all_problems(issue, FORMS, "Todo", now=NOW)), 1)
+        issue["assignedActors"]["nodes"].append({"__typename": "User", "login": "RuvinduH"})
+        self.assertEqual(all_problems(issue, FORMS, "Todo", now=NOW), [])
+        issue = intent_issue(["peras:cancel"], [applied("peras:cancel", "2026-10-14T10:00:00Z",
+                                                        "Thytus777")], ["RuvinduH"])
+        self.assertEqual(len(all_problems(issue, FORMS, "Todo", now=NOW)), 1)
+
+    def test_the_partner_who_applied_the_cancel_is_assigned_once(self):
+        event = applied("peras:cancel", "2026-10-14T10:00:00Z", "Thytus777")
+        self.assertEqual(cancel_to_assign(intent_issue(["peras:cancel"], [event], ["RuvinduH"]), NOW),
+                         "Thytus777")
+        self.assertIsNone(cancel_to_assign(intent_issue(["peras:cancel"], [event], ["thytus777"]), NOW))
+        self.assertIsNone(cancel_to_assign(intent_issue(["peras:cancel"], [event], []),
+                                           datetime.datetime(2026, 10, 14, 10, 30,
+                                                             tzinfo=datetime.timezone.utc)))
+
+    def test_ready_and_cancel_together_raise_only_the_cancel_flag(self):
+        event = applied("peras:cancel", "2026-10-14T10:00:00Z", "Thytus777")
+        issue = intent_issue(["peras:ready", "peras:cancel"], [event], ["RuvinduH", "Thytus777"])
+        found = all_problems(issue, FORMS, "Todo", now=NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("`peras:cancel` was applied by @Thytus777", found[0])
+
+    def test_not_assigned_again_once_assigned_since_the_cancel(self):
+        event = applied("peras:cancel", "2026-10-14T10:00:00Z", "Thytus777")
+        issue = intent_issue(["peras:cancel"], [event], ["RuvinduH"])
+        issue.setdefault("recentAssigned", {"nodes": []})["nodes"].append(
+            {"createdAt": "2026-10-14T09:00:00Z", "assignee": {"__typename": "User", "login": "Thytus777"}})
+        self.assertEqual(cancel_to_assign(issue, NOW), "Thytus777")  # assigned before it: again
+        issue.setdefault("recentAssigned", {"nodes": []})["nodes"].append(
+            {"createdAt": "2026-10-14T11:01:00Z", "assignee": {"__typename": "User", "login": "Thytus777"}})
+        self.assertIsNone(cancel_to_assign(issue, NOW))
+
+    def test_a_bots_cancel_assigns_no_one(self):
+        event = applied("peras:cancel", "2026-10-14T10:00:00Z", "peras", "Bot")
+        self.assertIsNone(cancel_to_assign(intent_issue(["peras:cancel"], [event], []), NOW))
+
+
+class SyncAssignsTest(unittest.TestCase):
+    def test_sync_assigns_the_partner_whose_cancel_no_machine_read(self):
+        import issue_fields
+        from unittest import mock
+        issue = intent_issue(["peras:cancel"], [applied("peras:cancel", "2000-01-01T00:00:00Z",
+                                                        "Thytus777")], ["RuvinduH"])
+        issue["projectItems"] = {"nodes": []}
+        calls = []
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=issue),
+                                 reopen_if_early=mock.Mock(return_value=False),
+                                 reclose_if_done=mock.Mock(return_value=False),
+                                 board_item=mock.Mock(return_value=("item", "Todo")),
+                                 set_field=mock.Mock(), sync_epic=mock.Mock(), report=mock.Mock(),
+                                 set_reason=mock.Mock(), epic_of=mock.Mock(return_value=None),
+                                 gh=lambda *a, **k: calls.append((a, k))):
+            result = issue_fields.sync("Akenon-Studio/platform", 7, FORMS,
+                                       {"id": "B", "fields": {"nodes": []}})
+        self.assertEqual(result["assigned"], "Thytus777")
+        self.assertEqual(calls, [(("repos/Akenon-Studio/platform/issues/7/assignees", "-X", "POST"),
+                                  {"body": {"assignees": ["Thytus777"]}})])

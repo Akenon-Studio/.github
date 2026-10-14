@@ -89,6 +89,16 @@ class OutOfDateTest(unittest.TestCase):
         self.assertIn("reopenEvents", ISSUE_SEARCH)
         self.assertIn("subIssuesSummary", ISSUE_SEARCH)
 
+    def test_the_query_reads_when_labels_and_assignments_happened(self):
+        # design 7.13 Stage 0: the cancel rule and its one assignment read these times
+        # both the event-driven query (issue_fields.ISSUE_FIELDS) and the sweep's, built from it
+        from issue_fields import ISSUE_FIELDS
+        from issue_sweep import ISSUE_SEARCH
+        for query in (ISSUE_FIELDS, ISSUE_SEARCH):
+            self.assertIn("LabeledEvent { createdAt", query)
+            self.assertIn("recentAssigned: timelineItems(itemTypes: [ASSIGNED_EVENT], last: 20)", query)
+            self.assertIn("AssignedEvent { createdAt", query)
+
     def test_parent_the_automation_reopened_is_synced_to_close_it(self):
         done = dict(issue(subs=(2, 2), labels=["needs-fields"]),
                     reopenEvents={"nodes": [{"actor": {"__typename": "Bot",
@@ -134,6 +144,19 @@ class OutOfDateTest(unittest.TestCase):
         text = problems_text(link_problems("Task", False, "Todo", 0))
         self.assertFalse(out_of_date(issue(parent=False, labels=["needs-fields"], comments=[text]),
                                      FORMS, BOARD))
+
+    def test_an_unread_cancels_partner_not_yet_assigned_is_synced_once(self):
+        # design 7.13 Stage 0: the flag is in place, but its partner isn't assigned yet
+        cancel = {"createdAt": "2000-01-01T00:00:00Z", "label": {"name": "peras:cancel"},
+                  "actor": {"__typename": "User", "login": "Thytus777"}}
+        flagged = issue(labels=["peras:cancel"], label_events=[cancel])
+        text = problems_text(all_problems(flagged, FORMS, "Todo"))
+        flagged = issue(labels=["peras:cancel", "needs-fields"], label_events=[cancel], comments=[text])
+        self.assertTrue(out_of_date(flagged, FORMS, BOARD))
+        # once assigned after the cancel, it isn't tried again, even if they unassign themselves
+        flagged.setdefault("recentAssigned", {"nodes": []})["nodes"].append(
+            {"createdAt": "2000-01-01T01:00:00Z", "assignee": {"__typename": "User", "login": "Thytus777"}})
+        self.assertFalse(out_of_date(flagged, FORMS, BOARD))
 
     def test_a_comment_someone_else_marked_is_not_ours(self):
         # design 6.2: the right text, but typed by a person, so the app's comment is still missing

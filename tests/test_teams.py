@@ -9,7 +9,8 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
 from rules import (AUTOMATION_OWNERS, ROOT, automation_owners, codeowners_team_differences,  # noqa: E402
-                   codeowners_teams, load, managed_repos, team, team_differences,
+                   codeowners_teams, load, managed_repos, org_people, peras_runners, team,
+                   team_differences,
                    org_role_differences, team_repo_permission, team_repos)
 
 OWNERS = team(AUTOMATION_OWNERS)
@@ -30,6 +31,11 @@ class TeamsFileTest(unittest.TestCase):
         engineers = team("engineers")
         self.assertEqual(engineers["members"], ["Thytus777", "RuvinduH"])
         self.assertEqual(engineers["repo_permission"], "push")
+
+    def test_peras_runners_are_the_partners_for_now(self):
+        # design 7.13 Stage 0: runners are partners until 7.12's control labels and 6.4's
+        # settling are opened to a cycle's runner
+        self.assertEqual(peras_runners(), org_people())
 
     def test_this_repos_codeowners_teams_are_defined_with_write(self):
         text = (ROOT / ".github" / "CODEOWNERS").read_text()

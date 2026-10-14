@@ -2,7 +2,7 @@
 """Re-check issues on a schedule, for changes that send no event every repo's caller listens to
 (design 6.8): a part moved to another epic (the Epic board field of the work under it, 6.6), a board Status set to Blocked or Waiting for human, an assignee added or removed, a parent or "blocked by" link added or removed, a
 parent closed while its sub-issues are open, a parent's last open sub-issue closed (which sends the
-parent no event). Runs the issue_fields.py checks on every open issue in
+parent no event), a `peras:cancel` no Peras machine has read in an hour (design 7.13 Stage 0). Runs the issue_fields.py checks on every open issue in
 the managed repos and syncs only those whose `needs-fields` label or comment is out of date, then
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
 or a Process failure whose prevention is not decided yet.
@@ -32,7 +32,7 @@ import sys
 
 from board import find_board_fields, graphql, spec
 from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, by_automation,
-                          closed_too_early,
+                          cancel_to_assign, closed_too_early,
                           epic_stale, flagged_status_page, load_forms, problems_text, reason_on,
                           reclose_due, status_on, sync, want_reason)
 from reason import FIELD as REASON_FIELD
@@ -84,7 +84,7 @@ def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
     labelled = LABEL in {l["name"] for l in issue["labels"]["nodes"]}
     ours = [c["body"] for c in issue["comments"]["nodes"]
             if c["body"].startswith(MARKER) and by_automation(c)]
-    if bool(problems) != labelled:
+    if bool(problems) != labelled or cancel_to_assign(issue):
         return True
     return bool(problems) and (not ours or ours[0] != problems_text(problems))
 

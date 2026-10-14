@@ -223,6 +223,7 @@ def issue_type_differences(want, have):
 
 
 AUTOMATION_OWNERS = "automation-owners"
+PERAS_RUNNERS = "peras-runners"  # who runs Peras on their machine (design 7.13 Stage 0)
 
 
 def bot_login(login):
@@ -286,6 +287,11 @@ def automation_owners():
     """The people the automation hands its work to (design 6.8), as logins. Read from the code, not
     from GitHub, so the automation needs no permission to read teams."""
     return list(team(AUTOMATION_OWNERS)["members"])
+
+
+def peras_runners():
+    """The people whose machines run Peras (design 7.13 Stage 0 step 1), as lowercase logins."""
+    return {m.lower() for m in team(PERAS_RUNNERS)["members"]}
 
 
 def org_roles():
