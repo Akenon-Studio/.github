@@ -91,10 +91,13 @@ class OutOfDateTest(unittest.TestCase):
 
     def test_the_query_reads_when_labels_and_assignments_happened(self):
         # design 7.13 Stage 0: the cancel rule and its one assignment read these times
+        # both the event-driven query (issue_fields.ISSUE_FIELDS) and the sweep's, built from it
+        from issue_fields import ISSUE_FIELDS
         from issue_sweep import ISSUE_SEARCH
-        self.assertIn("LabeledEvent { createdAt", ISSUE_SEARCH)
-        self.assertIn("recentAssigned: timelineItems(itemTypes: [ASSIGNED_EVENT], last: 20)", ISSUE_SEARCH)
-        self.assertIn("AssignedEvent { createdAt", ISSUE_SEARCH)
+        for query in (ISSUE_FIELDS, ISSUE_SEARCH):
+            self.assertIn("LabeledEvent { createdAt", query)
+            self.assertIn("recentAssigned: timelineItems(itemTypes: [ASSIGNED_EVENT], last: 20)", query)
+            self.assertIn("AssignedEvent { createdAt", query)
 
     def test_parent_the_automation_reopened_is_synced_to_close_it(self):
         done = dict(issue(subs=(2, 2), labels=["needs-fields"]),
