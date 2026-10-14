@@ -346,7 +346,7 @@ ISSUE_FIELDS = """id number title state body author { __typename login } issueTy
   blockedBy(first: 1) { totalCount }
   assignedActors(first: 20) { nodes { __typename ... on User { login } ... on Bot { login } } }
   timelineItems(itemTypes: [ASSIGNED_EVENT], first: 100) { nodes {
-    ... on AssignedEvent { assignee { __typename ... on User { login } } } } }
+    ... on AssignedEvent { createdAt assignee { __typename ... on User { login } } } } }
   reopenEvents: timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes {
     ... on ReopenedEvent { actor { __typename login } } } }
   labelEvents: timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes {
@@ -388,19 +388,24 @@ CANCEL_UNREAD = datetime.timedelta(hours=1)  # design 7.13 Stage 0: a cancel no 
 
 def ready_problems(issue_type, state, labels, assignees, runners):
     """An open intent labelled `peras:ready` whose assignees include no runner or more than one
-    (design 7.13 Stage 0 step 1): no machine, or the wrong one, would claim it. `assignees` are
-    logins, `runners` peras_runners()."""
-    if issue_type != "Intent" or state != "OPEN" or READY not in labels:
+    (design 7.13 Stage 0 step 1): with none no machine takes it, and with more than one each
+    runner's machine claims it only if it is the one runner. `assignees` are logins, `runners`
+    peras_runners(). Not while a `peras:cancel` is on: a cancel means a cycle is open, which a
+    `peras:ready` can't start another of, and an unread one assigns its partner, a runner too
+    (cancel_problems() flags it instead)."""
+    if issue_type != "Intent" or state != "OPEN" or READY not in labels or CANCEL in labels:
         return []
     found = sorted(a for a in assignees if a.lower() in runners)
     if len(found) == 1:
         return []
-    who = ("none of its assignees is" if not found
-           else f"{len(found)} of its assignees are ({', '.join('@' + a for a in found)})")
-    return [f"It is labelled `{READY}`, but {who} in `{PERAS_RUNNERS}` (.github's "
-            "rulesets/teams.json), so no Peras machine takes it. Leave exactly one runner assigned: "
-            "that runner's machine runs it (design 7.13 Stage 0). A `Waiting on` mention adds "
-            "assignees and nothing removes them, so check after one."]
+    why = (f"none of its assignees is in `{PERAS_RUNNERS}` (.github's rulesets/teams.json), so no "
+           "Peras machine takes it" if not found else
+           f"{len(found)} of its assignees are in `{PERAS_RUNNERS}` (.github's rulesets/teams.json: "
+           f"{', '.join('@' + a for a in found)}), and a machine takes an intent only when its runner "
+           "is the one assigned")
+    return [f"It is labelled `{READY}`, but {why}. Leave exactly one runner assigned: that "
+            "runner's machine runs it (design 7.13 Stage 0). A `Waiting on` mention adds assignees "
+            "and nothing removes them, so check after one."]
 
 
 def last_applied(label, label_events):
@@ -424,7 +429,8 @@ def unread_cancel(state, labels, label_events, now):
 
 def cancel_applier(event):
     """The partner who applied an unread cancel (unread_cancel()'s event), to assign, or None for
-    anyone else: only a partner's control label counts (design 7.12)."""
+    anyone else: only a partner's control label counts (design 7.12). The partners are the people
+    in rulesets/teams.json, as Peras reads them (its `partners()`)."""
     actor = (event or {}).get("actor") or {}
     if actor.get("__typename") != "User" or (actor.get("login") or "").lower() not in org_people():
         return None
@@ -475,12 +481,17 @@ def peras_problems(issue, now):
 
 def cancel_to_assign(issue, now=None):
     """The partner to assign to an issue whose `peras:cancel` no machine has read (design 7.13
-    Stage 0), or None if there is none or they are assigned already."""
-    who = cancel_applier(unread_cancel(issue["state"], {l["name"] for l in issue["labels"]["nodes"]},
-                                       issue["labelEvents"]["nodes"], now or now_utc()))
-    if who and who.lower() not in {a.lower() for a in people_assigned(issue)[0]}:
-        return who
-    return None
+    Stage 0), or None if there is none, they are assigned, or they were assigned since the cancel
+    (once: if they unassign themselves, or GitHub drops the assignment, it isn't tried again)."""
+    event = unread_cancel(issue["state"], {l["name"] for l in issue["labels"]["nodes"]},
+                          issue["labelEvents"]["nodes"], now or now_utc())
+    who = cancel_applier(event)
+    if not who or who.lower() in {a.lower() for a in people_assigned(issue)[0]}:
+        return None
+    since = [e for e in issue["timelineItems"]["nodes"]
+             if ((e.get("assignee") or {}).get("login") or "").lower() == who.lower()
+             and (e.get("createdAt") or "") >= event["createdAt"]]
+    return None if since else who
 
 
 def problems_text(problems, what="issue"):
