@@ -37,6 +37,19 @@
         "hardware"
       ],
       "org_role": "all_repo_read"
+    },
+    {
+      "name": "Peras runners",
+      "slug": "peras-runners",
+      "description": "Each runs Peras on their own machine and is asked whenever its cycle needs a human (design 7.13 Stage 0). The partners for now.",
+      "privacy": "closed",
+      "members": [
+        "RuvinduH",
+        "Thytus777",
+        "winterleaf354-jpg",
+        "InhibitedHail91"
+      ],
+      "repo_permission": "pull"
     }
   ]
 }

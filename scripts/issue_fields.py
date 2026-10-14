@@ -33,6 +33,12 @@ app) applies the `confirmed` label. Who applied it is read from the issue's time
 bot added doesn't count. Labelling sends no event the callers listen to, so issue_sweep.py picks
 the confirmation up on its next run.
 
+Peras's intake (design 7.13 Stage 0) adds two: an open intent labelled `peras:ready` must have
+exactly one member of `peras-runners` (rulesets/teams.json) among its assignees, or no machine takes
+it; and a `peras:cancel` still on an open issue an hour after it was applied (every Peras machine
+removes it once read) is flagged, and the partner who applied it assigned. Time passing sends no
+event, so issue_sweep.py catches the second.
+
 A Process failure closed while its answer to "What now
 prevents this, by code?" is "Not decided yet" is reopened too. Board changes, links and closing send no event every repo's
 caller listens to (closing a sub-issue sends none to its parent), so scripts/issue_sweep.py re-checks on a schedule.
@@ -41,6 +47,7 @@ Usage: scripts/issue_fields.py <owner/repo> <issue number>
 In Actions it runs from the issue-fields workflow with an org GitHub App token in GH_TOKEN.
 """
 
+import datetime
 import json
 import pathlib
 import re
@@ -51,7 +58,8 @@ import yaml
 
 import reason
 from board import find_board_fields, graphql, spec
-from rules import ROOT, bot_login, ensure_label, gh, source_labels, status_page
+from rules import (PERAS_RUNNERS, ROOT, bot_login, ensure_label, gh, org_people, peras_runners, source_labels,
+                   status_page)
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
 LABEL = "needs-fields"
@@ -342,7 +350,7 @@ ISSUE_FIELDS = """id number title state body author { __typename login } issueTy
   reopenEvents: timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes {
     ... on ReopenedEvent { actor { __typename login } } } }
   labelEvents: timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes {
-    ... on LabeledEvent { label { name } actor { __typename login } } } }
+    ... on LabeledEvent { createdAt label { name } actor { __typename login } } } }
   projectItems(first: 20) { nodes { id project { id }
     fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     epic: fieldValueByName(name: "Epic") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
@@ -374,7 +382,71 @@ def source_problems(author, by_bot, labels, sources):
             "rulesets/bots.json in the .github repo (design 6.8)."]
 
 
-def all_problems(issue, forms, status, sources=None, rule=None):
+READY, CANCEL = "peras:ready", "peras:cancel"
+CANCEL_UNREAD = datetime.timedelta(hours=1)  # design 7.13 Stage 0: a cancel no machine has read
+
+
+def ready_problems(issue_type, state, labels, assignees, runners):
+    """An open intent labelled `peras:ready` whose assignees include no runner or more than one
+    (design 7.13 Stage 0 step 1): no machine, or the wrong one, would claim it. `assignees` are
+    logins, `runners` peras_runners()."""
+    if issue_type != "Intent" or state != "OPEN" or READY not in labels:
+        return []
+    found = sorted(a for a in assignees if a.lower() in runners)
+    if len(found) == 1:
+        return []
+    who = ("none of its assignees is" if not found
+           else f"{len(found)} of its assignees are ({', '.join('@' + a for a in found)})")
+    return [f"It is labelled `{READY}`, but {who} in `{PERAS_RUNNERS}` (.github's "
+            "rulesets/teams.json), so no Peras machine takes it. Leave exactly one runner assigned: "
+            "that runner's machine runs it (design 7.13 Stage 0). A `Waiting on` mention adds "
+            "assignees and nothing removes them, so check after one."]
+
+
+def last_applied(label, label_events):
+    """The timeline's last LabeledEvent node for `label` (`label_events` oldest first), or None."""
+    applied = [e for e in label_events if (e.get("label") or {}).get("name") == label]
+    return applied[-1] if applied else None
+
+
+def unread_cancel(state, labels, label_events, now):
+    """The LabeledEvent of a `peras:cancel` still on an open issue an hour after it was applied:
+    every Peras machine removes the label once it reads it (design 7.13 Stage 0), so no machine
+    has. None otherwise, or if the event can't be found."""
+    if state != "OPEN" or CANCEL not in labels:
+        return None
+    event = last_applied(CANCEL, label_events)
+    if not event or not event.get("createdAt"):
+        return None
+    applied = datetime.datetime.fromisoformat(event["createdAt"].replace("Z", "+00:00"))
+    return event if now - applied >= CANCEL_UNREAD else None
+
+
+def cancel_applier(event):
+    """The partner who applied an unread cancel (unread_cancel()'s event), to assign, or None for
+    anyone else: only a partner's control label counts (design 7.12)."""
+    actor = (event or {}).get("actor") or {}
+    if actor.get("__typename") != "User" or (actor.get("login") or "").lower() not in org_people():
+        return None
+    return actor["login"]
+
+
+def cancel_problems(event):
+    """The flag for unread_cancel()'s event, or nothing when there is none."""
+    if not event:
+        return []
+    by = cancel_applier(event)
+    return [f"`{CANCEL}` was applied{' by @' + by if by else ''} at {event['createdAt']} and no "
+            "Peras machine has read it in an hour (each removes it once read), so the cycle hasn't "
+            "ended. Make sure a runner whose machine is on is assigned (design 7.13 Stage 0): its "
+            "machine ends the cycle within about 90 seconds of seeing the label."]
+
+
+def now_utc():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def all_problems(issue, forms, status, sources=None, rule=None, now=None):
     issue_type = (issue["issueType"] or {}).get("name")
     author = issue["author"] or {}
     by_bot = author.get("__typename") == "Bot"
@@ -390,7 +462,25 @@ def all_problems(issue, forms, status, sources=None, rule=None):
         author.get("login"), by_bot, {l["name"] for l in issue["labels"]["nodes"]},
         source_labels() if sources is None else sources) + reason.issue_problems(
         issue_type, {l["name"] for l in issue["labels"]["nodes"]}, status, author,
-        rule or reason.rules())
+        rule or reason.rules()) + peras_problems(issue, now or now_utc())
+
+
+def peras_problems(issue, now):
+    """Intake's rules (design 7.13 Stage 0): ready_problems() and cancel_problems()."""
+    labels = {l["name"] for l in issue["labels"]["nodes"]}
+    return ready_problems((issue["issueType"] or {}).get("name"), issue["state"], labels,
+                          people_assigned(issue)[0], peras_runners()) + cancel_problems(
+        unread_cancel(issue["state"], labels, issue["labelEvents"]["nodes"], now))
+
+
+def cancel_to_assign(issue, now=None):
+    """The partner to assign to an issue whose `peras:cancel` no machine has read (design 7.13
+    Stage 0), or None if there is none or they are assigned already."""
+    who = cancel_applier(unread_cancel(issue["state"], {l["name"] for l in issue["labels"]["nodes"]},
+                                       issue["labelEvents"]["nodes"], now or now_utc()))
+    if who and who.lower() not in {a.lower() for a in people_assigned(issue)[0]}:
+        return who
+    return None
 
 
 def problems_text(problems, what="issue"):
@@ -659,10 +749,13 @@ def sync(repo, number, forms, board):
     sync_epic(board, item_id, issue)
     problems = all_problems(issue, forms, values.get("Status", status))
     report(repo, number, issue, problems)
+    assign = cancel_to_assign(issue)
+    if assign:
+        gh(f"repos/{repo}/issues/{number}/assignees", "-X", "POST", body={"assignees": [assign]})
     set_reason(board, item_id, reason_on(board["id"], issue),
                want_reason(issue, bool(problems), values.get("Status", status)))
     want = epic_of(issue)
-    return {"issue": f"{repo}#{number}", "type": issue_type, "set": values,
+    return {"issue": f"{repo}#{number}", "type": issue_type, "set": values, "assigned": assign,
             "epic": want[1] if want else None,
             "reopened": reopened, "reclosed": reclosed, "problems": problems}
 
