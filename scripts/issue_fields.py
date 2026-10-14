@@ -35,7 +35,8 @@ the confirmation up on its next run.
 
 Peras's intake (design 7.13 Stage 0) adds two: an open intent labelled `peras:ready` must have
 exactly one member of `peras-runners` (rulesets/teams.json) among its assignees, or no machine takes
-it (not while a `peras:cancel` is on, which the second rule covers); and a `peras:cancel` still on an open issue an hour after it was applied (every Peras machine
+it (not while a `peras:cancel` is on: within the hour nothing flags it, and after it the second rule
+does); and a `peras:cancel` still on an open issue an hour after it was applied (every Peras machine
 removes it once read) is flagged, and the partner who applied it assigned. Time passing sends no
 event, so issue_sweep.py catches the second.
 
@@ -346,6 +347,8 @@ ISSUE_FIELDS = """id number title state body author { __typename login } issueTy
   blockedBy(first: 1) { totalCount }
   assignedActors(first: 20) { nodes { __typename ... on User { login } ... on Bot { login } } }
   timelineItems(itemTypes: [ASSIGNED_EVENT], first: 100) { nodes {
+    ... on AssignedEvent { assignee { __typename ... on User { login } } } } }
+  recentAssigned: timelineItems(itemTypes: [ASSIGNED_EVENT], last: 20) { nodes {
     ... on AssignedEvent { createdAt assignee { __typename ... on User { login } } } } }
   reopenEvents: timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes {
     ... on ReopenedEvent { actor { __typename login } } } }
@@ -392,7 +395,7 @@ def ready_problems(issue_type, state, labels, assignees, runners):
     runner's machine claims it only if it is the one runner. `assignees` are logins, `runners`
     peras_runners(). Not while a `peras:cancel` is on: a cancel means a cycle is open, which a
     `peras:ready` can't start another of, and an unread one assigns its partner, a runner too
-    (cancel_problems() flags it instead)."""
+    (after an hour cancel_problems() flags it instead; within it, nothing does)."""
     if issue_type != "Intent" or state != "OPEN" or READY not in labels or CANCEL in labels:
         return []
     found = sorted(a for a in assignees if a.lower() in runners)
@@ -490,7 +493,7 @@ def cancel_to_assign(issue, now=None):
     who = cancel_applier(event)
     if not who or who.lower() in {a.lower() for a in people_assigned(issue)[0]}:
         return None
-    since = [e for e in issue["timelineItems"]["nodes"]
+    since = [e for e in (issue.get("recentAssigned") or {}).get("nodes", [])
              if ((e.get("assignee") or {}).get("login") or "").lower() == who.lower()
              and (e.get("createdAt") or "") >= event["createdAt"]]
     return None if since else who

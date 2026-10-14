@@ -144,7 +144,7 @@ class OutOfDateTest(unittest.TestCase):
         flagged = issue(labels=["peras:cancel", "needs-fields"], label_events=[cancel], comments=[text])
         self.assertTrue(out_of_date(flagged, FORMS, BOARD))
         # once assigned after the cancel, it isn't tried again, even if they unassign themselves
-        flagged["timelineItems"]["nodes"].append(
+        flagged.setdefault("recentAssigned", {"nodes": []})["nodes"].append(
             {"createdAt": "2000-01-01T01:00:00Z", "assignee": {"__typename": "User", "login": "Thytus777"}})
         self.assertFalse(out_of_date(flagged, FORMS, BOARD))
 

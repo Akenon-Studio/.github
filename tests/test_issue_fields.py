@@ -772,10 +772,10 @@ class PerasWholeIssueTest(unittest.TestCase):
     def test_not_assigned_again_once_assigned_since_the_cancel(self):
         event = applied("peras:cancel", "2026-10-14T10:00:00Z", "Thytus777")
         issue = intent_issue(["peras:cancel"], [event], ["RuvinduH"])
-        issue["timelineItems"]["nodes"].append(
+        issue.setdefault("recentAssigned", {"nodes": []})["nodes"].append(
             {"createdAt": "2026-10-14T09:00:00Z", "assignee": {"__typename": "User", "login": "Thytus777"}})
         self.assertEqual(cancel_to_assign(issue, NOW), "Thytus777")  # assigned before it: again
-        issue["timelineItems"]["nodes"].append(
+        issue.setdefault("recentAssigned", {"nodes": []})["nodes"].append(
             {"createdAt": "2026-10-14T11:01:00Z", "assignee": {"__typename": "User", "login": "Thytus777"}})
         self.assertIsNone(cancel_to_assign(issue, NOW))
 
