@@ -67,6 +67,21 @@
         "path": "skills/tdd/SKILL.md",
         "why": "The tdd skill peras owns (design 7.16), which the builder stage gives its agent in its prompt (core/builder/prompt.ts): agent instructions, not a doc",
         "no_header": true
+      },
+      {
+        "path": "skills/code-review/SKILL.md",
+        "why": "The code-review skill peras owns (design 7.16), which the verifier stage gives its agent in its prompt (core/verifier/prompt.ts): agent instructions, not a doc",
+        "no_header": true
+      },
+      {
+        "path": "skills/security-review/SKILL.md",
+        "why": "The security-review skill peras owns (design 7.16), which the verifier stage gives its agent in its prompt (core/verifier/prompt.ts): agent instructions, not a doc",
+        "no_header": true
+      },
+      {
+        "path": "skills/simplify/SKILL.md",
+        "why": "The simplify skill peras owns (design 7.16), which the verifier stage gives its agent in its prompt (core/verifier/prompt.ts): agent instructions, not a doc",
+        "no_header": true
       }
     ]
   },
