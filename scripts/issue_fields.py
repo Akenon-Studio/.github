@@ -35,7 +35,7 @@ the confirmation up on its next run.
 
 Peras's intake (design 7.13 Stage 0) adds two: an open intent labelled `peras:ready` must have
 exactly one member of `peras-runners` (rulesets/teams.json) among its assignees, or no machine takes
-it; and a `peras:cancel` still on an open issue an hour after it was applied (every Peras machine
+it (not while a `peras:cancel` is on, which the second rule covers); and a `peras:cancel` still on an open issue an hour after it was applied (every Peras machine
 removes it once read) is flagged, and the partner who applied it assigned. Time passing sends no
 event, so issue_sweep.py catches the second.
 
@@ -169,8 +169,8 @@ def confirmed_by_person(labels, label_events):
     LabeledEvent nodes, oldest first."""
     if CONFIRMED not in labels:
         return False
-    applied = [e for e in label_events if (e.get("label") or {}).get("name") == CONFIRMED]
-    return bool(applied) and ((applied[-1].get("actor") or {}).get("__typename") == "User")
+    event = last_applied(CONFIRMED, label_events)
+    return bool(event) and ((event.get("actor") or {}).get("__typename") == "User")
 
 
 def confirmation_problems(issue_type, text, confirmed):
@@ -482,7 +482,9 @@ def peras_problems(issue, now):
 def cancel_to_assign(issue, now=None):
     """The partner to assign to an issue whose `peras:cancel` no machine has read (design 7.13
     Stage 0), or None if there is none, they are assigned, or they were assigned since the cancel
-    (once: if they unassign themselves, or GitHub drops the assignment, it isn't tried again)."""
+    (once: if they unassign themselves, it isn't tried again). GitHub drops, with no event, a login
+    it can't assign, which is then tried on every sweep; verify-settings.py keeps the teams to
+    people who can be."""
     event = unread_cancel(issue["state"], {l["name"] for l in issue["labels"]["nodes"]},
                           issue["labelEvents"]["nodes"], now or now_utc())
     who = cancel_applier(event)
