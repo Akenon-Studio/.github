@@ -57,6 +57,11 @@
         "path": "core/workspace/CLAUDE.md",
         "why": "The workspace-level CLAUDE.md that new-workspace setup links into ~/Akenon-Studio (design 6.8); agent rules, not a doc",
         "no_header": true
+      },
+      {
+        "path": "core/workspace/skills/new-intent/SKILL.md",
+        "why": "A skill peras owns (design 7.16), which setup.sh links into each workspace's .claude/skills: agent instructions Claude Code loads from that file name, not a doc",
+        "no_header": true
       }
     ]
   },
