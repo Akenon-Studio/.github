@@ -559,16 +559,19 @@ class MainTest(unittest.TestCase):
         user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
         self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
         self.assertIn("x = 4", user.split("<diff>")[1])
-        # a branch whose own changes since are only generated files: round one, never the whole tree
+        # a branch whose own changes since are only generated files: nothing to review, never the whole tree
         subprocess.run(g + ["checkout", "-q", "-b", "lock-only", last], check=True)
         with open("pnpm-lock.yaml", "w") as f:
             f.write("lockfileVersion: '9.0'\n")
         subprocess.run(g + ["add", "pnpm-lock.yaml"], check=True)
         subprocess.run(g + ["commit", "-qm", "lock"], check=True)
         subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
-        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
-        self.assertNotIn("main's", user)
-        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))  # no empty later round
+        import contextlib, io, json
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt",
+                                             "--since", last]), 0)
+        self.assertIn("nothing", json.loads(out.getvalue()))  # nothing to review, as CI would skip it
         subprocess.run(g + ["checkout", "-q", "rewritten"], check=True)
         # CLAUDE.md changed since: a full round, as in CI
         with open("CLAUDE.md", "w") as f:

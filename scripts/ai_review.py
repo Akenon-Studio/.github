@@ -28,8 +28,9 @@ AI_REVIEW_MODEL)
 (in a checkout of the branch: prints the request for a local review or a replay: round one against
 <base ref>, the earlier findings, if given, as an earlier round; with --since (the last local run's
 commit), a later round on the branch's own files changed since it, with the earlier findings and
-their outcomes, built as CI's later rounds are, falling back to round one where CI would. review-
-branch.py checks PROMPT_SINCE.)
+their outcomes, built as CI's later rounds are, falling back to round one where CI would, or printing
+{"nothing": why} when none of the branch's own files changed since. review-branch.py checks
+PROMPT_SINCE.)
 
 A PR's description may hold a local-review section, between LOCAL_REVIEW_START and LOCAL_REVIEW_END,
 with the local runs' findings and the author's outcomes and reasons (review-branch.py writes it,
@@ -615,7 +616,9 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     """Print the request for the checked-out branch against `base` (local review, replay): round one,
     or with `since` (the last local run's commit) a later round on the branch's own files changed
     since it, built as CI's later rounds are, with round one instead where CI would have one (the
-    commit no longer in the history, CLAUDE.md changed since, or too much changed). `settled_path`:
+    commit no longer in the history, CLAUDE.md changed since, or too much changed), and
+    `{"nothing": why}` printed instead of a request when none of the branch's own files changed
+    since, as CI's fingerprint skips such a push. `settled_path`:
     the earlier findings, their outcomes and the partners' answers (review-branch.py, design 6.4),
     as an earlier round."""
     diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
@@ -637,10 +640,13 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
         changes = changes_since(since, list(files))  # the branch's own files only, as in CI
-        # round one when CLAUDE.md changed since, too much changed, or nothing of the branch's own did
-        # (CI's fingerprint would skip such a push; a local run asked for one reviews the whole change)
-        if changes is not None and (not changes.strip() or changes_since(since, ["CLAUDE.md"])
-                                    or len(changes) > MAX_DIFF_CHARS):
+        if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]):
+            # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
+            # as CI's fingerprint skips such a push
+            print(json.dumps({"nothing": "nothing of the branch's own changed since the last run"}))
+            return 0
+        # round one when CLAUDE.md changed since, or too much changed
+        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or len(changes) > MAX_DIFF_CHARS):
             changes = None
     if changes is not None:  # a later round: the changes, and the files they touch in full
         changed = split_diff(changes)  # generated files left out, as in CI
