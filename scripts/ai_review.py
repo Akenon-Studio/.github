@@ -634,7 +634,7 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
         except OSError as e:
             raise SystemExit(f"can't read the settled findings from {settled_path}: {e}")
     changes = None
-    if since and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
+    if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
         changes = changes_since(since, list(files))  # the branch's own files only, as in CI
         if changes is not None and (changes_since(since, ["CLAUDE.md"]) or len(changes) > MAX_DIFF_CHARS):
@@ -642,12 +642,16 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     if changes is not None:  # a later round: the changes, and the files they touch in full
         changed = split_diff(changes)  # generated files left out, as in CI
         shown = "".join(changed.values())
-        budget = MAX_INPUT_CHARS - len(shown) - len(design) - len(history)
+        generated = generated_paths(diff)
+        budget = (MAX_INPUT_CHARS - len(shown) - len(design) - len(history) - len(claude_md)
+                  - sum(len(g) + 1 for g in generated))  # as CI counts it
         whole, omitted = full_files(review_paths(list(changed), repo), budget=budget)
         system, user = request(claude_md, design, title, "", whole, "", later=(history, shown), omitted=omitted,
-                               generated=generated_paths(diff), repo=repo)  # the whole branch's, as in CI
+                               generated=generated, repo=repo)  # the whole branch's, as in CI
     else:
-        budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
+        generated = generated_paths(diff)
+        budget = (MAX_INPUT_CHARS - len(text) - len(design) - len(history) - len(claude_md)
+                  - sum(len(g) + 1 for g in generated))
         whole, omitted = full_files(review_paths(files, repo), budget=budget)
         system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
                                generated=generated_paths(diff), repo=repo, history=history)

@@ -528,13 +528,36 @@ class MainTest(unittest.TestCase):
 
     def test_a_later_local_run_is_round_one_where_ci_would_be(self):
         import subprocess
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
         last = self.later_run_repo()
-        # a rewritten branch: the last run's commit is no longer in the history
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "-m", "rewritten"],
-                       check=True)
-        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", "0" * 40)
+        # a rewritten branch: the last run's commit exists, but is no longer in the history
+        subprocess.run(g + ["checkout", "-q", "-b", "rewritten", "main-line"], check=True)
+        with open("a.py", "w") as f:
+            f.write("x = 3\n")
+        subprocess.run(g + ["add", "a.py"], check=True)
+        subprocess.run(g + ["commit", "-qm", "rewritten"], check=True)
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
         self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
         self.assertIn("<diff>", user)
+        # too much changed since: round one, as in CI
+        subprocess.run(g + ["checkout", "-q", "-"], check=True)
+        saved = ai_review.MAX_DIFF_CHARS
+        ai_review.MAX_DIFF_CHARS = 10
+        try:
+            user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+            self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        finally:
+            ai_review.MAX_DIFF_CHARS = saved
+        # a branch whose own changes since are only generated files: round one, never the whole tree
+        subprocess.run(g + ["checkout", "-q", "-b", "lock-only", last], check=True)
+        with open("pnpm-lock.yaml", "w") as f:
+            f.write("lockfileVersion: '9.0'\n")
+        subprocess.run(g + ["add", "pnpm-lock.yaml"], check=True)
+        subprocess.run(g + ["commit", "-qm", "lock"], check=True)
+        subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        self.assertNotIn("main's", user)
+        subprocess.run(g + ["checkout", "-q", "rewritten"], check=True)
         # CLAUDE.md changed since: a full round, as in CI
         with open("CLAUDE.md", "w") as f:
             f.write("a new rule\n")
