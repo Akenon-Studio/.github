@@ -640,7 +640,9 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
         changes = changes_since(since, list(files))  # the branch's own files only, as in CI
-        if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]):
+        # in the design's own repo a design changed on main is a new round, as CI's fingerprint has it
+        design_moved = repo == DESIGN_REPO and bool(changes_since(since, ["design.md"]))
+        if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]) and not design_moved:
             # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
             # as CI's fingerprint skips such a push
             print(json.dumps({"nothing": "nothing of the branch's own changed since the last run"}))

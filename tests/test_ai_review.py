@@ -572,14 +572,18 @@ class MainTest(unittest.TestCase):
             self.assertEqual(ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt",
                                              "--since", last]), 0)
         self.assertIn("nothing", json.loads(out.getvalue()))  # nothing to review, as CI would skip it
-        subprocess.run(g + ["checkout", "-q", "rewritten"], check=True)
-        # CLAUDE.md changed since: a full round, as in CI
-        with open("CLAUDE.md", "w") as f:
-            f.write("a new rule\n")
-        subprocess.run(["git", "add", "CLAUDE.md"], check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "rule"], check=True)
-        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
-        self.assertIn("<diff>", user)
+        # in handbook, a design changed on main is a new round all the same, as in CI
+        subprocess.run(g + ["checkout", "-q", "main-line"], check=True)
+        with open("design.md", "w") as f:
+            f.write("# design\nchanged on main\n")
+        subprocess.run(g + ["add", "design.md"], check=True)
+        subprocess.run(g + ["commit", "-qm", "design on main"], check=True)
+        subprocess.run(g + ["checkout", "-q", "lock-only"], check=True)
+        subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt", "--since", last])
+        self.assertNotIn("nothing", json.loads(out.getvalue()))
 
     def test_ci_never_reads_the_prs_local_review_section(self):
         seen = {}
