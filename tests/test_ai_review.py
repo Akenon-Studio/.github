@@ -472,5 +472,147 @@ class MainTest(unittest.TestCase):
         self.assertIn("Don't repeat them", user)
 
 
+    def later_run_repo(self):
+        """A branch with a.py and b.py, a local run's commit on it, then main moving on (c.py) and
+        merged in, a fix to a.py, and a lockfile changed since the run."""
+        import subprocess
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+        with open("design.md", "w") as f:
+            f.write("# design\n")
+        subprocess.run(g + ["commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        subprocess.run(g + ["branch", "-q", "main-line"], check=True)
+        for name, text in (("a.py", "x = 1\n"), ("b.py", "y = 1\n")):
+            with open(name, "w") as f:
+                f.write(text)
+        subprocess.run(g + ["add", "a.py", "b.py"], check=True)
+        subprocess.run(g + ["commit", "-qm", "the branch"], check=True)
+        last = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        subprocess.run(g + ["checkout", "-q", "main-line"], check=True)
+        with open("c.py", "w") as f:
+            f.write("z = 1  # main's\n")
+        subprocess.run(g + ["add", "c.py"], check=True)
+        subprocess.run(g + ["commit", "-qm", "on main"], check=True)
+        subprocess.run(g + ["checkout", "-q", "-"], check=True)
+        subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
+        with open("a.py", "a") as f:
+            f.write("x = 2  # the fix\n")
+        with open("pnpm-lock.yaml", "w") as f:
+            f.write("lockfileVersion: '9.0'\n" + "noise: 1\n" * 50)
+        subprocess.run(g + ["add", "a.py", "pnpm-lock.yaml"], check=True)
+        subprocess.run(g + ["commit", "-qm", "fix"], check=True)
+        with open("earlier.txt", "w") as f:
+            f.write("R1.1 MAJOR a.py:1: x is wrong\n  Outcome: fixed")
+        return last
+
+    def prompt(self, *args):
+        import contextlib, io, json
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ai_review.main(["--prompt", *args]), 0)
+        return json.loads(out.getvalue())["user"]
+
+    def test_a_later_local_run_gets_only_the_branchs_changes_since_with_the_earlier_findings(self):
+        # design 6.4: later local runs review what changed since the last, built as CI's later rounds
+        last = self.later_run_repo()
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        self.assertTrue(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertIn("<earlier_review>\nR1.1 MAJOR a.py:1: x is wrong", user)
+        changes = user.split("<changes_since>")[1]
+        self.assertIn("x = 2  # the fix", changes)
+        self.assertNotIn("main's", user)  # main's changes aren't the branch's
+        self.assertNotIn("noise: 1", changes)  # nor is a lockfile reviewed
+        self.assertIn("<generated_files>\npnpm-lock.yaml", user)  # but it is named, as in CI
+        self.assertIn('<file path="a.py">', user)
+        self.assertNotIn('<file path="b.py">', user)  # untouched since the last run
+        self.assertNotIn("<diff>", user)
+
+    def test_a_later_local_run_is_round_one_where_ci_would_be(self):
+        import subprocess
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+        last = self.later_run_repo()
+        # a rewritten branch: the last run's commit exists, but is no longer in the history
+        subprocess.run(g + ["checkout", "-q", "-b", "rewritten", "main-line"], check=True)
+        with open("a.py", "w") as f:
+            f.write("x = 3\n")
+        subprocess.run(g + ["add", "a.py"], check=True)
+        subprocess.run(g + ["commit", "-qm", "rewritten"], check=True)
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertIn("<diff>", user)
+        # too much changed since: round one, as in CI
+        subprocess.run(g + ["checkout", "-q", "-"], check=True)
+        saved = ai_review.MAX_DIFF_CHARS
+        ai_review.MAX_DIFF_CHARS = 10
+        try:
+            user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+            self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        finally:
+            ai_review.MAX_DIFF_CHARS = saved
+        # CLAUDE.md changed since, on a branch that descends from the last run: a full round, as in CI
+        subprocess.run(g + ["checkout", "-q", "-b", "rule", last], check=True)
+        with open("a.py", "a") as f:
+            f.write("x = 4\n")
+        with open("CLAUDE.md", "w") as f:
+            f.write("a new rule\n")
+        subprocess.run(g + ["add", "a.py", "CLAUDE.md"], check=True)
+        subprocess.run(g + ["commit", "-qm", "rule"], check=True)
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertIn("x = 4", user.split("<diff>")[1])
+        # a branch whose own changes since are only generated files: nothing to review, never the whole tree
+        subprocess.run(g + ["checkout", "-q", "-b", "lock-only", last], check=True)
+        with open("pnpm-lock.yaml", "w") as f:
+            f.write("lockfileVersion: '9.0'\n")
+        subprocess.run(g + ["add", "pnpm-lock.yaml"], check=True)
+        subprocess.run(g + ["commit", "-qm", "lock"], check=True)
+        subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
+        import contextlib, io, json
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt",
+                                             "--since", last]), 0)
+        self.assertIn("nothing", json.loads(out.getvalue()))  # nothing to review, as CI would skip it
+        # in handbook, a design changed on main is a new round all the same, as in CI
+        subprocess.run(g + ["checkout", "-q", "main-line"], check=True)
+        with open("design.md", "w") as f:
+            f.write("# design\nchanged on main\n")
+        subprocess.run(g + ["add", "design.md"], check=True)
+        subprocess.run(g + ["commit", "-qm", "design on main"], check=True)
+        subprocess.run(g + ["checkout", "-q", "lock-only"], check=True)
+        subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt", "--since", last])
+        request = json.loads(out.getvalue())
+        self.assertNotIn("nothing", request)
+        self.assertIn("changed on main", request["user"].split("<changes_since>")[1])  # what changed in it
+
+    def test_ci_never_reads_the_prs_local_review_section(self):
+        seen = {}
+
+        def github(path, token, method="GET", body=None, accept=""):
+            if method == "POST":
+                self.posted.append(body)
+                return {}
+            return DIFF if accept.endswith("diff") else {"title": "t", "head": {"sha": "abc"}, "body":
+                    "What it does.\n" + ai_review.LOCAL_REVIEW_START + "\nthe author's argument\n" + ai_review.LOCAL_REVIEW_END}
+        ai_review.github = github
+        ai_review.ask_claude = lambda system, user: (seen.update(user=user) or {"summary": "Fine.", "comments": []},
+                                                     {"model": "m", "output": 1})
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertIn("What it does.", seen["user"])
+        self.assertNotIn("the author's argument", seen["user"])
+
+    def test_the_review_never_reads_the_local_review_section(self):
+        # design 6.4: the local runs' outcomes and the author's reasons are skipped on every PR
+        body = ("Closes #1\n\nWhat it does.\n" + ai_review.LOCAL_REVIEW_START + "\nR1.1 not-an-issue: "
+                "the author's argument\n" + ai_review.LOCAL_REVIEW_END + "\nAfter.\n")
+        kept = ai_review.without_local_review(body)
+        self.assertNotIn("the author's argument", kept)
+        self.assertIn("What it does.", kept)
+        self.assertIn("After.", kept)
+        # an unclosed section is cut to the end, never read
+        self.assertNotIn("argument", ai_review.without_local_review("x\n" + ai_review.LOCAL_REVIEW_START + "\nargument"))
+
 if __name__ == "__main__":
     unittest.main()
