@@ -195,7 +195,8 @@ it worse."""
 DESIGN_MOVED_NOTE = """The design changed on `main` since the last review; what changed is in
 <design_changed_on_main>. It was reviewed in its own PR: don't review it. Check this PR's files,
 sent in full, against it: report text or code of this PR, changed since the last review or not, that
-the new design now contradicts or makes wrong, on this PR's own lines."""
+the new design now contradicts or makes wrong, on this PR's own lines. Where its lines also show in
+<changes_since>, they are `main`'s, not this PR's."""
 
 REVIEW_SCHEMA = {
     "type": "object",
@@ -481,14 +482,54 @@ def changes_since(commit, paths):
     return run.stdout if run.returncode == 0 else None
 
 
-def design_moved(commit, repo, paths):
-    """In the design's own repo, the design's diff since an earlier reviewed commit when the PR
-    doesn't change it itself (`main` brought it in): a later round is on what changed in it, since
-    the PR is judged against the rest of the design (6.4). "" otherwise, or when the commit isn't in
-    the history. A PR that changes the design gets its diff through its own files already."""
-    if repo != DESIGN_REPO or DESIGN_PATH in paths:
-        return ""
-    return changes_since(commit, [DESIGN_PATH]) or ""
+def git_out(*args):
+    """A git command's output, stripped; None when it fails."""
+    try:
+        run = subprocess.run(["git", *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return run.stdout.strip() if run.returncode == 0 else None
+
+
+def later_changes(commit, repo, paths, base=None):
+    """(changes since, design moved) for a later round from an earlier reviewed commit: the PR's
+    files' diff since it (changes_since; None for a full round), and in the design's own repo, the
+    design's diff brought in from `main` since (design_moved), labelled apart in the request."""
+    since = changes_since(commit, list(paths))
+    if since is None:
+        return None, ""
+    moved, own = design_moved(commit, repo, paths, base)
+    if own is not None:  # the PR's own design changes since, without main's
+        others = [p for p in paths if p != DESIGN_PATH]  # no paths would diff the whole tree
+        since = ((changes_since(commit, others) or "") if others else "") + own
+    return since, moved
+
+
+def design_moved(commit, repo, paths, base=None):
+    """(main's design diff, the PR's own design diff) since an earlier reviewed commit, in the
+    design's own repo: a later round is on what changed in the design, since the PR is judged
+    against the rest of it (6.4). For a PR that doesn't change the design, main's diff is the
+    design's diff since (main brought it in), and the own diff None. For one that does, main's is
+    the design's diff between where the branch met `base` at that commit and where it meets it now,
+    and the own diff is HEAD against that commit with main's diff applied; None (the PR's design
+    diff since then shows both, main's labelled apart) when the two conflict or there is no `base`.
+    ("", None) outside the design's repo, when main's design didn't move, or the commit isn't in
+    the history."""
+    if repo != DESIGN_REPO:
+        return "", None
+    if DESIGN_PATH not in paths:
+        return changes_since(commit, [DESIGN_PATH]) or "", None
+    before = git_out("merge-base", commit, base) if base else None
+    now = git_out("merge-base", "HEAD", base) if base else None
+    if not before or not now or before == now:
+        return "", None
+    moved = git_out("diff", before, now, "--", DESIGN_PATH)
+    if not moved:
+        return "", None
+    # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own
+    tree = git_out("merge-tree", "--write-tree", f"--merge-base={before}", commit, now)
+    own = changes_since(tree.splitlines()[0], [DESIGN_PATH]) if tree else None
+    return moved + "\n", own
 
 
 def later_paths(changed, files, moved):
@@ -666,8 +707,8 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     changes, moved = None, ""
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
-        changes = changes_since(since, list(files))  # the branch's own files only, as in CI
-        moved = design_moved(since, repo, files)  # in handbook, a design changed on main, as in CI
+        # the branch's own files only, and in handbook a design changed on main apart, as in CI
+        changes, moved = later_changes(since, repo, files, base)
         if changes is not None and not changes.strip() and not moved and not changes_since(since, ["CLAUDE.md"]):
             # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
             # as CI's fingerprint skips such a push
@@ -740,9 +781,10 @@ def main(argv):
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
         design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
-        since = changes_since(done[-1]["commit_id"], list(files)) if done else None
-        # in handbook, a design changed on main is what the round is for
-        moved = design_moved(done[-1]["commit_id"], name, files) if since is not None else ""
+        # in handbook, a design changed on main is what the round is for, labelled apart from the PR's
+        base = (pr.get("base") or {}).get("ref")
+        since, moved = (later_changes(done[-1]["commit_id"], name, files, base and f"origin/{base}")
+                        if done else (None, ""))
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])

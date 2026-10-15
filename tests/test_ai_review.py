@@ -509,9 +509,97 @@ class MainTest(unittest.TestCase):
         self.assertIn('<file path="check.py">', seen["user"])  # the PR's own files, unchanged since, in full
         self.assertNotIn('<file path="design.md">', seen["user"])  # sent once, as the design
         # outside handbook, the design isn't the repo's own file: nothing is added
-        self.assertEqual(ai_review.design_moved(reviewed, "platform", {"check.py": ""}), "")
-        # a PR that changes the design gets its diff from its own files: not added twice
-        self.assertEqual(ai_review.design_moved(reviewed, "handbook", {"design.md": ""}), "")
+        self.assertEqual(ai_review.design_moved(reviewed, "platform", {"check.py": ""}), ("", None))
+        # a PR that changes the design, with no base to tell main's part: its diff from its own files
+        self.assertEqual(ai_review.design_moved(reviewed, "handbook", {"design.md": ""}), ("", None))
+
+    def design_pr_repo(self, conflict=False):
+        """A handbook branch that changes the design, reviewed; then main changes another part of it
+        (or the same line, with `conflict`), is merged in, and the branch fixes its own text.
+        Returns the reviewed commit; main is `main-line` and `origin/main`."""
+        import subprocess
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+        lines = ["## 6. Engineering", "a rule", *(f"filler {i}" for i in range(8)), "the end"]
+
+        def write(text, message):
+            with open("design.md", "w") as f:
+                f.write(text)
+            subprocess.run(g + ["add", "design.md"], check=True)
+            subprocess.run(g + ["commit", "-qm", message], check=True)
+        write("\n".join(lines) + "\n", "base")
+        subprocess.run(g + ["branch", "-q", "main-line"], check=True)
+        write("\n".join(lines) + "\nthe PR's first text\n", "the PR")
+        reviewed = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        subprocess.run(g + ["checkout", "-q", "main-line"], check=True)
+        on_main = list(lines)
+        if conflict:
+            on_main.append("main's own last line")
+        else:
+            on_main[1] = "a rule changed on main"
+        write("\n".join(on_main) + "\n", "on main")
+        subprocess.run(g + ["update-ref", "refs/remotes/origin/main", "main-line"], check=True)
+        subprocess.run(g + ["checkout", "-q", "-"], check=True)
+        merged = subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], capture_output=True)
+        text = "\n".join(on_main) + "\nthe PR's first text\n"
+        if merged.returncode:  # the conflict, resolved by the author
+            with open("design.md", "w") as f:
+                f.write(text)
+            subprocess.run(g + ["add", "design.md"], check=True)
+            subprocess.run(g + ["commit", "-qm", "merge main", "--no-edit"], check=True)
+        write(text + "the PR's fix\n", "the fix")
+        return reviewed
+
+    def test_cis_later_round_shows_mains_design_changes_apart_from_a_design_prs_own(self):
+        # .github#195, design 6.4: a PR that changes design.md gets main's design edits labelled, not
+        # mixed into its own changes since the last review
+        import os, subprocess
+        os.environ["GITHUB_REPOSITORY"] = "akenon-studio/handbook"
+        reviewed = self.design_pr_repo()
+        diff = subprocess.run(["git", "diff", "origin/main...HEAD"], capture_output=True, text=True).stdout
+        ai_review.github = lambda path, token, method="GET", body=None, accept="": (
+            diff if accept.endswith("diff") else {"title": "t", "body": "", "head": {"sha": "abc"},
+                                                  "base": {"ref": "main"}})
+        ai_review.all_reviews = lambda *a: [{"user": {"login": ai_review.REVIEWER}, "commit_id": reviewed,
+                                              "body": "round 1\n<!-- ai-review-diff: " + "a" * 40 + " -->"}]
+        saved = ai_review.earlier_review
+        ai_review.earlier_review = lambda *a: "earlier findings"
+        seen = {}
+        ai_review.ask_claude = lambda system, user: (seen.update(user=user) or {"summary": "Fine.", "comments": []},
+                                                     None)
+        try:
+            self.assertEqual(ai_review.main([]), 0)
+        finally:
+            ai_review.earlier_review = saved
+        user = seen["user"]
+        self.assertTrue(user.startswith(ai_review.LATER_ROUND.strip()))
+        own = user.split("<changes_since>")[1].split("</changes_since>")[0]
+        self.assertIn("+the PR's fix", own)
+        self.assertNotIn("a rule changed on main", own)  # main's, not the PR's
+        self.assertIn("+a rule changed on main", user.split("<design_changed_on_main>")[-1])
+        self.assertIn(ai_review.DESIGN_MOVED_NOTE, user)
+
+    def test_a_later_local_run_shows_mains_design_changes_apart_from_a_design_branchs_own(self):
+        # .github#195: the local --prompt --since mode, as in CI
+        reviewed = self.design_pr_repo()
+        with open("earlier.txt", "w") as f:
+            f.write("R1.1 MAJOR design.md:1: x\n")
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", reviewed)
+        own = user.split("<changes_since>")[1].split("</changes_since>")[0]
+        self.assertIn("+the PR's fix", own)
+        self.assertNotIn("a rule changed on main", own)
+        self.assertIn("+a rule changed on main", user.split("<design_changed_on_main>")[-1])
+
+    def test_conflicting_design_changes_are_shown_mixed_with_mains_labelled(self):
+        # when main's design change and the PR's conflict, the PR's can't be told apart: its diff since
+        # shows both, and main's is still labelled (the note says its lines can show in both)
+        import subprocess
+        reviewed = self.design_pr_repo(conflict=True)
+        files = ai_review.split_diff(subprocess.run(["git", "diff", "main-line...HEAD"], capture_output=True,
+                                                    text=True).stdout)
+        since, moved = ai_review.later_changes(reviewed, "handbook", files, "main-line")
+        self.assertIn("+main's own last line", moved)
+        self.assertIn("+the PR's fix", since)
+        self.assertIn("main's own last line", since)
 
     def test_a_local_review_stops_when_it_cant_read_the_design(self):
         import subprocess
