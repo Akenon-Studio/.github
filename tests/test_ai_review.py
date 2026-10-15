@@ -224,6 +224,16 @@ class RequestTest(unittest.TestCase):
             whole, omitted = full_files(["small", "big", "deleted"], d, budget=400_000)
             self.assertEqual((list(whole), omitted), (["small"], ["big"]))
 
+    def test_files_a_later_round_touched_are_left_out_last(self):
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for name, size in (("touched.py", 50), ("untouched.py", 10)):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("x" * size)
+            found, omitted = ai_review.full_files(["touched.py", "untouched.py"], root=d, budget=55,
+                                                  keep={"touched.py"})
+            self.assertEqual((list(found), omitted), (["touched.py"], ["untouched.py"]))
+
     def test_a_symlink_is_not_followed(self):
         import tempfile, os
         with tempfile.TemporaryDirectory() as d, tempfile.NamedTemporaryFile("w") as secret:
@@ -448,6 +458,61 @@ class MainTest(unittest.TestCase):
         self.assertEqual(ai_review.main([]), 0)
         self.assertNotEqual(ai_review.DIFF_MARKER.findall(self.posted[-1]["body"])[0], first)
 
+    def test_cis_later_round_in_handbook_shows_what_changed_in_a_design_from_main(self):
+        # .github#192, design 6.4: a later round on what changed in the design, for a PR that
+        # doesn't change design.md itself
+        import os, subprocess
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+        os.environ["GITHUB_REPOSITORY"] = "akenon-studio/handbook"
+        with open("design.md", "w") as f:
+            f.write("## 6. Engineering\nas reviewed\n")
+        with open("check.py", "w") as f:
+            f.write("x = 1\n")
+        subprocess.run(g + ["add", "design.md", "check.py"], check=True)
+        subprocess.run(g + ["commit", "-qm", "reviewed"], check=True)
+        reviewed = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        with open("design.md", "a") as f:
+            f.write("a rule changed on main\n")
+        subprocess.run(g + ["add", "design.md"], check=True)
+        subprocess.run(g + ["commit", "-qm", "main brought in"], check=True)
+        diff = "diff --git a/check.py b/check.py\n--- /dev/null\n+++ b/check.py\n@@ -0,0 +1 @@\n+x = 1\n"
+        github = ai_review.github
+        ai_review.github = lambda path, token, method="GET", body=None, accept="": (
+            diff if accept.endswith("diff") else github(path, token, method, body, accept))
+        ai_review.all_reviews = lambda *a: [{"user": {"login": ai_review.REVIEWER}, "commit_id": reviewed,
+                                              "body": "round 1\n<!-- ai-review-diff: " + "a" * 40 + " -->"}]
+        saved = ai_review.earlier_review
+        ai_review.earlier_review = lambda *a: "earlier findings"
+        seen = {}
+        ai_review.ask_claude = lambda system, user: (seen.update(user=user) or {"summary": "Fine.", "comments": []},
+                                                     None)
+        try:
+            self.assertEqual(ai_review.main([]), 0)
+            later = seen["user"]
+            # the design's diff counts toward "too much changed": past the limit with it alone, a full round
+            size = ai_review.MAX_DIFF_CHARS
+            ai_review.MAX_DIFF_CHARS = len(diff) + 1  # the PR's diff fits; with main's design diff, it doesn't
+            try:
+                self.assertEqual(ai_review.main([]), 0)
+            finally:
+                ai_review.MAX_DIFF_CHARS = size
+            self.assertFalse(seen["user"].startswith(ai_review.LATER_ROUND.strip()))
+            self.assertNotIn("<design_changed_on_main>", seen["user"])
+            seen["user"] = later
+        finally:
+            ai_review.earlier_review = saved
+        self.assertTrue(seen["user"].startswith(ai_review.LATER_ROUND.strip()))
+        moved = seen["user"].split("<design_changed_on_main>")[-1]
+        self.assertIn("+a rule changed on main", moved)  # what changed in it, not only the new design
+        self.assertNotIn("a rule changed on main", seen["user"].split("<changes_since>")[1].split("</changes_since>")[0])
+        self.assertIn(ai_review.DESIGN_MOVED_NOTE, seen["user"])  # labelled main's, to check the PR against
+        self.assertIn('<file path="check.py">', seen["user"])  # the PR's own files, unchanged since, in full
+        self.assertNotIn('<file path="design.md">', seen["user"])  # sent once, as the design
+        # outside handbook, the design isn't the repo's own file: nothing is added
+        self.assertEqual(ai_review.design_moved(reviewed, "platform", {"check.py": ""}), "")
+        # a PR that changes the design gets its diff from its own files: not added twice
+        self.assertEqual(ai_review.design_moved(reviewed, "handbook", {"design.md": ""}), "")
+
     def test_a_local_review_stops_when_it_cant_read_the_design(self):
         import subprocess
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
@@ -585,7 +650,19 @@ class MainTest(unittest.TestCase):
             ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt", "--since", last])
         request = json.loads(out.getvalue())
         self.assertNotIn("nothing", request)
-        self.assertIn("changed on main", request["user"].split("<changes_since>")[1])  # what changed in it
+        self.assertIn("+changed on main", request["user"].split("<design_changed_on_main>")[-1])  # what changed in it
+        self.assertIn(ai_review.DESIGN_MOVED_NOTE, request["user"])
+        # the design's diff counts toward "too much changed": past the limit with it alone, round one
+        own = len(ai_review.changes_since(last, list(ai_review.split_diff(subprocess.run(
+            ["git", "diff", "main-line...HEAD"], capture_output=True, text=True).stdout))) or "")
+        saved = ai_review.MAX_DIFF_CHARS
+        ai_review.MAX_DIFF_CHARS = own + 1  # the branch's own changes fit; with main's design diff, they don't
+        try:
+            user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        finally:
+            ai_review.MAX_DIFF_CHARS = saved
+        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertNotIn("<design_changed_on_main>", user)
 
     def test_ci_never_reads_the_prs_local_review_section(self):
         seen = {}
