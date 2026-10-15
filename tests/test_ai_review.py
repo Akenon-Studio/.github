@@ -481,8 +481,11 @@ class MainTest(unittest.TestCase):
         finally:
             ai_review.earlier_review = saved
         self.assertTrue(seen["user"].startswith(ai_review.LATER_ROUND.strip()))
-        changes = seen["user"].split("<changes_since>")[1]
-        self.assertIn("+a rule changed on main", changes)  # what changed in it, not only the new design
+        moved = seen["user"].split("<design_changed_on_main>")[-1]
+        self.assertIn("+a rule changed on main", moved)  # what changed in it, not only the new design
+        self.assertNotIn("a rule changed on main", seen["user"].split("<changes_since>")[1].split("</changes_since>")[0])
+        self.assertIn(ai_review.DESIGN_MOVED_NOTE, seen["user"])  # labelled main's, to check the PR against
+        self.assertIn('<file path="check.py">', seen["user"])  # the PR's own files, unchanged since, in full
         self.assertNotIn('<file path="design.md">', seen["user"])  # sent once, as the design
         # outside handbook, the design isn't the repo's own file: nothing is added
         self.assertEqual(ai_review.design_moved(reviewed, "platform", {"check.py": ""}), "")
@@ -626,7 +629,8 @@ class MainTest(unittest.TestCase):
             ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt", "--since", last])
         request = json.loads(out.getvalue())
         self.assertNotIn("nothing", request)
-        self.assertIn("changed on main", request["user"].split("<changes_since>")[1])  # what changed in it
+        self.assertIn("+changed on main", request["user"].split("<design_changed_on_main>")[-1])  # what changed in it
+        self.assertIn(ai_review.DESIGN_MOVED_NOTE, request["user"])
 
     def test_ci_never_reads_the_prs_local_review_section(self):
         seen = {}
