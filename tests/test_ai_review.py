@@ -652,6 +652,17 @@ class MainTest(unittest.TestCase):
         self.assertNotIn("nothing", request)
         self.assertIn("+changed on main", request["user"].split("<design_changed_on_main>")[-1])  # what changed in it
         self.assertIn(ai_review.DESIGN_MOVED_NOTE, request["user"])
+        # the design's diff counts toward "too much changed": past the limit with it alone, round one
+        own = len(ai_review.changes_since(last, list(ai_review.split_diff(subprocess.run(
+            ["git", "diff", "main-line...HEAD"], capture_output=True, text=True).stdout))) or "")
+        saved = ai_review.MAX_DIFF_CHARS
+        ai_review.MAX_DIFF_CHARS = own + 1  # the branch's own changes fit; with main's design diff, they don't
+        try:
+            user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        finally:
+            ai_review.MAX_DIFF_CHARS = saved
+        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertNotIn("<design_changed_on_main>", user)
 
     def test_ci_never_reads_the_prs_local_review_section(self):
         seen = {}
