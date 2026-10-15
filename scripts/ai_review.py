@@ -641,7 +641,10 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
                                 capture_output=True).returncode == 0:
         changes = changes_since(since, list(files))  # the branch's own files only, as in CI
         # in the design's own repo a design changed on main is a new round, as CI's fingerprint has it
-        design_moved = repo == DESIGN_REPO and bool(changes_since(since, ["design.md"]))
+        moved = changes_since(since, [DESIGN_PATH]) if repo == DESIGN_REPO else ""
+        design_moved = bool(moved)
+        if design_moved and changes is not None and DESIGN_PATH not in files:
+            changes += moved  # what changed in it is what this round is for (6.4)
         if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]) and not design_moved:
             # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
             # as CI's fingerprint skips such a push

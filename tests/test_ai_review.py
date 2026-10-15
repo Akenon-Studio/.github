@@ -583,7 +583,9 @@ class MainTest(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ai_review.main(["--prompt", "handbook", "main-line", "design.md", "earlier.txt", "--since", last])
-        self.assertNotIn("nothing", json.loads(out.getvalue()))
+        request = json.loads(out.getvalue())
+        self.assertNotIn("nothing", request)
+        self.assertIn("changed on main", request["user"].split("<changes_since>")[1])  # what changed in it
 
     def test_ci_never_reads_the_prs_local_review_section(self):
         seen = {}
