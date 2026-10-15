@@ -15,6 +15,11 @@ def load(name):
     return workflow
 
 
+# The end of a shared check's job name: empty on a PR and on a push to main, so the check keeps its
+# required name there, and " (branch)" or " (dispatch)" elsewhere (pr-title.yml).
+OFF_A_PR = ("${{ github.event_name == 'workflow_dispatch' && ' (dispatch)' || github.event_name == 'push' "
+            "&& github.ref_name != 'main' && ' (branch)' || '' }}")
+
 REUSABLE = {p.name: load(p.name) for p in sorted(WORKFLOWS.glob("*.yml"))
             if "workflow_call" in (load(p.name)["on"] or {})}
 
@@ -27,12 +32,50 @@ class ReusableWorkflowsTest(unittest.TestCase):
     # event doesn't have: it skips Renovate's status pages (design 6.8), never a PR.
     MAY_SKIP = {("issue-fields.yml", "sync")}
 
+    # A job that reads the PR runs on a PR only; elsewhere it is skipped under a name of its own.
+    PR_ONLY = {("pr-title.yml", "pr-checks"), ("pr-title.yml", "docs-tick-check")}
+
     def test_no_job_is_skipped(self):
-        # a skipped job reports "skipped", which passes a required check
+        # a skipped job reports "skipped", which passes a required check: so none is skipped on a
+        # PR, and one skipped elsewhere has a name no PR's check has
         for name, workflow in REUSABLE.items():
             for job_id, job in workflow["jobs"].items():
-                if (name, job_id) not in self.MAY_SKIP:
+                if (name, job_id) in self.PR_ONLY:
+                    self.assertEqual(job["if"], "github.event_name == 'pull_request'", f"{name}: {job_id}")
+                    self.assertTrue(job["name"].endswith(OFF_A_PR), f"{name}: {job_id}")
+                    # an unnamed skip would report the id, so it isn't the check's name either
+                    self.assertNotEqual(job_id, job["name"].removesuffix(OFF_A_PR), f"{name}: {job_id}")
+                elif (name, job_id) not in self.MAY_SKIP:
                     self.assertNotIn("if", job, f"{name}: job {job_id}")
+
+    def test_runs_off_a_pr_report_names_of_their_own(self):
+        # design 7.13 Stage 10: a push to a Peras branch or a dispatch never reports a PR's
+        # required name, and a dispatch checks out the commit it names
+        for name in ("pr-title.yml", "security-scan.yml"):
+            for job_id, job in REUSABLE[name]["jobs"].items():
+                self.assertTrue(job.get("name", "").endswith(OFF_A_PR), f"{name}: {job_id}")
+                repo = [s for s in job["steps"] if "checkout" in s.get("uses", "")
+                        and "repository" not in s.get("with", {})]
+                for step in repo if (name, job_id) not in self.PR_ONLY else []:
+                    self.assertEqual(step["with"].get("ref"), "${{ github.event.inputs.sha }}", f"{name}: {job_id}")
+                if "concurrency" in job:  # a dispatch never cancels main's run, nor another commit's
+                    self.assertTrue(job["concurrency"]["group"].endswith("-${{ github.event.inputs.sha }}"))
+
+    def test_the_name_off_a_pr(self):
+        # the expression's three outcomes, as GitHub evaluates `a && b || c` (&& binds first)
+        def evaluate(event, ref_name):
+            if event == "workflow_dispatch":
+                return " (dispatch)"
+            if event == "push" and ref_name != "main":
+                return " (branch)"
+            return ""
+        expression = OFF_A_PR.removeprefix("${{ ").removesuffix(" }}")
+        self.assertEqual(expression, "github.event_name == 'workflow_dispatch' && ' (dispatch)' || "
+                         "github.event_name == 'push' && github.ref_name != 'main' && ' (branch)' || ''")
+        self.assertEqual(evaluate("pull_request", "1/merge"), "")
+        self.assertEqual(evaluate("push", "main"), "")
+        self.assertEqual(evaluate("push", "peras/12-1"), " (branch)")
+        self.assertEqual(evaluate("workflow_dispatch", "main"), " (dispatch)")
 
     def test_issue_fields_skips_exactly_renovates_status_pages(self):
         import json
@@ -93,7 +136,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_one_job_per_check_workflow_and_every_check_step_reported(self):
         # design 6.3: billing rounds every job up to a minute; a check step that isn't in the
         # Result step's OUTCOMES would fail without failing the job (continue-on-error)
-        self.assertEqual(list(REUSABLE["pr-title.yml"]["jobs"]), ["checks"])
+        # one job per thing its checks read (rulesets/required-checks.json, "reads")
+        self.assertEqual(list(REUSABLE["pr-title.yml"]["jobs"]), ["pr-checks", "checks", "docs-tick-check"])
         for name in ("pr-title.yml", "security-scan.yml"):
             for job_id, job in REUSABLE[name]["jobs"].items():
                 steps = job["steps"]
@@ -109,7 +153,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
 
     def test_pr_title_is_never_cancelled(self):
         # it re-runs on the same commit (edits, assignments); a cancelled run there blocks the PR
-        self.assertNotIn("concurrency", REUSABLE["pr-title.yml"]["jobs"]["checks"])
+        for job_id, job in REUSABLE["pr-title.yml"]["jobs"].items():
+            self.assertNotIn("concurrency", job, job_id)
 
     def test_check_jobs_cancel_superseded_runs(self):
         for name in ("security-scan.yml",):  # runs only on new commits, so a cancelled run is stale

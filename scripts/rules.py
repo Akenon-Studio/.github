@@ -73,6 +73,23 @@ def required_checks(repo):
     return [{"context": n, "integration_id": ACTIONS_APP_ID} for n in names]
 
 
+READS = ("pr", "diff", "code", "person")
+
+
+def reads_problems(checks=None):
+    """What's wrong with required-checks.json's `reads` marking (design 7.13 Stage 10): a required
+    check left unmarked, a mark that isn't one of READS, or a mark for a check no repo requires."""
+    checks = checks if checks is not None else load("required-checks.json")
+    reads = checks.get("reads") or {}
+    required = {n for key, names in checks.items() if not key.startswith("_") and key != "reads"
+                for n in names}
+    problems = [f"required check '{n}' has no 'reads' mark" for n in sorted(required - set(reads))]
+    problems += [f"'reads' marks '{n}' as '{m}', not one of {', '.join(READS)}"
+                 for n, m in sorted(reads.items()) if m not in READS]
+    problems += [f"'reads' marks '{n}', which no repo requires" for n in sorted(set(reads) - required)]
+    return problems
+
+
 def desired_rulesets(repo):
     """The rulesets a repo should have, with its required checks filled in."""
     main = load("main.json")

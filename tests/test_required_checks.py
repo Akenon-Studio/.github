@@ -1,13 +1,19 @@
 """Tests that every check rulesets/required-checks.json requires of all repos, or of this one, is a
 job a workflow here produces (a required check that never runs blocks every merge), and that every
-repo carries the caller of each reusable workflow whose checks are required everywhere.
+repo carries the caller of each reusable workflow whose checks are required everywhere, and that
+every required check is marked with what it reads (design 7.13 Stage 10).
 Run: python3 -m unittest discover tests"""
 
 import json
 import pathlib
+import re
+import sys
 import unittest
 
 import yaml
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+from rules import reads_problems  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -24,6 +30,12 @@ def workflows():
     return out
 
 
+def static(name):
+    """A job name as a PR's run reports it: a reusable workflow's names end in an expression that is
+    empty on a PR (pr-title.yml, "Runs that aren't a PR's")."""
+    return re.sub(r"\$\{\{.*?\}\}", "", name)
+
+
 def produced_checks():
     """Check names this repo's workflows report: a plain job's id or name, and '<caller job> /
     <job>' for a job that calls a reusable workflow here."""
@@ -33,10 +45,10 @@ def produced_checks():
             uses = job.get("uses", "")
             if uses.startswith("./.github/workflows/"):
                 called = flows[uses.rsplit("/", 1)[1]]
-                names |= {f"{job.get('name', job_id)} / {j.get('name', i)}"
+                names |= {f"{job.get('name', job_id)} / {static(j.get('name', i))}"
                           for i, j in called["jobs"].items()}
             elif "workflow_call" not in (workflow["on"] or {}):
-                names.add(job.get("name", job_id))
+                names.add(static(job.get("name", job_id)))
     return names
 
 
@@ -46,11 +58,41 @@ class RequiredChecksTest(unittest.TestCase):
         for name in CHECKS["all"] + CHECKS[".github"]:
             self.assertIn(name, produced)
 
+    def test_every_required_check_is_marked_with_what_it_reads(self):
+        self.assertEqual(reads_problems(CHECKS), [])
+
     def test_every_repo_carries_the_callers_of_checks_required_everywhere(self):
         for name in CHECKS["all"]:
             caller = f".github/workflows/{name.split(' / ')[0]}-caller.yml"
             self.assertIn(caller, REQUIRED_FILES, name)
             self.assertTrue((ROOT / caller).is_file(), caller)
+
+
+class ReadsProblemsTest(unittest.TestCase):
+    def test_a_fully_marked_file_passes(self):
+        checks = {"_comment": "x", "all": ["a"], "web": ["b"], "reads": {"a": "pr", "b": "code"}}
+        self.assertEqual(reads_problems(checks), [])
+
+    def test_an_unmarked_required_check_fails(self):
+        problems = reads_problems({"all": ["a"], "web": ["b"], "reads": {"a": "pr"}})
+        self.assertEqual(problems, ["required check 'b' has no 'reads' mark"])
+
+    def test_no_reads_at_all_fails_for_every_check(self):
+        self.assertEqual(len(reads_problems({"all": ["a", "b"]})), 2)
+
+    def test_an_unknown_mark_fails(self):
+        problems = reads_problems({"all": ["a"], "reads": {"a": "tests"}})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'tests'", problems[0])
+
+    def test_a_mark_for_a_check_no_repo_requires_fails(self):
+        problems = reads_problems({"all": ["a"], "reads": {"a": "code", "gone": "code"}})
+        self.assertEqual(problems, ["'reads' marks 'gone', which no repo requires"])
+
+    def test_every_mark_peras_reads_is_allowed(self):
+        # peras/core/orchestrator/github.ts requiredChecks: 'pr', 'diff', 'person', else 'code'
+        for mark in ("pr", "diff", "code", "person"):
+            self.assertEqual(reads_problems({"all": ["a"], "reads": {"a": mark}}), [])
 
 
 if __name__ == "__main__":
