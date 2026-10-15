@@ -224,6 +224,16 @@ class RequestTest(unittest.TestCase):
             whole, omitted = full_files(["small", "big", "deleted"], d, budget=400_000)
             self.assertEqual((list(whole), omitted), (["small"], ["big"]))
 
+    def test_files_a_later_round_touched_are_left_out_last(self):
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for name, size in (("touched.py", 50), ("untouched.py", 10)):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("x" * size)
+            found, omitted = ai_review.full_files(["touched.py", "untouched.py"], root=d, budget=55,
+                                                  keep={"touched.py"})
+            self.assertEqual((list(found), omitted), (["touched.py"], ["untouched.py"]))
+
     def test_a_symlink_is_not_followed(self):
         import tempfile, os
         with tempfile.TemporaryDirectory() as d, tempfile.NamedTemporaryFile("w") as secret:
@@ -478,6 +488,17 @@ class MainTest(unittest.TestCase):
                                                      None)
         try:
             self.assertEqual(ai_review.main([]), 0)
+            later = seen["user"]
+            # the design's diff counts toward "too much changed": past the limit with it alone, a full round
+            size = ai_review.MAX_DIFF_CHARS
+            ai_review.MAX_DIFF_CHARS = len(diff) + 1  # the PR's diff fits; with main's design diff, it doesn't
+            try:
+                self.assertEqual(ai_review.main([]), 0)
+            finally:
+                ai_review.MAX_DIFF_CHARS = size
+            self.assertFalse(seen["user"].startswith(ai_review.LATER_ROUND.strip()))
+            self.assertNotIn("<design_changed_on_main>", seen["user"])
+            seen["user"] = later
         finally:
             ai_review.earlier_review = saved
         self.assertTrue(seen["user"].startswith(ai_review.LATER_ROUND.strip()))

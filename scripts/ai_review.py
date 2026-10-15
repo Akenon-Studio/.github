@@ -28,7 +28,8 @@ AI_REVIEW_MODEL)
                             [--since <commit>]
 (in a checkout of the branch: prints the request for a local review or a replay: round one against
 <base ref>, the earlier findings, if given, as an earlier round; with --since (the last local run's
-commit), a later round on the branch's own files changed since it, with the earlier findings and
+commit), a later round on the branch's own files changed since it (in handbook, and a design changed
+on main since, with all the branch's files in full to check against it), with the earlier findings and
 their outcomes, built as CI's later rounds are, falling back to round one where CI would, or printing
 {"nothing": why} when none of the branch's own files changed since. review-branch.py checks
 PROMPT_SINCE.)
@@ -298,9 +299,10 @@ def design_sections(design, repo):
                    re.match(r"## (\d+)\.", p).group(1) in want)
 
 
-def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
+def full_files(paths, root=".", budget=MAX_INPUT_CHARS, keep=()):
     """({path: text} of the changed files as the PR leaves them, [paths left out for size]):
-    largest left out first past `budget` characters; deleted and binary files are skipped."""
+    largest left out first past `budget` characters, those not in `keep` (a later round's touched
+    files) before any in it; deleted and binary files are skipped."""
     found, omitted = {}, []
     top = os.path.realpath(root)
     for p in paths:
@@ -314,7 +316,7 @@ def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
         except (OSError, UnicodeDecodeError):
             continue
     while found and sum(map(len, found.values())) > budget:
-        largest = max(found, key=lambda k: len(found[k]))
+        largest = max(found, key=lambda k: (k not in keep, len(found[k])))
         del found[largest]
         omitted.append(largest)
     return found, omitted
@@ -362,7 +364,7 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
     message to keep the cached prefix the same. A later round's `files` are those the changes
-    touch, and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
+    touch (all the PR's, when the design moved on `main`: later_paths), and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
     the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled. For
     the design's own repo the design is the PR's, which most pushes change, so it isn't cached:
     writing it to the cache costs more than reading it plainly. `design_changes` is, in a later
@@ -680,7 +682,8 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
         generated = generated_paths(diff)
         budget = (MAX_INPUT_CHARS - len(shown) - len(moved) - len(design) - len(history) - len(claude_md)
                   - sum(len(g) + 1 for g in generated))  # as CI counts it
-        whole, omitted = full_files(review_paths(later_paths(changed, files, moved), repo), budget=budget)
+        whole, omitted = full_files(review_paths(later_paths(changed, files, moved), repo), budget=budget,
+                                    keep=set(changed))
         system, user = request(claude_md, design, title, "", whole, "", later=(history, shown), omitted=omitted,
                                generated=generated, repo=repo, design_changes=moved)  # the whole branch's, as in CI
     else:
@@ -754,7 +757,8 @@ def main(argv):
         generated = generated_paths(diff)  # the whole PR's, every round
         used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(moved) + len(description)
                 + sum(len(g) + 1 for g in generated))
-        whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used)
+        whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used,
+                                    keep=set(split_diff(since)) if since is not None else ())
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
                                omitted, history, generated, repo.split("/")[1], design_changes=moved)
         try:
