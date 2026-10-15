@@ -5,7 +5,8 @@ Round one is the full review: the strongest model, more effort, no cap on findin
 the repo's CLAUDE.md, the design sections that apply to the repo and every changed file in full.
 Each finding carries an absolute severity (critical, major, minor, nit) and a confidence; critical
 and major findings become review threads, minor ones and nits lines in the summary. Later rounds
-review only the changes since the last review, with the earlier findings and the replies to them.
+review only the changes since the last review, with the earlier findings and the replies to them;
+in `handbook`, a design changed on `main` since is one of those changes (design 6.4).
 Uses the Claude API directly, not Claude Code: the plan's monthly API credits cover the API but not
 Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
@@ -470,6 +471,16 @@ def changes_since(commit, paths):
     return run.stdout if run.returncode == 0 else None
 
 
+def design_moved(commit, repo, paths):
+    """In the design's own repo, the design's diff since an earlier reviewed commit when the PR
+    doesn't change it itself (`main` brought it in): a later round is on what changed in it, since
+    the PR is judged against the rest of the design (6.4). "" otherwise, or when the commit isn't in
+    the history. A PR that changes the design gets its diff through its own files already."""
+    if repo != DESIGN_REPO or DESIGN_PATH in paths:
+        return ""
+    return changes_since(commit, [DESIGN_PATH]) or ""
+
+
 THREADS_QUERY = """query($owner: String!, $name: String!, $n: Int!, $after: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
     reviewThreads(first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes {
@@ -640,12 +651,9 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
         changes = changes_since(since, list(files))  # the branch's own files only, as in CI
-        # in the design's own repo a design changed on main is a new round, as CI's fingerprint has it
-        moved = changes_since(since, [DESIGN_PATH]) if repo == DESIGN_REPO else ""
-        design_moved = bool(moved)
-        if design_moved and changes is not None and DESIGN_PATH not in files:
-            changes += moved  # what changed in it is what this round is for (6.4)
-        if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]) and not design_moved:
+        if changes is not None:  # in handbook, a design changed on main too, as in CI
+            changes += design_moved(since, repo, files)
+        if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]):
             # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
             # as CI's fingerprint skips such a push
             print(json.dumps({"nothing": "nothing of the branch's own changed since the last run"}))
@@ -717,6 +725,8 @@ def main(argv):
     else:
         design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
         since = changes_since(done[-1]["commit_id"], list(files)) if done else None
+        if since is not None:  # in handbook, a design changed on main is what the round is for
+            since += design_moved(done[-1]["commit_id"], name, files)
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])
