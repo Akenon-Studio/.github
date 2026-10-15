@@ -23,11 +23,13 @@ of the PR's head with its history; reads GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUM
 (the handbook's design.md), ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN and ANTHROPIC_FEDERATION_RULE_ID,
 ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID; optional
 AI_REVIEW_MODEL)
-       scripts/ai_review.py --prompt <repo> <base ref> <design.md> [<earlier findings file>] [--later]
-(in a checkout of the branch: prints the request for a local review or a replay. Without --later,
-round one's against <base ref>, the earlier findings, if given, as an earlier round; with --later, a
-later round: only the changes since <base ref> (the last local run's commit), with the earlier
-findings and their outcomes, as CI's later rounds get. review-branch.py checks PROMPT_LATER.)
+       scripts/ai_review.py --prompt <repo> <base ref> <design.md> [<earlier findings file>]
+                            [--since <commit>]
+(in a checkout of the branch: prints the request for a local review or a replay: round one against
+<base ref>, the earlier findings, if given, as an earlier round; with --since (the last local run's
+commit), a later round on the branch's own files changed since it, with the earlier findings and
+their outcomes, built as CI's later rounds are, falling back to round one where CI would. review-
+branch.py checks PROMPT_SINCE.)
 
 A PR's description may hold a local-review section, between LOCAL_REVIEW_START and LOCAL_REVIEW_END,
 with the local runs' findings and the author's outcomes and reasons (review-branch.py writes it,
@@ -68,7 +70,7 @@ MAX_DESCRIPTION_CHARS = 20_000
 # The local runs' findings and outcomes in a PR's description, which the review skips (design 6.4)
 LOCAL_REVIEW_START = "<!-- local-review:start -->"
 LOCAL_REVIEW_END = "<!-- local-review:end -->"
-PROMPT_LATER = True  # --prompt takes --later (review-branch.py checks for it)
+PROMPT_SINCE = True  # --prompt takes --since (review-branch.py checks for it)
 
 
 def without_local_review(description):
@@ -609,11 +611,13 @@ def usage_marker(usage):
     return f"\n\n<!-- ai-review-usage: {json.dumps(usage)} -->" if usage else ""
 
 
-def prompt_main(repo, base, design_path, settled_path=None, later=False):
-    """Print the request for the checked-out branch (local review, replay): round one against `base`,
-    or with `later` a later round on the changes since `base` (the last local run's commit), as CI's
-    later rounds are built. `settled_path`: the earlier findings, their outcomes and the partners'
-    answers (review-branch.py, design 6.4), as an earlier round."""
+def prompt_main(repo, base, design_path, settled_path=None, since=None):
+    """Print the request for the checked-out branch against `base` (local review, replay): round one,
+    or with `since` (the last local run's commit) a later round on the branch's own files changed
+    since it, built as CI's later rounds are, with round one instead where CI would have one (the
+    commit no longer in the history, CLAUDE.md changed since, or too much changed). `settled_path`:
+    the earlier findings, their outcomes and the partners' answers (review-branch.py, design 6.4),
+    as an earlier round."""
     diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
     files = split_diff(diff)
     text, _ = review_input(files)
@@ -629,11 +633,19 @@ def prompt_main(repo, base, design_path, settled_path=None, later=False):
                 history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
         except OSError as e:
             raise SystemExit(f"can't read the settled findings from {settled_path}: {e}")
-    if later:  # the changes since the last run, and the files they touch in full
-        budget = MAX_INPUT_CHARS - len(diff) - len(design) - len(history)
-        whole, omitted = full_files(review_paths(files, repo), budget=budget)
-        system, user = request(claude_md, design, title, "", whole, "", later=(history, diff), omitted=omitted,
-                               generated=generated_paths(diff), repo=repo)
+    changes = None
+    if since and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
+                                capture_output=True).returncode == 0:
+        changes = changes_since(since, list(files))  # the branch's own files only, as in CI
+        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or len(changes) > MAX_DIFF_CHARS):
+            changes = None
+    if changes is not None:  # a later round: the changes, and the files they touch in full
+        changed = split_diff(changes)  # generated files left out, as in CI
+        shown = "".join(changed.values())
+        budget = MAX_INPUT_CHARS - len(shown) - len(design) - len(history)
+        whole, omitted = full_files(review_paths(list(changed), repo), budget=budget)
+        system, user = request(claude_md, design, title, "", whole, "", later=(history, shown), omitted=omitted,
+                               generated=generated_paths(diff), repo=repo)  # the whole branch's, as in CI
     else:
         budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
         whole, omitted = full_files(review_paths(files, repo), budget=budget)
@@ -645,8 +657,13 @@ def prompt_main(repo, base, design_path, settled_path=None, later=False):
 
 def main(argv):
     if argv[:1] == ["--prompt"]:
-        rest = [a for a in argv[1:] if a != "--later"]
-        return prompt_main(*rest[:4], later="--later" in argv[1:])
+        rest = list(argv[1:])
+        since = None
+        if "--since" in rest:
+            at = rest.index("--since")
+            since = rest[at + 1] if at + 1 < len(rest) else None
+            del rest[at:at + 2]
+        return prompt_main(*rest[:4], since=since)
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
