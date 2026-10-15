@@ -637,7 +637,10 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
         changes = changes_since(since, list(files))  # the branch's own files only, as in CI
-        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or len(changes) > MAX_DIFF_CHARS):
+        # round one when CLAUDE.md changed since, too much changed, or nothing of the branch's own did
+        # (CI's fingerprint would skip such a push; a local run asked for one reviews the whole change)
+        if changes is not None and (not changes.strip() or changes_since(since, ["CLAUDE.md"])
+                                    or len(changes) > MAX_DIFF_CHARS):
             changes = None
     if changes is not None:  # a later round: the changes, and the files they touch in full
         changed = split_diff(changes)  # generated files left out, as in CI
@@ -654,7 +657,7 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
                   - sum(len(g) + 1 for g in generated))
         whole, omitted = full_files(review_paths(files, repo), budget=budget)
         system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
-                               generated=generated_paths(diff), repo=repo, history=history)
+                               generated=generated, repo=repo, history=history)
     print(json.dumps({"system": system, "user": user}))
     return 0
 

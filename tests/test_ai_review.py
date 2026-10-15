@@ -548,6 +548,17 @@ class MainTest(unittest.TestCase):
             self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
         finally:
             ai_review.MAX_DIFF_CHARS = saved
+        # CLAUDE.md changed since, on a branch that descends from the last run: a full round, as in CI
+        subprocess.run(g + ["checkout", "-q", "-b", "rule", last], check=True)
+        with open("a.py", "a") as f:
+            f.write("x = 4\n")
+        with open("CLAUDE.md", "w") as f:
+            f.write("a new rule\n")
+        subprocess.run(g + ["add", "a.py", "CLAUDE.md"], check=True)
+        subprocess.run(g + ["commit", "-qm", "rule"], check=True)
+        user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
+        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertIn("x = 4", user.split("<diff>")[1])
         # a branch whose own changes since are only generated files: round one, never the whole tree
         subprocess.run(g + ["checkout", "-q", "-b", "lock-only", last], check=True)
         with open("pnpm-lock.yaml", "w") as f:
@@ -557,6 +568,7 @@ class MainTest(unittest.TestCase):
         subprocess.run(g + ["merge", "-q", "--no-edit", "main-line"], check=True)
         user = self.prompt("handbook", "main-line", "design.md", "earlier.txt", "--since", last)
         self.assertNotIn("main's", user)
+        self.assertFalse(user.startswith(ai_review.LATER_ROUND.strip()))  # no empty later round
         subprocess.run(g + ["checkout", "-q", "rewritten"], check=True)
         # CLAUDE.md changed since: a full round, as in CI
         with open("CLAUDE.md", "w") as f:
