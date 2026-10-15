@@ -23,9 +23,15 @@ of the PR's head with its history; reads GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUM
 (the handbook's design.md), ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN and ANTHROPIC_FEDERATION_RULE_ID,
 ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID; optional
 AI_REVIEW_MODEL)
-       scripts/ai_review.py --prompt <repo> <base ref> <design.md> [<settled findings file>]   (in a
-checkout of the branch: prints the round-one request, for a local review or a replay; the settled
-findings go in as an earlier round)
+       scripts/ai_review.py --prompt <repo> <base ref> <design.md> [<earlier findings file>] [--later]
+(in a checkout of the branch: prints the request for a local review or a replay. Without --later,
+round one's against <base ref>, the earlier findings, if given, as an earlier round; with --later, a
+later round: only the changes since <base ref> (the last local run's commit), with the earlier
+findings and their outcomes, as CI's later rounds get. review-branch.py checks PROMPT_LATER.)
+
+A PR's description may hold a local-review section, between LOCAL_REVIEW_START and LOCAL_REVIEW_END,
+with the local runs' findings and the author's outcomes and reasons (review-branch.py writes it,
+design 6.4). The review never reads it, so no review reads the author's reasons first.
 """
 
 import base64
@@ -59,6 +65,22 @@ MAX_INPUT_CHARS = 360_000
 MAX_EARLIER_CHARS = 50_000  # the earlier rounds' findings and replies, latest kept
 MAX_BODY_CHARS = 60_000  # GitHub refuses a review body over 65,536 characters
 MAX_DESCRIPTION_CHARS = 20_000
+# The local runs' findings and outcomes in a PR's description, which the review skips (design 6.4)
+LOCAL_REVIEW_START = "<!-- local-review:start -->"
+LOCAL_REVIEW_END = "<!-- local-review:end -->"
+PROMPT_LATER = True  # --prompt takes --later (review-branch.py checks for it)
+
+
+def without_local_review(description):
+    """The PR's description without its local-review sections; one with no end runs to the end of
+    the description, so nothing of it can be read."""
+    out, rest = [], description or ""
+    while LOCAL_REVIEW_START in rest:
+        before, _, after = rest.partition(LOCAL_REVIEW_START)
+        out.append(before)
+        rest = after.partition(LOCAL_REVIEW_END)[2] if LOCAL_REVIEW_END in after else ""
+    out.append(rest)
+    return "".join(out)
 MAX_GENERATED = 200  # generated paths named in the request; the rest are counted (a vendored tree)
 SECTION = re.compile(r"\d+(\.\d+)*")  # a design section number, the only design text posted
 # Generated, vendored or lock files: reviewing them costs tokens and finds nothing.
@@ -587,10 +609,11 @@ def usage_marker(usage):
     return f"\n\n<!-- ai-review-usage: {json.dumps(usage)} -->" if usage else ""
 
 
-def prompt_main(repo, base, design_path, settled_path=None):
-    """Print the round-one request for the checked-out branch against `base` (local review, replay).
-    `settled_path`: the findings partners have settled and their answers (review-branch.py,
-    design 6.4), given as an earlier round so the run doesn't count them again."""
+def prompt_main(repo, base, design_path, settled_path=None, later=False):
+    """Print the request for the checked-out branch (local review, replay): round one against `base`,
+    or with `later` a later round on the changes since `base` (the last local run's commit), as CI's
+    later rounds are built. `settled_path`: the earlier findings, their outcomes and the partners'
+    answers (review-branch.py, design 6.4), as an earlier round."""
     diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
     files = split_diff(diff)
     text, _ = review_input(files)
@@ -606,17 +629,24 @@ def prompt_main(repo, base, design_path, settled_path=None):
                 history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
         except OSError as e:
             raise SystemExit(f"can't read the settled findings from {settled_path}: {e}")
-    budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
-    whole, omitted = full_files(review_paths(files, repo), budget=budget)
-    system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
-                           generated=generated_paths(diff), repo=repo, history=history)
+    if later:  # the changes since the last run, and the files they touch in full
+        budget = MAX_INPUT_CHARS - len(diff) - len(design) - len(history)
+        whole, omitted = full_files(review_paths(files, repo), budget=budget)
+        system, user = request(claude_md, design, title, "", whole, "", later=(history, diff), omitted=omitted,
+                               generated=generated_paths(diff), repo=repo)
+    else:
+        budget = MAX_INPUT_CHARS - len(text) - len(design) - len(history)
+        whole, omitted = full_files(review_paths(files, repo), budget=budget)
+        system, user = request(claude_md, design, title, "", whole, text, omitted=omitted,
+                               generated=generated_paths(diff), repo=repo, history=history)
     print(json.dumps({"system": system, "user": user}))
     return 0
 
 
 def main(argv):
     if argv[:1] == ["--prompt"]:
-        return prompt_main(*argv[1:5])
+        rest = [a for a in argv[1:] if a != "--later"]
+        return prompt_main(*rest[:4], later="--later" in argv[1:])
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
@@ -662,7 +692,7 @@ def main(argv):
             later, shown, paths = (history, since), "", list(split_diff(since))
         else:
             later, shown, paths = None, text, list(files)
-        description = (pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
+        description = without_local_review(pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
         generated = generated_paths(diff)  # the whole PR's, every round
         used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
                 + sum(len(g) + 1 for g in generated))

@@ -472,5 +472,45 @@ class MainTest(unittest.TestCase):
         self.assertIn("Don't repeat them", user)
 
 
+    def test_a_later_local_run_gets_only_the_changes_since_with_the_earlier_findings(self):
+        # design 6.4: later local runs review what changed since the last, as CI's later rounds do
+        import contextlib, io, json, subprocess
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+        with open("design.md", "w") as f:
+            f.write("# design\n")
+        with open("a.py", "w") as f:
+            f.write("x = 1\n")
+        with open("b.py", "w") as f:
+            f.write("y = 1\n")
+        subprocess.run(g + ["add", "a.py", "b.py"], check=True)
+        subprocess.run(g + ["commit", "-qm", "first run's commit"], check=True)
+        last = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        with open("a.py", "a") as f:
+            f.write("x = 2  # the fix\n")
+        subprocess.run(g + ["commit", "-qam", "fix"], check=True)
+        with open("earlier.txt", "w") as f:
+            f.write("R1.1 MAJOR a.py:1: x is wrong\n  Outcome: fixed")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ai_review.main(["--prompt", "handbook", last, "design.md", "earlier.txt", "--later"]), 0)
+        user = json.loads(out.getvalue())["user"]
+        self.assertTrue(user.startswith(ai_review.LATER_ROUND.strip()))
+        self.assertIn("<earlier_review>\nR1.1 MAJOR a.py:1: x is wrong", user)
+        self.assertIn("x = 2  # the fix", user.split("<changes_since>")[1])
+        self.assertIn('<file path="a.py">', user)
+        self.assertNotIn('<file path="b.py">', user)  # untouched since the last run
+        self.assertNotIn("<diff>", user)
+
+    def test_the_review_never_reads_the_local_review_section(self):
+        # design 6.4: the local runs' outcomes and the author's reasons are skipped on every PR
+        body = ("Closes #1\n\nWhat it does.\n" + ai_review.LOCAL_REVIEW_START + "\nR1.1 not-an-issue: "
+                "the author's argument\n" + ai_review.LOCAL_REVIEW_END + "\nAfter.\n")
+        kept = ai_review.without_local_review(body)
+        self.assertNotIn("the author's argument", kept)
+        self.assertIn("What it does.", kept)
+        self.assertIn("After.", kept)
+        # an unclosed section is cut to the end, never read
+        self.assertNotIn("argument", ai_review.without_local_review("x\n" + ai_review.LOCAL_REVIEW_START + "\nargument"))
+
 if __name__ == "__main__":
     unittest.main()
