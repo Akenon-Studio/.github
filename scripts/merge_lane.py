@@ -4,10 +4,13 @@
 An author labels a PR `ready-to-merge` once it is approved and green, and moves on. This takes the
 labelled PRs oldest label first and, for each: waits for any run of the AI review on its last
 commit, brings `main` in if the branch is behind (once, now that it is next; after the review, which
-the push would cancel), waits for its required checks and the review again, and squash-merges it. The review stays advisory (design 6.4): it isn't a required check,
-the lane waits only while its run is queued or going, and a run that fails or never starts doesn't
-hold the PR; one still going at CHECKS_TIMEOUT drops it, as a slow check does. The findings it
-posts are review threads, which the rules want resolved, so an open one blocks the merge. A PR that can't merge
+the push would cancel), waits for its required checks and the review again, and squash-merges it.
+The review stays advisory (design 6.4): it isn't a required check, the lane waits while its run is
+queued or going, and a run that fails doesn't hold the PR; in a repo that runs the review, a commit
+that shows no run yet is held up to REVIEW_GRACE (GitHub may show it after the checks), then merged
+without it. One still going at CHECKS_TIMEOUT drops the PR, as a slow check does. The findings it
+posts are review threads, which the rules want resolved, so an open one blocks the merge.
+A PR that can't merge
 (conflict, a failed or missing required check, a missing approval or an unresolved conversation,
 a draft) gets a comment saying why and loses the label, and the lane goes on to the next. It never
 bypasses the rules: GitHub refuses a merge they don't allow.
@@ -326,8 +329,9 @@ def run_one(gh, number, required, deadline, threads_required=True, reviewed=Fals
     """Take one PR through the lane. Returns ("merged", author), or "done" once it is dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front). The timers are
     per run: a paused PR is first in the next run, which gives it CHECKS_TIMEOUT from its start,
-    so it waits at most DEADLINE + CHECKS_TIMEOUT in all. Bringing main in starts CHECKS_TIMEOUT
-    again, so waiting for the review before it doesn't shorten the checks' time after it.
+    so it waits at most DEADLINE + 2 * CHECKS_TIMEOUT in all: the lane's first bringing main in
+    starts CHECKS_TIMEOUT again, so waiting for the review before it doesn't shorten the checks'
+    time after it (only the first, so main moving again and again can't keep it at the front).
     `reviewed`: the repo runs the AI review (GitHub.calls_review)."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
     updated_from = None  # (head before the update, when): until GitHub shows the new commit
@@ -381,7 +385,8 @@ def run_one(gh, number, required, deadline, threads_required=True, reviewed=Fals
                         {"expected_head_sha": head})
                 updates, update_errors = updates + 1, 0  # only failures in a row count
                 updated_from = (head, time.time())
-                started = time.time()  # the checks on the new commit get the whole CHECKS_TIMEOUT
+                if updates == 1:  # the checks on the new commit get the whole CHECKS_TIMEOUT
+                    started = time.time()
                 print(f"#{number}: brought main in; waiting for its checks")
             except urllib.error.HTTPError as e:
                 # 422 is about this PR: the head moved (an update already landing) or a conflict
@@ -505,6 +510,9 @@ def work(gh, issues_gh, unclosed):
     """The lane's loop; `unclosed` collects the issues merged PRs left open."""
     required, threads_required = gh.main_rules()
     reviewed = gh.calls_review()
+    print(f"AI review: {REVIEW_CALLER} {'is' if reviewed else 'is not'} on main, so the lane "
+          f"{'gives a late review run' if reviewed else 'does not wait for a review run to appear'}"
+          f"{f' up to {REVIEW_GRACE // 60} minutes' if reviewed else ''}.")
     deadline = time.time() + DEADLINE
     done = set()
     while True:
