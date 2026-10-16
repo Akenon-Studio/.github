@@ -19,7 +19,7 @@
 #     to `assigned` and `unassigned`)
 #   stacked: no commit on the branch is on another open PR's branch (handbook#120;
 #     scripts/pr_not_stacked.py)
-# "pr-title / checks" reads the code (and, on a PR, runs the PR's steps too until .github#196):
+# "pr-title / checks" reads the code:
 #   claude-md: every CLAUDE.md passes scripts/claude_md.py (design 6.8)
 #   gaming: the change doesn't pass by weakening checks: skipped or focused tests, deleted test
 #     files, @ts-ignore, eslint-disable, `any` (design 7.13 stage 6; scripts/gaming_check.py). On a
@@ -131,7 +131,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: read # the PR's steps, until .github#196
     steps:
       - name: Get the repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -149,58 +148,6 @@ jobs:
           ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
           path: akenon-github
           persist-credentials: false
-
-      # Until apply-rules.py makes "pr-title / pr" required in every repo, the PR's steps run here
-      # too, so they keep blocking a merge (.github#196 removes them once it has).
-      - name: (until pr-title / pr is required) Title is a conventional commit
-        id: title
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          pattern='^(feat|fix|chore|docs|refactor|test|perf|build|ci|revert)(\([a-z0-9][a-z0-9/-]*\))?!?: [^ ].*'
-          if printf '%s' "$TITLE" | grep -Eq "$pattern"; then
-            echo "OK: $TITLE"
-          else
-            echo "::error::PR title must be a conventional commit, e.g. 'feat: add pairing screen' or 'fix(api): handle expired tokens'. Got: $TITLE"
-            exit 1
-          fi
-
-      - name: (until pr-title / pr is required) Body closes at least one whole issue
-        id: closes-issue
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ github.token }} # a bot's PR: reads its commits
-        run: python3 akenon-github/scripts/pr_closes_issue.py
-
-      - name: (until pr-title / pr is required) The author is an assignee
-        id: author-assigned
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
-          PR_ASSIGNEES: ${{ toJSON(github.event.pull_request.assignees) }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 akenon-github/scripts/pr_author_assigned.py
-
-      - name: (until pr-title / pr is required) Not stacked on another open PR
-        id: stacked
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 akenon-github/scripts/pr_not_stacked.py
 
       - name: Install PyYAML
         run: pip install --quiet pyyaml==6.0.2
@@ -234,8 +181,6 @@ jobs:
       - name: Result
         env:
           OUTCOMES: >-
-            ${{ github.event_name == 'pull_request' && format('title={0} closes-issue={1} author-assigned={2} stacked={3}',
-            steps.title.outcome, steps.closes-issue.outcome, steps.author-assigned.outcome, steps.stacked.outcome) || '' }}
             claude-md=${{ steps.claude-md.outcome }}
             gaming=${{ steps.gaming.outcome }}
             docs=${{ steps.docs.outcome }}
