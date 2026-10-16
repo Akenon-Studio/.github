@@ -512,24 +512,37 @@ def design_moved(commit, repo, paths, base=None):
     design's diff since (main brought it in), and the own diff None. For one that does, main's is
     the design's diff between where the branch met `base` at that commit and where it meets it now,
     and the own diff is HEAD against that commit with main's diff applied; None (the PR's design
-    diff since then shows both, main's labelled apart) when the two conflict or there is no `base`.
-    ("", None) outside the design's repo, when main's design didn't move, or the commit isn't in
-    the history."""
+    diff since then shows both, main's labelled apart) when the two conflict in the design.
+    ("", None) outside the design's repo, when main's design didn't move, the commit isn't in the
+    history, or there is no `base` (nor its merge base) to tell main's part by: the PR's design diff
+    since shows both then, unlabelled, as before .github#195."""
     if repo != DESIGN_REPO:
         return "", None
     if DESIGN_PATH not in paths:
         return changes_since(commit, [DESIGN_PATH]) or "", None
     before = git_out("merge-base", commit, base) if base else None
     now = git_out("merge-base", "HEAD", base) if base else None
-    if not before or not now or before == now:
+    if not before or not now:
+        print(f"No merge base with {base!r}: main's design changes, if any, aren't labelled apart.", file=sys.stderr)
+        return "", None
+    if before == now:
         return "", None
     moved = git_out("diff", before, now, "--", DESIGN_PATH)
     if not moved:
         return "", None
-    # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own
-    tree = git_out("merge-tree", "--write-tree", f"--merge-base={before}", commit, now)
-    own = changes_since(tree.splitlines()[0], [DESIGN_PATH]) if tree else None
-    return moved + "\n", own
+    # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own.
+    # A conflict elsewhere (exit 1, the conflicted paths after the tree) leaves the design's merge good
+    try:
+        run = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", commit, now],
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        run = None
+    lines = run.stdout.split("\n") if run and run.returncode in (0, 1) else []
+    conflicted = lines[1:lines.index("", 1)] if "" in lines[1:] else lines[1:]
+    if not lines or not lines[0] or DESIGN_PATH in conflicted:
+        print("The design's own changes and main's conflict: the round shows both, main's labelled.", file=sys.stderr)
+        return moved + "\n", None
+    return moved + "\n", changes_since(lines[0], [DESIGN_PATH])
 
 
 def later_paths(changed, files, moved):
