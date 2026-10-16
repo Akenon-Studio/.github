@@ -71,8 +71,9 @@ REGRADE = re.compile(r"\b(?:re-?graded(?:\s+(?:to|as)\b)?|downgraded\s+to|raised
                      r"(critical|major|minor|nit)\b", re.I)
 # The same, as the reviewer asks for it (scripts/ai_review.py OUTCOME_ASK): the first bracket after
 # the outcome that starts the reply, `Fixed (major, kept)`, `**Moved to** #12 **(minor)**`; a
-# bracket in a reply that states no outcome (`Why (minor)?`) is no re-grade
-STATED = re.compile(r"\W*(?:fixed|not an issue|moved to)\b[^(\n]*\(\s*\**\s*(critical|major|minor|nit)\b"
+# bracket in a reply that states no outcome (`Why (minor)?`, a `> ` quote) is no re-grade; it skips
+# what outcome() skips, so the two agree on whether a reply starts with an outcome
+STATED = re.compile(r"[*_ ]*(?:fixed|not an issue|moved to)\b[^(\n]*\(\s*\**\s*(critical|major|minor|nit)\b"
                     r"\s*(?:,\s*(?:kept|downgraded|raised)\s*)?\**\s*\)", re.I)
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
