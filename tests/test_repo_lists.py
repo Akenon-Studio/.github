@@ -60,11 +60,21 @@ class CallerTriggers(unittest.TestCase):
         peras = ("on:\n  pull_request:\n    types: [opened]\n  push:\n    branches: [main, 'peras/**']\n"
                  "  workflow_dispatch: # why\n    inputs:\n      sha:\n        required: true\n")
         self.assertEqual(verify.triggers(peras), {"pull_request: opened", "push: branch main",
-                                                  "push: branch peras/**", "workflow_dispatch: input sha"})
+                                                  "push: branch peras/**",
+                                                  "workflow_dispatch: input sha string required"})
         no_branch = peras.replace(", 'peras/**'", "")
         no_input = peras.replace("    inputs:\n      sha:\n        required: true\n", "")
         self.assertNotEqual(verify.triggers(no_branch), verify.triggers(peras))
         self.assertEqual(verify.triggers(no_input) - verify.triggers(peras), {"workflow_dispatch"})
+
+    def test_a_dispatch_input_counts_with_its_type_and_whether_required(self):
+        on = "on:\n  workflow_dispatch:\n    inputs:\n      sha:\n"
+        self.assertEqual(verify.triggers(on + "        required: true\n        type: string\n"),
+                         {"workflow_dispatch: input sha string required"})
+        self.assertEqual(verify.triggers(on + "        type: boolean\n        required: true\n"),
+                         {"workflow_dispatch: input sha boolean required"})
+        self.assertEqual(verify.triggers(on + "        description: x\n"),
+                         {"workflow_dispatch: input sha string optional"})
 
     def test_a_lone_type_is_a_list_of_one(self):
         self.assertEqual(verify.triggers("on:\n  issue_comment:\n    types: created\n"),

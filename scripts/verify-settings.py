@@ -43,7 +43,7 @@ CHECK_CALLERS = CALLERS[:2]
 # The filters an event can narrow itself by, as triggers() names them
 FILTERS = {"branches": "branch", "branches-ignore": "not branch", "tags": "tag", "tags-ignore": "not tag",
            "paths": "path", "paths-ignore": "not path"}
-PERAS_TRIGGERS = {"push: branch main", "push: branch peras/**", "workflow_dispatch: input sha"}
+PERAS_TRIGGERS = {"push: branch main", "push: branch peras/**", "workflow_dispatch: input sha string required"}
 
 
 def listed(value):
@@ -51,9 +51,16 @@ def listed(value):
     return value if isinstance(value, list) else [] if value is None else [value]
 
 
+def input_spec(spec):
+    """A dispatch input's type and whether it's required, e.g. `string required`, so a copy whose
+    `sha` input Peras can leave out, or can't pass a commit to, shows."""
+    spec = spec if isinstance(spec, dict) else {}
+    return f"{spec.get('type', 'string')} {'required' if spec.get('required') is True else 'optional'}"
+
+
 def triggers(text):
     """What a caller workflow listens to, as a set of `event: type`, `push: branch <b>` and
-    `workflow_dispatch: input <name>`, or the bare event when it narrows nothing (empty if it names
+    `workflow_dispatch: input <name> <type> required|optional`, or the bare event when it narrows nothing (empty if it names
     no event), so a repo missing a whole event, a branch or the dispatch shows too."""
     try:
         doc = yaml.safe_load(text or "") or {}
@@ -69,7 +76,8 @@ def triggers(text):
         spec = spec if isinstance(spec, dict) else {}
         details = {f"{event}: {t}" for t in listed(spec.get("types"))}
         details |= {f"{event}: {name} {v}" for key, name in FILTERS.items() for v in listed(spec.get(key))}
-        details |= {f"{event}: input {name}" for name in spec.get("inputs") or {}}
+        inputs = spec.get("inputs") if isinstance(spec.get("inputs"), dict) else {}
+        details |= {f"{event}: input {name} {input_spec(i)}" for name, i in inputs.items()}
         found |= details or {str(event)}
     return found
 
