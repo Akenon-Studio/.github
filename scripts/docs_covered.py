@@ -12,7 +12,8 @@ Decision records, dated audits and the handbook's docs (which cover other repos)
 Usage: scripts/docs_covered.py <root> --repo <name> --base <commit>   (reads PR_BODY; in Actions the
 base is HEAD^1, the merge commit's base parent, which is current even when the event's base.sha is
 stale)
-In Actions it runs as the `docs-covered` job of the reusable pr-title workflow.
+In Actions it is the `docs-covered` step of the reusable pr-title workflow's `docs-tick` check, a
+check of its own because the tick is a person's (design 6.5 item 3, 7.13 Stage 10).
 """
 
 import argparse
