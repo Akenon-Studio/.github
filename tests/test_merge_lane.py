@@ -419,9 +419,9 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual(self.writes(gh), [("PUT", "7/update-branch"), ("PUT", "7/merge")])
         self.assertEqual(left_at_update, [1])  # main came in on the look that saw the review finished
 
-    def test_no_review_run_yet_while_required_checks_run_is_not_merged(self):
-        # the lane looks for the review run only once the required checks have finished, by when
-        # GitHub has queued it alongside them
+    def test_a_review_queued_by_the_time_the_checks_finish_is_waited_for(self):
+        # the lane merges only on a look where the required checks have finished; GitHub queues the
+        # review alongside them, so by then its run is there to wait for (handbook#234)
         checks_running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
                                       run("security-scan / code")], status="BLOCKED")
         then_review = green(review(status="QUEUED", conclusion=None))
