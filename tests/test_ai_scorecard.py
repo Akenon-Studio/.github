@@ -155,6 +155,20 @@ class RecordTest(unittest.TestCase):
         text = body("2026-10", s)
         self.assertIn("| 1 of 3 |", text)
         self.assertIn("1 thread(s) from the reviewer before 2026-10-10", text)
+
+    def test_open_findings_are_never_named(self):
+        # design 6.2: a resolved critical thread with no outcome, or a late catch still open, is
+        # counted in the public issue, never named
+        data = self.data()
+        data["reviewThreads"]["nodes"] = [
+            thread("r2", "**Critical** · high confidence", "x = compute_everything(inputs)", ["done"]),
+            thread("r2", "**Major** · high confidence", "x = compute_everything(inputs)", ["Fixed in c3"])]
+        rec = pr_record("platform", 7, "u", data, lambda *a: "x = compute_everything(inputs)")
+        text = body("2026-10", score([rec]))
+        self.assertNotIn("critical", text.split("\nLate catches:\n")[1].split("### Why")[0])
+        self.assertIn("- [platform#7, round 2, major](u/r2/x = compute_everything(inputs))", text)
+        self.assertIn("- 1 still open, counted only", text)
+        self.assertIn("No readable outcome (the reply should start with Fixed, Not an issue or Moved to): 1,", text)
         self.assertIn("### Done when", text)  # a Task form, so issue-fields can file it
 
 

@@ -382,7 +382,7 @@ def when(stamp):
 def finding_text(f):
     """One finding of a reviewed PR as the escapes list shows it; None for one still open (disputed,
     or with no outcome), which the public issue doesn't name (design 6.2)."""
-    if f.get("disputed") or not f.get("outcome"):
+    if is_open(f):
         return None
     name = f"local {f['id']}" if f["kind"] == "local" else f"CI round {f['round']}"
     grade = f" re-graded {f['regraded']}" if f.get("regraded") and f["regraded"] != f["severity"] else ""
@@ -566,8 +566,18 @@ def escape_lines(items):
                      for e in items) or "- none"
 
 
+def is_open(f):
+    """A finding still open: no outcome, or an agent's dispute not settled."""
+    return not f.get("outcome") or bool(f.get("disputed"))
+
+
 def links(items, text):
-    return "\n".join(f"- [{text(i)}]({i['url']})" for i in items) or "- none"
+    """The items as links; one still open is only counted, since the issue is public (design 6.2)."""
+    named = [i for i in items if not is_open(i)]
+    left = len(items) - len(named)
+    lines = [f"- [{text(i)}]({i['url']})" for i in named]
+    lines += [f"- {left} still open, counted only (this issue is public; the PR's threads name them)"] if left else []
+    return "\n".join(lines) or "- none"
 
 
 def body(month, s):
@@ -607,8 +617,8 @@ False alarms:
 Round 4 or later:
 {links(s['long'], lambda p: f"{p['repo']}#{p['number']}, {p['rounds']} rounds")}
 
-No readable outcome (the reply should start with Fixed, Not an issue or Moved to):
-{links(s['unreadable'], lambda t: f"{t['pr']}, {t['severity']}")}
+No readable outcome (the reply should start with Fixed, Not an issue or Moved to): {len(s['unreadable'])},
+counted only, since each is still open (this issue is public, design 6.2).
 
 Ungraded (Peras fixed them; no person's re-grade yet):
 {links(s['ungraded'], lambda f: f"{f['pr']}, {f['kind']} round {f['round']}, {f['severity']}")}
