@@ -54,6 +54,9 @@ UPDATE_LAG = 3 * 60       # after bringing main in, the longest GitHub may take 
 MORE_LEFT = 3             # exit code: PRs are still labelled; start another run
 MORE_LEFT_UNCLOSED = 4    # exit code: both that, and issues to close by hand (start another run, fail)
 REVIEW_CHECK = "ai-review / review"  # every repo's caller job is `ai-review` (ai-review.yml)
+REVIEW_CALLER = ".github/workflows/ai-review-caller.yml"  # a repo with it on main has the review
+REVIEW_GRACE = 3 * 60     # in such a repo, how long a new commit may show no review run before the lane
+                          # takes it that none will start (GitHub queues it with the checks)
 PASSING = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 MERGEABLE = {"CLEAN", "UNSTABLE", "HAS_HOOKS"}  # UNSTABLE: only a check that isn't required failed
 TRANSIENT = {500, 502, 503, 504}
@@ -137,6 +140,16 @@ class GitHub:
                       and r["parameters"].get("required_review_thread_resolution") for r in rules)
         return checks, threads
 
+    def calls_review(self):
+        """Whether this repo runs the AI review (design 6.4): its caller workflow is on main."""
+        try:
+            self.call(f"repos/{self.repo}/contents/{REVIEW_CALLER}")
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            return False
+
 
 def queue(repo_data):
     """Labelled PR numbers, oldest label first (the latest time each got the label)."""
@@ -154,9 +167,9 @@ def contexts_of(pr):
     return ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
 
 
-def review_running(pr):
-    """Whether the newest AI review run on the PR's last commit is queued or going (design 6.4).
-    No run at all is not running: the review is advisory, so the lane doesn't wait for one to start."""
+def review_state(pr):
+    """The newest AI review run on the PR's last commit (design 6.4): "running" (queued or going),
+    "done" (whatever its conclusion: the review is advisory), or None (no run yet)."""
     newest = None  # (started, still going)
     for c in contexts_of(pr):
         if c["__typename"] == "CheckRun" and c["name"] == REVIEW_CHECK:
@@ -164,7 +177,11 @@ def review_running(pr):
             started = c.get("startedAt") or ("" if c["status"] == "COMPLETED" else "~")
             if newest is None or started >= newest[0]:
                 newest = (started, c["status"] != "COMPLETED")
-    return bool(newest and newest[1])
+    return None if newest is None else "running" if newest[1] else "done"
+
+
+def review_running(pr):
+    return review_state(pr) == "running"
 
 
 def check_states(pr, required):
@@ -194,11 +211,13 @@ def too_many_checks(pr):
             or {}).get("hasNextPage", False)
 
 
-def decide(pr, required, missing_for, threads_required=True):
+def decide(pr, required, missing_for, threads_required=True, review_missing_for=None):
     """What to do with the PR at the front of the lane: (action, reason).
     action: merge, update (bring main in), wait, blocked (green, but the rules block it: dropped
     once it stays so), drop (leave the lane), gone (no longer in it).
-    `missing_for`: seconds the lane has seen a required check with no run on this commit."""
+    `missing_for`: seconds the lane has seen a required check with no run on this commit.
+    `review_missing_for`: seconds it has seen no AI review run on this commit, in a repo that runs
+    the review; None where it doesn't."""
     if pr["state"] != "OPEN" or LABEL not in {l["name"] for l in pr["labels"]["nodes"]}:
         return "gone", "no longer open or labelled"
     if pr["baseRefName"] != "main":
@@ -234,6 +253,9 @@ def decide(pr, required, missing_for, threads_required=True):
                         + ". Push a commit (or edit the description, for pr-title) to run them")
     if missing or "PENDING" in states.values():
         return "wait", "required checks still running"
+    if (review_missing_for is not None and review_missing_for < REVIEW_GRACE
+            and review_state(pr) is None):
+        return "wait", "the AI review hasn't started on its last commit yet"
     if pr["mergeStateStatus"] in MERGEABLE:
         return "merge", "approved and green"
     return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']})"
@@ -300,14 +322,17 @@ def github_message(error):
         return str(error.code)
 
 
-def run_one(gh, number, required, deadline, threads_required=True):
+def run_one(gh, number, required, deadline, threads_required=True, reviewed=False):
     """Take one PR through the lane. Returns ("merged", author), or "done" once it is dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front). The timers are
     per run: a paused PR is first in the next run, which gives it CHECKS_TIMEOUT from its start,
-    so it waits at most DEADLINE + CHECKS_TIMEOUT in all."""
+    so it waits at most DEADLINE + CHECKS_TIMEOUT in all. Bringing main in starts CHECKS_TIMEOUT
+    again, so waiting for the review before it doesn't shorten the checks' time after it.
+    `reviewed`: the repo runs the AI review (GitHub.calls_review)."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
     updated_from = None  # (head before the update, when): until GitHub shows the new commit
     waited_on = ""  # the last reason it waited, for the time-limit drop
+    no_review_since = {}  # {head: when the lane first saw it with no AI review run}
     while True:
         pr = gh.graphql(PR, number=number)["pullRequest"]
         if pr is None:
@@ -322,8 +347,12 @@ def run_one(gh, number, required, deadline, threads_required=True):
             # still need closing, which is harmless if someone else merged it
             print(f"#{number}: merged")
             return "merged", pr.get("author") or {}
+        no_review = reviewed and review_state(pr) is None
+        if no_review:
+            no_review_since.setdefault(head, time.time())
         action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0,
-                                threads_required)
+                                threads_required,
+                                (time.time() - no_review_since[head] if no_review else 0) if reviewed else None)
         if updated_from and head != updated_from[0]:
             updated_from = None
         if updated_from and action not in ("gone", "drop"):
@@ -352,6 +381,7 @@ def run_one(gh, number, required, deadline, threads_required=True):
                         {"expected_head_sha": head})
                 updates, update_errors = updates + 1, 0  # only failures in a row count
                 updated_from = (head, time.time())
+                started = time.time()  # the checks on the new commit get the whole CHECKS_TIMEOUT
                 print(f"#{number}: brought main in; waiting for its checks")
             except urllib.error.HTTPError as e:
                 # 422 is about this PR: the head moved (an update already landing) or a conflict
@@ -365,6 +395,9 @@ def run_one(gh, number, required, deadline, threads_required=True):
                     return "done"
                 print(f"#{number}: bringing main in failed ({e.code}); looking again")
         if action == "merge":
+            if no_review:
+                print(f"::warning::#{number}: no AI review run appeared on {head} within "
+                      f"{REVIEW_GRACE // 60} minutes; merging without it (it is advisory, design 6.4)")
             try:
                 gh.call(f"repos/{gh.repo}/pulls/{number}/merge", "PUT",
                         {"merge_method": "squash", "sha": head})
@@ -471,6 +504,7 @@ def main():
 def work(gh, issues_gh, unclosed):
     """The lane's loop; `unclosed` collects the issues merged PRs left open."""
     required, threads_required = gh.main_rules()
+    reviewed = gh.calls_review()
     deadline = time.time() + DEADLINE
     done = set()
     while True:
@@ -485,7 +519,7 @@ def work(gh, issues_gh, unclosed):
         number = waiting[0]
         # An error here stops the run with every label left on (see the top): it is GitHub's or the
         # lane's, not the PR's, so no author is told to relabel.
-        result = run_one(gh, number, required, deadline, threads_required)
+        result = run_one(gh, number, required, deadline, threads_required, reviewed)
         if result == "paused":
             return report(unclosed, MORE_LEFT)
         if isinstance(result, tuple):  # ("merged", author)
