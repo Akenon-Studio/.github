@@ -135,6 +135,18 @@ class ReusableWorkflowsTest(unittest.TestCase):
                         continue
                     self.assertIn(f"{check}=", result["env"]["OUTCOMES"], f"{name}: {job_id}: {check}")
 
+    def test_the_prs_steps_stay_in_checks_on_a_pr_until_pr_is_required(self):
+        # .github#196 removes this test with the steps, once apply-rules.py requires "pr-title / pr"
+        jobs = REUSABLE["pr-title.yml"]["jobs"]
+        pr_steps = {s["id"]: s for s in jobs["pr-checks"]["steps"] if s.get("id")}
+        steps = {s["id"]: s for s in jobs["checks"]["steps"] if s.get("id")}
+        for step_id in ("title", "closes-issue", "author-assigned", "stacked"):
+            self.assertEqual(steps[step_id]["if"], "github.event_name == 'pull_request'", step_id)
+            self.assertEqual(steps[step_id]["run"], pr_steps[step_id]["run"], step_id)
+            self.assertIn(f"{step_id}={{", jobs["checks"]["steps"][-1]["env"]["OUTCOMES"])
+        # they read the PR's API: in a private repo a permission not listed is none
+        self.assertEqual(jobs["checks"]["permissions"], jobs["pr-checks"]["permissions"])
+
     def test_pr_title_is_never_cancelled(self):
         # it re-runs on the same commit (edits, assignments); a cancelled run there blocks the PR
         for job_id, job in REUSABLE["pr-title.yml"]["jobs"].items():

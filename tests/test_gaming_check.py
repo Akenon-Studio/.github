@@ -3,11 +3,13 @@
 The patterns the check blocks are built from parts here, so this file's own diff passes it."""
 
 import pathlib
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from gaming_check import check, parse  # noqa: E402
+from gaming_check import check, parse, run_diff  # noqa: E402
 
 ONLY, SKIP = "it." + "only(", "it." + "skip("
 TS_IGNORE, LINT_OFF = "// @ts-" + "ignore", "// eslint-" + "disable-next-line no-console"
@@ -99,3 +101,40 @@ class FlaggedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OffAPrTest(unittest.TestCase):
+    """Off a PR, pr-title.yml passes `origin/main` as the base: the diff is from where the commit left
+    main, so a branch that main has moved past shows only its own changes (design 7.13 Stage 10)."""
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", self.dir, "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                       check=True, capture_output=True)
+
+    def write(self, path, text):
+        (pathlib.Path(self.dir) / path).parent.mkdir(parents=True, exist_ok=True)
+        (pathlib.Path(self.dir) / path).write_text(text)
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.git("init", "-q", "-b", "main")
+        self.write("tests/test_a.py", "def test_a(): assert True\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "start")
+        self.git("switch", "-q", "-c", "peras/1-1")
+        self.write("src/b.py", "x = 1\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "patch")
+        self.git("switch", "-q", "main")  # main moves on: a new test file the branch doesn't have
+        self.write("tests/test_c.py", "def test_c(): assert True\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "main moves")
+
+    def test_a_branch_behind_main_shows_only_its_own_change(self):
+        self.git("switch", "-q", "peras/1-1")
+        files = parse(run_diff("main", self.dir))
+        self.assertEqual(list(files), ["src/b.py"])
+        self.assertEqual(check(files)[0], [])
+
+    def test_a_commit_of_main_has_nothing_to_check(self):
+        self.assertEqual(parse(run_diff("main", self.dir)), {})
