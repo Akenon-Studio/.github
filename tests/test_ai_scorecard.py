@@ -168,7 +168,8 @@ class RecordTest(unittest.TestCase):
         self.assertNotIn("critical", text.split("\nLate catches:\n")[1].split("### Why")[0])
         self.assertIn("- [platform#7, round 2, major](u/r2/x = compute_everything(inputs))", text)
         self.assertIn("- 1 still open, counted only", text)
-        self.assertIn("No readable outcome (the reply should start with Fixed, Not an issue or Moved to): 1,", text)
+        self.assertIn("No readable outcome (the reply should start with Fixed, Not an issue or Moved to, then the "
+                      "severity\nafter re-grading in brackets: `Fixed (major, kept)`): 1,", text)
         self.assertIn("### Done when", text)  # a Task form, so issue-fields can file it
 
     def test_a_long_pr_is_named(self):
@@ -282,6 +283,46 @@ class ThreadOutcomeTest(unittest.TestCase):
         self.assertTrue(thread_outcome([peras, reply("Fixed, thanks")], True, "major")["ungraded"])
         self.assertFalse(thread_outcome([peras, reply("Fixed, re-graded major")], True, "major")["ungraded"])
 
+    def test_the_severity_the_reviewer_asks_for_in_brackets(self):
+        # the reply ai_review.py asks for (.github#201): outcome, then the severity after re-grading
+        self.assertEqual(regraded("**Fixed (major, kept)** in abc"), "major")
+        self.assertEqual(regraded("Not an issue (Minor, downgraded): the caller checks it"), "minor")
+        self.assertEqual(regraded("**Moved to** #12 **(minor, downgraded)**"), "minor")
+        self.assertEqual(regraded("Fixed (critical)"), "critical")
+        self.assertIsNone(regraded("Not an issue (major claim, but unreachable)"))
+        self.assertIsNone(regraded("Fixed in abc.\n\nSee (minor) below"))  # first line only
+        self.assertIsNone(regraded("Why (minor)? The input is user-controlled."))  # no outcome stated
+        self.assertIsNone(regraded("Please fix this (minor)"))
+        agent = reply("Fixed (minor, downgraded)\n\n<!-- agent -->")
+        got = thread_outcome([agent, reply("Why (minor)? The input is user-controlled.")], False, "major")
+        self.assertEqual((got["disputed"], got["regraded"]), (True, "minor"))  # a question settles nothing
+        quoted = reply("> Fixed (minor, downgraded)\n\nWhy minor? The input is user-controlled.")
+        self.assertIsNone(regraded(quoted["body"]))  # a quote-reply states no outcome of its own
+        self.assertTrue(thread_outcome([agent, quoted], False, "major")["disputed"])
+        worded = reply("Fixed, re-graded minor\n\n<!-- agent -->")
+        quoted = reply("> Fixed, re-graded minor\n\nWhy minor?")
+        self.assertIsNone(regraded(quoted["body"]))
+        self.assertTrue(thread_outcome([worded, quoted], False, "major")["disputed"])
+        # a link or inline code before the bracket, as the ask's "the issue's link" invites
+        self.assertEqual(regraded("**Moved to** [#12](https://github.com/o/r/issues/12) **(minor, downgraded)**"),
+                         "minor")
+        self.assertEqual(regraded("Fixed in [abc123](https://x/y) (major, kept)"), "major")
+        self.assertEqual(regraded("Fixed: `parse()` checks it now (major, kept)"), "major")
+        # a quote reply, then the reply's own outcome: both read past the quote
+        mine = "> **Major** finding text (minor)\n\nFixed (major, kept) in abc"
+        self.assertEqual((outcome([mine]), regraded(mine)), ("fixed", "major"))
+        got = thread_outcome([reply("Fixed (major, kept) in abc.\n\n<!-- agent -->")], False, "major")
+        self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("fixed", "major", False))
+        got = thread_outcome([reply("Fixed (minor, downgraded)\n\n<!-- agent -->")], False, "major")
+        self.assertTrue(got["disputed"])  # an agent's own downgrade is still a dispute
+
+    def test_the_reply_the_review_asks_for_reads_back(self):
+        # the ask's own examples are what the scorecard reads
+        import ai_review
+        self.assertIn("**Fixed (major, kept)**", ai_review.OUTCOME_ASK)
+        self.assertEqual(outcome(["**Fixed (major, kept)**"]), "fixed")
+        self.assertEqual(regraded("**Not an issue (minor, downgraded)** and why"), "minor")
+
     def test_regrade_phrases(self):
         self.assertEqual(regraded("downgraded to **Minor**"), "minor")
         self.assertEqual(regraded("re-graded: nit"), "nit")
@@ -297,7 +338,8 @@ class SharesTest(unittest.TestCase):
         data = {"reviews": {"nodes": [review("r1", "2026-10-11T01:00:00Z", "c1")]}, "body": SECTION,
                 "author": {"__typename": "User", "login": "RuvinduH"}, "reviewThreads": {"nodes": [
                     thread("r1", "**Major** · high confidence", "y = new_code_here()", ["Fixed, re-graded minor"]),
-                    thread("r1", "**Critical** · high", "z = other_code()", ["Moved to #5"]),
+                    thread("r1", "**Critical** · high", "z = other_code()", ["Moved to #5 (critical, kept)"]),
+                    thread("r1", "**Major** · high", "w = more_code()", ["Fixed"]),
                     thread("r1", "**Minor** · high", "q = minor_code()", ["Fixed"])]}}
         rec = pr_record("platform", 7, "u", data, lambda *a: "")
         table = shares([rec])
@@ -307,13 +349,16 @@ class SharesTest(unittest.TestCase):
         self.assertEqual((local1["fixed"], local1["issue"], local1["kept"], local1["downgraded"]), (1, 1, 1, 1))
         self.assertEqual(table["local", 2]["no outcome"], 1)
         ci = table["CI", 1]  # the minor thread isn't a critical or major finding
-        self.assertEqual((ci["findings"], ci["fixed"], ci["moved"], ci["downgraded"], ci["kept"]), (2, 1, 1, 1, 1))
+        self.assertEqual((ci["findings"], ci["fixed"], ci["moved"], ci["downgraded"], ci["kept"]), (3, 2, 1, 1, 1))
+        # a reply that names no severity is unstated, not kept (.github#201)
+        self.assertEqual(ci["unstated"], 1)
         s = score([rec])
         self.assertEqual(len(s["disputed"]), 1)
         self.assertEqual([f["id"] for f in s["no_outcome"]], ["R2.1"])
         self.assertEqual((s["runs_mean"], s["local_prs"]), (2, 1))
         text = body("2026-10", s)
-        self.assertIn("| local | 1 | 3 | 2 | 1 (50%) | 1 (50%) | 0 (0%) | 1 (50%) | 1 (50%) |", text)
+        self.assertIn("| local | 1 | 3 | 2 | 1 (50%) | 1 (50%) | 0 (0%) | 0 (0%) | 1 (50%) | 1 (50%) |", text)
+        self.assertIn("| CI | 1 | 3 | 3 | 1 (33%) | 1 (33%) | 0 (0%) | 1 (33%) | 2 (67%) |", text)
         # the issue is public (design 6.2): a finding still open is counted, never named
         self.assertNotIn("R1.3", text)
         self.assertNotIn("Disputed, not yet", text)

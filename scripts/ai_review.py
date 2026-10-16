@@ -58,9 +58,15 @@ REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own to
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 # The tokens a review used, in its body, for the monthly scorecard's cost per PR (scripts/ai_scorecard.py)
 USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
-# On every thread: the reply the scorecard reads (design 6.4)
-OUTCOME_ASK = ("Reply with the outcome first: **Fixed**, **Not an issue** (and why), or **Moved to** "
-               "the issue's link; then resolve the thread.")
+# On every thread: the reply the scorecard reads, the outcome and the severity after re-grading
+# (design 6.4; scripts/ai_scorecard.py reads both)
+OUTCOME_ASK = ("Reply with the outcome first, then the severity after re-grading and whether that kept, "
+               "downgraded or raised it, in brackets: **Fixed (major, kept)**, **Not an issue (minor, "
+               "downgraded)** and why, or **Moved to** the issue's link **(minor, downgraded)**; then resolve "
+               "the thread.")
+# Every ask a thread may carry, the earlier wordings included, so none reaches the model or a body
+OUTCOME_ASKS = (OUTCOME_ASK, "Reply with the outcome first: **Fixed**, **Not an issue** (and why), or "
+                "**Moved to** the issue's link; then resolve the thread.")
 MAX_DIFF_CHARS = 200_000
 # Everything the review reads (design, CLAUDE.md, diff, earlier rounds, files in full): about 120k
 # tokens even for code at 3 characters a token, so with MAX_TOKENS of output it stays inside the
@@ -74,6 +80,13 @@ MAX_DESCRIPTION_CHARS = 20_000
 LOCAL_REVIEW_START = "<!-- local-review:start -->"
 LOCAL_REVIEW_END = "<!-- local-review:end -->"
 PROMPT_SINCE = True  # --prompt takes --since (review-branch.py checks for it)
+
+
+def without_ask(text):
+    """A thread comment's text without the outcome ask, in any of its wordings."""
+    for ask in OUTCOME_ASKS:
+        text = text.replace(ask, "")
+    return text
 
 
 def without_local_review(description):
@@ -586,7 +599,7 @@ def earlier_review(repo, number, token, reviews):
                  f" ({'resolved' if t['isResolved'] else 'open'}):"]
         for c in comments:
             who = (c.get("author") or {}).get("login", "?")
-            lines.append(f"[{who}] {c['body'].replace(MARKER, '').replace(OUTCOME_ASK, '').strip()}")
+            lines.append(f"[{who}] {without_ask(c['body'].replace(MARKER, '')).strip()}")
         out.append("\n".join(lines))
     return "\n\n---\n\n".join(out)[-MAX_EARLIER_CHARS:]  # the latest rounds, if it's long
 
@@ -848,7 +861,7 @@ def main(argv):
         # GitHub refuses the whole review if one inline comment can't be placed: post them in the body
         body = review["body"] + "\n"
         for c in review["comments"]:  # under GitHub's limit, like the body itself
-            text = strip_markers(c["body"].replace(MARKER, "").replace(OUTCOME_ASK, "")).strip()
+            text = strip_markers(without_ask(c["body"].replace(MARKER, ""))).strip()
             line = f"\n- `{c['path']}:{c['line']}`: {text}"
             if len(body) + len(line) > MAX_BODY_CHARS + 5_000:
                 body += "\n\nMore findings left out: the review body has a size limit."
