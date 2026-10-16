@@ -299,6 +299,10 @@ class ThreadOutcomeTest(unittest.TestCase):
         quoted = reply("> Fixed (minor, downgraded)\n\nWhy minor? The input is user-controlled.")
         self.assertIsNone(regraded(quoted["body"]))  # a quote-reply states no outcome of its own
         self.assertTrue(thread_outcome([agent, quoted], False, "major")["disputed"])
+        worded = reply("Fixed, re-graded minor\n\n<!-- agent -->")
+        quoted = reply("> Fixed, re-graded minor\n\nWhy minor?")
+        self.assertIsNone(regraded(quoted["body"]))
+        self.assertTrue(thread_outcome([worded, quoted], False, "major")["disputed"])
         got = thread_outcome([reply("Fixed (major, kept) in abc.\n\n<!-- agent -->")], False, "major")
         self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("fixed", "major", False))
         got = thread_outcome([reply("Fixed (minor, downgraded)\n\n<!-- agent -->")], False, "major")

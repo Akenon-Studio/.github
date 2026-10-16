@@ -226,8 +226,10 @@ def is_agent(comment):
 
 def regraded(text):
     """The severity after re-grading a reply states: in brackets after the outcome that starts it
-    (`Fixed (major, kept)`), else in words (`re-graded minor`); or None."""
-    found = STATED.match((text or "").strip()) or REGRADE.search(text or "")
+    (`Fixed (major, kept)`), else in words (`re-graded minor`); or None. Quoted lines (`> `) are
+    someone else's words, so they state none."""
+    own = "\n".join(l for l in (text or "").splitlines() if not l.lstrip().startswith(">"))  # not a quote
+    found = STATED.match(own.strip()) or REGRADE.search(own)
     return found.group(1).lower() if found else None
 
 
