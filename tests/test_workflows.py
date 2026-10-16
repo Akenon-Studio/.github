@@ -138,7 +138,11 @@ class ReusableWorkflowsTest(unittest.TestCase):
                 for ref, sha, ok in (("refs/heads/peras/12-1", full, True), ("refs/heads/main", full, False),
                                      ("refs/heads/peras-x", full, False), ("refs/heads/peras/12-1", "main", False),
                                      ("refs/heads/peras/12-1", full[:12], False),
-                                     ("refs/heads/peras/12-1", full.upper(), False)):
+                                     ("refs/heads/peras/12-1", full.upper(), False),
+                                     ("refs/heads/peras/12-1", full + "\nmain", False),
+                                     ("refs/heads/peras/12-1", full + " ", False),
+                                     ("refs/heads/peras/12-1", "", False),
+                                     ("", full, False)):
                     run = subprocess.run(["bash", "-e", "-c", first["run"]], capture_output=True,
                                          env={"REF": ref, "SHA": sha, "PATH": os.environ["PATH"]})
                     self.assertEqual(run.returncode == 0, ok, f"{name}: {job_id}: {ref} {sha}")
