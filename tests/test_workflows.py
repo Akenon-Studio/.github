@@ -142,6 +142,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
                                      ("refs/heads/peras/12-1", full + "\nmain", False),
                                      ("refs/heads/peras/12-1", full + " ", False),
                                      ("refs/heads/peras/12-1", "", False),
+                                     ("refs/heads/peras/12-1", "main\n" + full, False),
+                                     ("refs/heads/peras/12-1", " " + full, False),
+                                     ("refs/heads/peras/12-1", "refs/tags/" + full, False),
                                      ("", full, False)):
                     run = subprocess.run(["bash", "-e", "-c", first["run"]], capture_output=True,
                                          env={"REF": ref, "SHA": sha, "PATH": os.environ["PATH"]})
