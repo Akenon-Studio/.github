@@ -132,6 +132,14 @@ class RecordTest(unittest.TestCase):
         rec = pr_record("platform", 7, "u", data, lambda *a: "")
         self.assertEqual([x["outcome"] for x in rec["threads"]], ["fixed"])
 
+    def test_cost_is_over_every_pr_the_ai_review_ran_on(self):
+        # a PR whose only AI review is a cut-off note costs tokens but has no round
+        note = {"reviews": {"nodes": [review("n", "2026-10-11T01:00:00Z", "c1", "The review was cut off (max_tokens)",
+                                             header="**AI review (advisory)**")]}, "reviewThreads": {"nodes": []}}
+        rec = pr_record("platform", 3, "u", note, lambda *a: "")
+        s = score([rec, pr_record("platform", 7, "u", self.data(), lambda *a: "")])
+        self.assertEqual((s["costed"], s["ci_prs"]), (2, 2))
+
     def test_a_pr_the_review_never_ran_on(self):
         self.assertIsNone(pr_record("platform", 8, "u", {"reviews": {"nodes": []},
                                                          "reviewThreads": {"nodes": []}}))
@@ -242,11 +250,28 @@ class ThreadOutcomeTest(unittest.TestCase):
         # Peras's "disputed" alone is no outcome (design 7.13 Stage 10)
         self.assertIsNone(thread_outcome([reply("disputed", "akenon-studio-peras", "Bot")], True, "major")["outcome"])
 
+    def test_the_latest_reply_with_an_outcome_decides(self):
+        replies = [reply("Not an issue: unreachable.\n\n<!-- agent -->"), reply("Please fix this."),
+                   reply("Fixed in def.\n\n<!-- agent -->")]
+        got = thread_outcome(replies, False, "major")
+        self.assertEqual((got["outcome"], got["disputed"]), ("fixed", False))
+        # a person who stated the agent's outcome before settles the agent's repeat of it
+        got = thread_outcome([reply("Not an issue"), reply("Not an issue\n\n<!-- agent -->")], False, "major")
+        self.assertEqual((got["outcome"], got["disputed"]), ("not an issue", False))
+
+    def test_a_persons_bare_fixed_leaves_a_peras_fix_ungraded(self):
+        peras = reply("**Fixed** in abc", "akenon-studio-peras", "Bot")
+        self.assertTrue(thread_outcome([peras, reply("Fixed, thanks")], True, "major")["ungraded"])
+        self.assertFalse(thread_outcome([peras, reply("Fixed, re-graded major")], True, "major")["ungraded"])
+
     def test_regrade_phrases(self):
         self.assertEqual(regraded("downgraded to **Minor**"), "minor")
         self.assertEqual(regraded("re-graded: nit"), "nit")
         self.assertEqual(regraded("raised to critical"), "critical")
         self.assertIsNone(regraded("this is a minor point"))
+        self.assertIsNone(regraded("Not an issue: it raises minor overhead"))
+        self.assertIsNone(regraded("Fixed; the point raised major concerns"))
+        self.assertIsNone(regraded("downgrading minor details"))
 
 
 class SharesTest(unittest.TestCase):
@@ -271,7 +296,9 @@ class SharesTest(unittest.TestCase):
         self.assertEqual((s["runs_mean"], s["local_prs"]), (2, 1))
         text = body("2026-10", s)
         self.assertIn("| local | 1 | 3 | 2 | 1 (50%) | 1 (50%) | 0 (0%) | 1 (50%) | 1 (50%) |", text)
-        self.assertIn("Disputed, not yet settled by a person:\n- [platform#7, local round 1, major, not an issue](u)", text)
+        # the issue is public (design 6.2): a finding still open is counted, never named
+        self.assertNotIn("R1.3", text)
+        self.assertNotIn("Disputed, not yet", text)
 
 
 class EscapesTest(unittest.TestCase):
@@ -324,7 +351,19 @@ class EscapesTest(unittest.TestCase):
         self.assertEqual((s["fixes"], len(s["escapes"])), (1, 2))  # one fix, two reviewed PRs behind it
         text = body("2026-10", s)
         self.assertIn("| 1 (2 reviewed PR(s) behind them) |", text)
-        self.assertIn("[platform#9](u9) changes 1 line(s) [platform#4](u4) last changed (`scripts/a.py`)", text)
+        self.assertIn("[platform#9](u9) changes 1 line(s) [platform#4](u4) last changed; its findings", text)
+        self.assertNotIn("scripts/a.py", text)  # no file paths in the public issue (design 6.2)
+
+    def test_an_open_finding_behind_an_escape_is_counted_not_named(self):
+        ranges = [{"startingLine": 1, "endingLine": 99, "commit": {"associatedPullRequests": {"nodes": [
+            {"number": 4, "url": "u4", "mergedAt": "2026-10-01T00:00:00Z"}]}}}]
+        record = {"repo": "platform", "number": 4, "url": "u4", "rounds": 1, "local": [], "threads": [
+            {"severity": "critical", "round": 1, "outcome": None, "path": "a.py", "url": "t"},
+            {"severity": "major", "round": 1, "outcome": "not an issue", "disputed": True, "path": "a.py", "url": "t"}]}
+        got = escapes("platform", {"number": 9, "url": "u9", "mergedAt": "2026-10-10T00:00:00Z"},
+                      [{"filename": "a.py", "status": "modified", "patch": "@@ -5,1 +5,1 @@\n-x\n+y"}],
+                      lambda path: ranges, lambda n: record)
+        self.assertEqual(got[0]["findings"], ["2 still open"])
 
 
 if __name__ == "__main__":

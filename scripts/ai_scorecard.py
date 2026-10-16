@@ -31,8 +31,10 @@ What it reports (design 6.4):
   only once settled: in a local row, review-branch.py marks it "(an agent's, settled)" or "(an
   agent's, not settled)", whoever authored the PR; in a thread, a reply carrying the agent marker
   (`<!-- agent -->`), or the Peras app's, states an outcome other than Fixed, or a Fixed with a new
-  severity, and only a person's reply that states one settles it. Disputed findings, those with no outcome, and on a Peras PR the
-  findings Peras fixed with no person's re-grade (ungraded, design 6.4) are listed, not counted.
+  severity, and only a person's reply that states one settles it; the latest reply that states an
+  outcome decides. Disputed and outcome-less findings aren't counted in the shares, and since the
+  issue is public (design 6.2) they are only counted, never named: they are still open. On a Peras
+  PR, findings Peras fixed with no person's re-grade (ungraded, design 6.4) are listed, not counted.
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
   the fix's parent commit, with that review's findings and outcomes in the files concerned. A fix
@@ -62,8 +64,8 @@ SERIOUS = {"critical", "major"}
 OUTCOMES = (("fixed", "fixed"), ("not an issue", "not an issue"), ("moved to", "moved"))
 RANK = {"nit": 0, "minor": 1, "major": 2, "critical": 3}
 # A reply's new severity: `re-graded minor`, `downgraded to minor`, `raised to critical`
-REGRADE = re.compile(r"\b(?:re-?grad|downgrad|rais)\w*\s*(?:(?:to|as)\b\s*)?:?\s*\**(critical|major|minor|nit)\b",
-                     re.I)
+REGRADE = re.compile(r"\b(?:re-?graded(?:\s+(?:to|as)\b)?|downgraded\s+to|raised\s+to)\s*:?\s*\**"
+                     r"(critical|major|minor|nit)\b", re.I)
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
 # review-branch.py's section in a PR's description (design 6.4); ai_review.py skips the same markers
@@ -221,28 +223,32 @@ def regraded(text):
 
 def thread_outcome(replies, peras_pr, claimed):
     """A CI thread's counted outcome from the org's replies (design 6.4): {outcome, regraded,
-    disputed, ungraded}. A person's reply that states an outcome is their own call, with the severity
-    a person's reply gives (or, stating the agent's own outcome, which agrees to its re-grade, the
-    agent's). An agent's Fixed counts
-    (the next round checks it), but its own re-grade is a dispute until a person's reply gives one;
-    an agent's other outcome is a dispute until a person's reply states one. On a Peras PR, a
-    finding Peras fixed is ungraded until a person's reply gives its severity after re-grading."""
-    person = [c for c in replies if not is_agent(c)]
-    person_grade = next((g for g in (regraded(c["body"]) for c in person) if g), None)
-    said = next((o for c in person for o in [outcome([c["body"]])] if o), None)
-    agent = next(((c, o) for c in replies if is_agent(c) for o in [outcome([c["body"]])] if o), None)
-    agent_grade = regraded(agent[0]["body"]) if agent else None
-    if said:
-        # stating the agent's own outcome agrees to its re-grade; another outcome sets it aside
-        agreed = agent_grade if agent and agent[1] == said else None
-        return {"outcome": said, "regraded": person_grade or agreed, "disputed": False,
-                "ungraded": False}
-    if not agent:
+    disputed, ungraded}. The latest reply that states an outcome decides, so a change of mind
+    counts. A person's is their own call, with the severity a person's reply gives (or, stating the
+    outcome an agent stated before, which agrees to its re-grade, the agent's). An agent's Fixed
+    counts (the next round checks it), but its own re-grade is a dispute until a person's reply
+    gives one; an agent's other outcome is a dispute unless a person stated the same. On a Peras PR,
+    a finding Peras fixed is ungraded until a person's reply gives its severity after re-grading."""
+    person_grade = next((g for g in (regraded(c["body"]) for c in reversed(replies) if not is_agent(c)) if g),
+                        None)
+    stated = [(c, o) for c in replies for o in [outcome([c["body"]])] if o]
+    if not stated:
         return {"outcome": None, "regraded": person_grade, "disputed": False, "ungraded": False}
-    c, name = agent
+    c, name = stated[-1]
+    peras_fixed = peras_pr and any(o == "fixed" and bot_login((x.get("author") or {}).get("login")) == PERAS
+                                   for x, o in stated)
+    if not is_agent(c):
+        before = [(x, o) for x, o in stated[:-1] if is_agent(x)]
+        agreed = regraded(before[-1][0]["body"]) if before and before[-1][1] == name else None
+        graded = person_grade or agreed
+        return {"outcome": name, "regraded": graded, "disputed": False,
+                "ungraded": bool(peras_fixed and name == "fixed" and not person_grade)}
+    agent_grade = regraded(c["body"])
     if name != "fixed":
-        return {"outcome": name, "regraded": agent_grade, "disputed": True, "ungraded": False}
-    if peras_pr and bot_login((c.get("author") or {}).get("login")) == PERAS:
+        settled = any(o == name for x, o in stated if not is_agent(x))
+        return {"outcome": name, "regraded": person_grade or agent_grade, "disputed": not settled,
+                "ungraded": False}
+    if peras_fixed and bot_login((c.get("author") or {}).get("login")) == PERAS:
         return {"outcome": "fixed", "regraded": person_grade, "disputed": False,
                 "ungraded": person_grade is None}
     return {"outcome": "fixed", "regraded": person_grade or agent_grade, "ungraded": False,
@@ -337,7 +343,7 @@ def pr_record(repo, number, url, data, read=file_at):
                    and acts_for(c.get("author"), private=False)]
         threads.append(dict(thread_outcome(replies, peras_pr, level), url=first["url"], severity=level,
                             round=round_no, late=late, resolved=t["isResolved"], path=t.get("path")))
-    return {"repo": repo, "number": number, "url": url, "rounds": len(rounds),
+    return {"repo": repo, "number": number, "url": url, "rounds": len(rounds), "ci": bool(reviews),
             "cost": sum(costs) if costs and None not in costs else None, "threads": threads,
             "local": local, "local_runs": local_runs(data.get("body")) if ours else 0}
 
@@ -374,11 +380,14 @@ def when(stamp):
 
 
 def finding_text(f):
-    """One finding of a reviewed PR as the escapes list shows it."""
+    """One finding of a reviewed PR as the escapes list shows it; None for one still open (disputed,
+    or with no outcome), which the public issue doesn't name (design 6.2)."""
+    if f.get("disputed") or not f.get("outcome"):
+        return None
     name = f"local {f['id']}" if f["kind"] == "local" else f"CI round {f['round']}"
     grade = f" re-graded {f['regraded']}" if f.get("regraded") and f["regraded"] != f["severity"] else ""
-    state = " (disputed)" if f.get("disputed") else " (ungraded)" if f.get("ungraded") else ""
-    return f"{name} {f['severity']}{grade}: {f.get('outcome') or 'no outcome'}{state}"
+    state = " (ungraded)" if f.get("ungraded") else ""
+    return f"{name} {f['severity']}{grade}: {f['outcome']}{state}"
 
 
 def is_fix(data):
@@ -412,7 +421,8 @@ def escapes(repo, fix, files, blame, reviewed):
         record = reviewed(number)
         if not record:
             continue
-        findings = [finding_text(f) for f in findings_of([record]) if f.get("path") in hit["paths"]]
+        there = [finding_text(f) for f in findings_of([record]) if f.get("path") in hit["paths"]]
+        findings = [t for t in there if t] + ([f"{there.count(None)} still open"] if None in there else [])
         out.append({"fix": f"{repo}#{fix['number']}", "url": fix["url"], "pr": f"{repo}#{number}",
                     "pr_url": hit["pr"]["url"], "lines": hit["lines"], "paths": sorted(set(hit["paths"])),
                     "findings": findings})
@@ -505,12 +515,13 @@ def score(prs, escaped=()):
     threads = [t for t in every if t["severity"] != "unrated"]
     serious = [t for t in threads if t["severity"] in SERIOUS]
     costs = [p["cost"] for p in prs if p["cost"] is not None]
+    ci = [p for p in prs if p.get("ci", p["rounds"] > 0)]  # any AI review, a cut-off note included
     rounds = [p["rounds"] for p in prs if p["rounds"]]
     runs = [p["local_runs"] for p in prs if p.get("local_runs")]
     findings = list(findings_of(prs))
     return {
         "prs": len(prs),
-        "ci_prs": len(rounds),
+        "ci_prs": len(ci),
         "late": [t for t in threads if t["late"]],
         "serious": len(serious),
         "false_alarms": [t for t in serious if t["outcome"] == "not an issue"
@@ -549,9 +560,10 @@ def shares_table(table):
 
 
 def escape_lines(items):
+    # no file paths: this issue is public and the files are often in private repos (design 6.2)
     return "\n".join(f"- [{e['fix']}]({e['url']}) changes {e['lines']} line(s) [{e['pr']}]({e['pr_url']}) last "
-                     f"changed ({', '.join(f'`{p}`' for p in e['paths'])}); its findings there: "
-                     f"{'; '.join(e['findings']) or 'none'}" for e in items) or "- none"
+                     f"changed; its findings in those files: {'; '.join(e['findings']) or 'none'}"
+                     for e in items) or "- none"
 
 
 def links(items, text):
@@ -580,7 +592,9 @@ The AI review scorecard for {month} (design 6.4), from {s['prs']} merged PR(s) a
 Each outcome's share by round, of the critical and major findings counted: those with an outcome,
 an agent's re-grade only once settled. The severity after re-grading (kept, downgraded, raised) and
 the outcome are counted apart. Local review's outcomes come from the PR's local-review section, CI's
-from the thread replies; disputed, ungraded and outcome-less findings are listed, not counted.
+from the thread replies; disputed, ungraded and outcome-less findings aren't counted in the shares.
+This issue is public (design 6.2), so findings still open (disputed, or with no outcome) are only
+counted here; each PR's threads and local-review section name them.
 
 {shares_table(s['shares'])}
 
@@ -595,12 +609,6 @@ Round 4 or later:
 
 No readable outcome (the reply should start with Fixed, Not an issue or Moved to):
 {links(s['unreadable'], lambda t: f"{t['pr']}, {t['severity']}")}
-
-Disputed, not yet settled by a person:
-{links(s['disputed'], lambda f: f"{f['pr']}, {f['kind']} round {f['round']}, {f['severity']}, {f['outcome']}")}
-
-No outcome yet:
-{links(s['no_outcome'], lambda f: f"{f['pr']}, {f['kind']} round {f['round']}, {f['severity']}")}
 
 Ungraded (Peras fixed them; no person's re-grade yet):
 {links(s['ungraded'], lambda f: f"{f['pr']}, {f['kind']} round {f['round']}, {f['severity']}")}
