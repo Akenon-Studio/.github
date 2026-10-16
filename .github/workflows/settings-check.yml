@@ -41,6 +41,7 @@ jobs:
           persist-credentials: false
 
       - name: Install PyYAML (verify-settings.py reads the callers' triggers with it)
+        continue-on-error: true  # without it, the verify step fails on its own and the rest still run
         run: pip install --quiet pyyaml==6.0.2
 
       - name: Log in as the read-only settings app

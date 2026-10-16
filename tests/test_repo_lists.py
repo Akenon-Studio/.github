@@ -100,6 +100,32 @@ class ExpectedTriggers(unittest.TestCase):
         no_push = text.replace("  push:\n    branches: [main]\n", "")
         self.assertNotEqual(verify.triggers(no_push), verify.expected_triggers(path, "handbook"))
 
+    def test_a_correct_peras_copy_matches(self):
+        # R1.1: this repo's copy plus the Peras triggers, as peras#169 wrote them
+        extra = ("  push:\n    branches: [main, 'peras/**']\n  workflow_dispatch:\n    inputs:\n"
+                 "      sha:\n        required: true\n        type: string\n")
+        for path in verify.CHECK_CALLERS:
+            text = (ROOT / path).read_text().replace("  push:\n    branches: [main]\n", "")
+            copy = text.replace("\npermissions:", extra + "\npermissions:", 1)
+            self.assertEqual(verify.triggers(copy), verify.expected_triggers(path, "platform"), path)
+
+    def test_a_bare_event_here_is_narrowed_in_a_peras_repo(self):
+        # R1.1: a bare `workflow_dispatch:` or `push:` here mustn't make every Peras copy drift
+        path = verify.CHECK_CALLERS[0]
+        original = verify.triggers
+        verify.triggers = lambda text: {"pull_request", "push", "workflow_dispatch"}
+        try:
+            want = verify.expected_triggers(path, "peras", peras=["peras"])
+        finally:
+            verify.triggers = original
+        self.assertEqual(want, {"pull_request"} | verify.PERAS_TRIGGERS)
+
+    def test_every_peras_repo_is_managed(self):
+        managed = [l for l in (ROOT / "rulesets/repos.txt").read_text().split()
+                   if l and not l.startswith("#")]
+        self.assertTrue(verify.peras_repos())
+        self.assertTrue(set(verify.peras_repos()) <= set(managed))
+
     def test_the_security_scan_caller_is_checked(self):
         self.assertIn(".github/workflows/security-scan-caller.yml", verify.CALLERS)
 

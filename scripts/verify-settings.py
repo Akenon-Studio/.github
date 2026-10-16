@@ -35,12 +35,11 @@ def missing_from(text, repos, pattern, skip=()):
 
 
 # The callers every repo copies from this one. The first two call the shared checks, which a repo
-# Peras delivers to also runs on pushes to `main` and `peras/**` and by a `sha` dispatch (design
-# 6.3, 7.13 Stage 10; README "New repos").
+# Peras delivers to (rulesets/peras-repos.json) also runs on pushes to `main` and `peras/**` and by
+# a `sha` dispatch (design 6.3, 7.13 Stage 10; README "New repos").
 CALLERS = (".github/workflows/pr-title-caller.yml", ".github/workflows/security-scan-caller.yml",
            ".github/workflows/issue-fields-caller.yml")
 CHECK_CALLERS = CALLERS[:2]
-PERAS_REPOS = ("peras", "platform", "animations")  # the repos Peras delivers to
 # The filters an event can narrow itself by, as triggers() names them
 FILTERS = {"branches": "branch", "branches-ignore": "not branch", "tags": "tag", "tags-ignore": "not tag",
            "paths": "path", "paths-ignore": "not path"}
@@ -75,12 +74,18 @@ def triggers(text):
     return found
 
 
-def expected_triggers(path, repo):
+def peras_repos():
+    return load("peras-repos.json")["repos"]
+
+
+def expected_triggers(path, repo, peras=None):
     """What a repo's copy of a caller should listen to: this repo's copy's triggers, plus the Peras
-    ones on a caller of the shared checks in a repo Peras delivers to."""
+    ones on a caller of the shared checks in a repo Peras delivers to (`peras`, default
+    rulesets/peras-repos.json). An event the Peras ones narrow loses its bare name, as triggers()
+    gives it none once narrowed."""
     want = triggers((ROOT / path).read_text())
-    if path in CHECK_CALLERS and repo in PERAS_REPOS:
-        want |= PERAS_TRIGGERS
+    if path in CHECK_CALLERS and repo in (peras_repos() if peras is None else peras):
+        want = (want - {t.split(":")[0] for t in PERAS_TRIGGERS}) | PERAS_TRIGGERS
     return want
 
 
@@ -197,6 +202,8 @@ def main():
         problems += [f"{repo}: rulesets/sensitive-paths.json: {d}"
                      for d in sensitive_paths.path_problems(repo, files)]
 
+    problems += [f"rulesets/peras-repos.json: {r} is not in rulesets/repos.txt"
+                 for r in peras_repos() if r not in managed]
     for path in CALLERS:
         for repo in managed:
             want = expected_triggers(path, repo)
