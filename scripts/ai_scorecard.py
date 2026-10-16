@@ -75,6 +75,8 @@ REGRADE = re.compile(r"\b(?:re-?graded(?:\s+(?:to|as)\b)?|downgraded\s+to|raised
 # what outcome() skips, so the two agree on whether a reply starts with an outcome
 STATED = re.compile(r"[*_ ]*(?:fixed|not an issue|moved to)\b[^(\n]*\(\s*\**\s*(critical|major|minor|nit)\b"
                     r"\s*(?:,\s*(?:kept|downgraded|raised)\s*)?\**\s*\)", re.I)
+LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
+CODE = re.compile(r"`[^`\n]*`")
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
 # review-branch.py's section in a PR's description (design 6.4); ai_review.py skips the same markers
@@ -151,10 +153,16 @@ def severity(body):
     return found.group(1).lower() if found else "unrated"  # threads from before 2026-10-10
 
 
+def own_words(text):
+    """A reply without its quoted lines (`> `, GitHub's Quote reply): those are someone else's words,
+    so they state no outcome or severity of the reply's own."""
+    return "\n".join(l for l in (text or "").splitlines() if not l.lstrip().startswith(">")).strip()
+
+
 def outcome(replies):
     """The outcome the first reply that gives one states, or None."""
     for text in replies:
-        words = (text or "").strip().lstrip("*_ ").lower()
+        words = own_words(text).lstrip("*_ ").lower()
         for start, name in OUTCOMES:
             if words.startswith(start):
                 return name
@@ -228,8 +236,10 @@ def regraded(text):
     """The severity after re-grading a reply states: in brackets after the outcome that starts it
     (`Fixed (major, kept)`), else in words (`re-graded minor`); or None. Quoted lines (`> `) are
     someone else's words, so they state none."""
-    own = "\n".join(l for l in (text or "").splitlines() if not l.lstrip().startswith(">"))  # not a quote
-    found = STATED.match(own.strip()) or REGRADE.search(own)
+    own = own_words(text)
+    # a link's target and inline code may hold brackets of their own (`[#12](url)`, `parse()`)
+    first = CODE.sub("", LINK_TARGET.sub("]", own.partition("\n")[0]))
+    found = STATED.match(first) or REGRADE.search(own)
     return found.group(1).lower() if found else None
 
 

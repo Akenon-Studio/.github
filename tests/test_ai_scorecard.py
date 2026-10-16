@@ -303,6 +303,14 @@ class ThreadOutcomeTest(unittest.TestCase):
         quoted = reply("> Fixed, re-graded minor\n\nWhy minor?")
         self.assertIsNone(regraded(quoted["body"]))
         self.assertTrue(thread_outcome([worded, quoted], False, "major")["disputed"])
+        # a link or inline code before the bracket, as the ask's "the issue's link" invites
+        self.assertEqual(regraded("**Moved to** [#12](https://github.com/o/r/issues/12) **(minor, downgraded)**"),
+                         "minor")
+        self.assertEqual(regraded("Fixed in [abc123](https://x/y) (major, kept)"), "major")
+        self.assertEqual(regraded("Fixed: `parse()` checks it now (major, kept)"), "major")
+        # a quote reply, then the reply's own outcome: both read past the quote
+        mine = "> **Major** finding text (minor)\n\nFixed (major, kept) in abc"
+        self.assertEqual((outcome([mine]), regraded(mine)), ("fixed", "major"))
         got = thread_outcome([reply("Fixed (major, kept) in abc.\n\n<!-- agent -->")], False, "major")
         self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("fixed", "major", False))
         got = thread_outcome([reply("Fixed (minor, downgraded)\n\n<!-- agent -->")], False, "major")
