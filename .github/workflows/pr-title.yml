@@ -39,8 +39,9 @@
 # a name on a commit, whatever event made it, so a run on a push to a branch other than `main` (a
 # Peras branch, the head of its PR) reports "<name> (branch)", and a dispatch, whose runs GitHub
 # files under the head of the branch it was dispatched on, "<name> (dispatch)": never a PR's
-# required name. A push to `main` keeps the names: no commit of main is a PR's head. A dispatch
-# checks out the commit its `sha` input names; the caller names that commit in its `run-name`, so
+# required name. A push to `main` keeps the names: no commit of main is a PR's head. A dispatch is
+# accepted only on a `peras/**` branch (its code may be unreviewed, and never runs in main's cache
+# scope), and checks out the commit its `sha` input names, a full commit; the caller names that commit in its `run-name`, so
 # Peras can find the run. A job that runs only on a PR is skipped elsewhere, under such a name off
 # main (its id differs from its name, so even an unnamed skip can't pass for it).
 name: pr-title
@@ -132,6 +133,17 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: A dispatch runs only on a Peras branch, for a full commit
+        # Its code may be unreviewed (a Peras patch), so it never runs in main's cache scope, which
+        # every PR reads, and `sha` names a commit, never a branch (design 7.13 Stage 10).
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.inputs.sha }}
+        run: |
+          [[ "$REF" == refs/heads/peras/* ]] || { echo "::error::Dispatch this on a peras/** branch, not $REF"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit, not $SHA"; exit 1; }
+
       - name: Get the repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

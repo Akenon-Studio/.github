@@ -122,6 +122,23 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertTrue(caller["concurrency"]["group"].endswith("-${{ github.event.inputs.sha }}"))
 
 
+    def test_a_dispatch_runs_only_on_a_peras_branch_and_saves_no_cache(self):
+        # its code may be unreviewed (a Peras patch): it never runs in main's cache scope, which
+        # every PR reads (Akenon-Studio/.github#206)
+        for name in ("pr-title.yml", "security-scan.yml"):
+            for job_id, job in REUSABLE[name]["jobs"].items():
+                if (name, job_id) in self.PR_ONLY:
+                    continue
+                first = job["steps"][0]
+                self.assertEqual(first["if"], "github.event_name == 'workflow_dispatch'", f"{name}: {job_id}")
+                self.assertIn('refs/heads/peras/*', first["run"], f"{name}: {job_id}")
+                self.assertIn("^[0-9a-f]{40}$", first["run"], f"{name}: {job_id}")
+                for step in job["steps"]:
+                    cache = step.get("with", {}).get("cache")
+                    if cache:
+                        self.assertEqual(cache, "${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}",
+                                         f"{name}: {job_id}")
+
     def test_one_job_per_check_workflow_and_every_check_step_reported(self):
         # design 6.3: billing rounds every job up to a minute; a check step that isn't in the
         # Result step's OUTCOMES would fail without failing the job (continue-on-error)

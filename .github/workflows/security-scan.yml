@@ -26,7 +26,8 @@
 # A repo Peras delivers to also calls it on a push to `peras/**` and on `workflow_dispatch` with a
 # `sha` input (design 6.3, 7.13 Stage 10). Those runs report "<job> (branch)" and "<job> (dispatch)",
 # never a PR's required name, and a dispatch scans the commit its `sha` names, in a concurrency group
-# of its own (pr-title.yml, "Runs that aren't a PR's", says why).
+# of its own (pr-title.yml, "Runs that aren't a PR's", says why). A dispatch is accepted only on a
+# `peras/**` branch, for a full commit, and saves no cache.
 name: security-scan
 
 on:
@@ -44,6 +45,17 @@ jobs:
       group: security-scan-code-${{ github.repository }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event.inputs.sha }}
       cancel-in-progress: true
     steps:
+      - name: A dispatch runs only on a Peras branch, for a full commit
+        # Its code may be unreviewed (a Peras patch), so it never runs in main's cache scope, which
+        # every PR reads, and `sha` names a commit, never a branch (design 7.13 Stage 10).
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.inputs.sha }}
+        run: |
+          [[ "$REF" == refs/heads/peras/* ]] || { echo "::error::Dispatch this on a peras/** branch, not $REF"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit, not $SHA"; exit 1; }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: repo
@@ -114,6 +126,17 @@ jobs:
       group: security-scan-dependencies-${{ github.repository }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event.inputs.sha }}
       cancel-in-progress: true
     steps:
+      - name: A dispatch runs only on a Peras branch, for a full commit
+        # Its code may be unreviewed (a Peras patch), so it never runs in main's cache scope, which
+        # every PR reads, and `sha` names a commit, never a branch (design 7.13 Stage 10).
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.inputs.sha }}
+        run: |
+          [[ "$REF" == refs/heads/peras/* ]] || { echo "::error::Dispatch this on a peras/** branch, not $REF"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit, not $SHA"; exit 1; }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.inputs.sha }} # a dispatch's commit; empty: the event's own
@@ -139,7 +162,8 @@ jobs:
         if: hashFiles('pnpm-lock.yaml') != ''
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          # A dispatch runs a commit no one may have reviewed (a Peras patch): it saves no cache.
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}
 
       - name: Dependency scan (high and critical)
         id: audit
