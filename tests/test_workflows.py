@@ -143,7 +143,12 @@ class ReusableWorkflowsTest(unittest.TestCase):
     def test_checks_reads_only_the_code(self):
         # "pr-title / checks" is marked "code" (rulesets/required-checks.json): a PR's title, body,
         # author or assignees never fail it, so Peras never blames its patch for them (design 7.13
-        # Stage 10). Those are "pr-title / pr"'s, which every repo now requires.
+        # Stage 10). Those are "pr-title / pr"'s, which every repo requires (verify-settings.py
+        # holds the live rulesets to this file).
+        import json
+        checks = json.loads((WORKFLOWS.parent.parent / "rulesets" / "required-checks.json").read_text())
+        self.assertIn("pr-title / pr", checks["all"])
+        self.assertEqual(checks["reads"]["pr-title / checks"], "code")
         job = REUSABLE["pr-title.yml"]["jobs"]["checks"]
         self.assertEqual([s["id"] for s in job["steps"] if s.get("continue-on-error")],
                          ["claude-md", "gaming", "docs"])
