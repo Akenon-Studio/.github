@@ -40,6 +40,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install PyYAML (verify-settings.py reads the callers' triggers with it)
+        continue-on-error: true  # without it, the verify step fails on its own and the rest still run
+        # By hash, wheels only (the runner's Python 3.12 or 3.13): a later step holds an org-wide token
+        run: |
+          pip install --quiet --require-hashes --only-binary :all: -r /dev/stdin <<'REQ'
+          pyyaml==6.0.2 --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476 --hash=sha256:70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5
+          REQ
+
       - name: Log in as the read-only settings app
         id: settings
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3

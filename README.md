@@ -40,10 +40,11 @@ same rules, applied by the script. The verify script catches any repo that drift
 
 ## New repos
 
-Every repo carries two small caller workflows, copied from this repo: `pr-title-caller.yml` and
-`issue-fields-caller.yml` (in the copy, `uses:` points at
-`akenon-studio/.github/.github/workflows/<name>.yml@main`, and the PR triggers stay the same as
-here: the PR checks also run on `assigned` and `unassigned`). A repo Peras delivers to adds to its
-callers of the shared checks pushes to `main` and `peras/**` and a `sha` dispatch, as `pr-title.yml`
-says. The issue automation logs in as the org's GitHub App: org variable `AKENON_APP_ID`, org
-secret `AKENON_APP_PRIVATE_KEY`.
+Every repo carries small caller workflows, copied from this repo: `pr-title-caller.yml`,
+`security-scan-caller.yml` and `issue-fields-caller.yml` (in the copy, `uses:` points at
+`akenon-studio/.github/.github/workflows/<name>.yml@main`, and the triggers stay the same as here:
+the PR checks also run on `assigned` and `unassigned`). A repo Peras delivers to
+(`rulesets/peras-repos.json`) adds to its callers of the shared checks (`pr-title`, `security-scan`)
+pushes to `main` and `peras/**` and a `sha` dispatch, as `pr-title.yml` says.
+`scripts/verify-settings.py` reports a copy whose triggers differ. The issue automation logs in as
+the org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.

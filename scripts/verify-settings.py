@@ -9,12 +9,14 @@ and linked repos (rulesets/board.json), the files that list every repo and the f
 with write access, that each CODEOWNERS ends with its generated sensitive-areas block and every
 sensitive path exists (rulesets/sensitive-paths.json), a public repo's fork PR workflow approval,
 that every required check is marked with what it reads (rulesets/required-checks.json),
-that every repo's caller workflows listen to the same PR event types as this
-repo's, and any repo in the org that is neither managed nor archived.
+that every repo's caller workflows listen to the same events as this repo's (plus pushes to `main`
+and `peras/**` and a `sha` dispatch for the shared checks in a repo Peras delivers to), and any repo in the org that is neither managed nor archived.
 """
 
 import re
 import sys
+
+import yaml
 
 from board import board_differences, find_board, spec
 import sensitive_paths
@@ -32,16 +34,67 @@ def missing_from(text, repos, pattern, skip=()):
             and not re.search(pattern.replace("{repo}", re.escape(r)), text, re.MULTILINE)]
 
 
-CALLERS = (".github/workflows/pr-title-caller.yml", ".github/workflows/issue-fields-caller.yml")
-# An event and its types list, with comment lines between allowed
-TRIGGERS = re.compile(r"^\s*([a-z_]+):[ \t]*(?:#.*)?\n(?:[ \t]*#.*\n)*[ \t]*types:\s*\[(.*?)\]", re.MULTILINE)
+# The callers every repo copies from this one. The first two call the shared checks, which a repo
+# Peras delivers to (rulesets/peras-repos.json) also runs on pushes to `main` and `peras/**` and by
+# a `sha` dispatch (design 6.3, 7.13 Stage 10; README "New repos").
+CALLERS = (".github/workflows/pr-title-caller.yml", ".github/workflows/security-scan-caller.yml",
+           ".github/workflows/issue-fields-caller.yml")
+CHECK_CALLERS = CALLERS[:2]
+# The filters an event can narrow itself by, as triggers() names them
+FILTERS = {"branches": "branch", "branches-ignore": "not branch", "tags": "tag", "tags-ignore": "not tag",
+           "paths": "path", "paths-ignore": "not path"}
+PERAS_TRIGGERS = {"push: branch main", "push: branch peras/**", "workflow_dispatch: input sha string required"}
+
+
+def listed(value):
+    """A YAML list, or a lone value as a list of one (`types: opened` means `[opened]`)."""
+    return value if isinstance(value, list) else [] if value is None else [value]
+
+
+def input_spec(spec):
+    """A dispatch input's type and whether it's required, e.g. `string required`, so a copy whose
+    `sha` input Peras can leave out, or can't pass a commit to, shows."""
+    spec = spec if isinstance(spec, dict) else {}
+    return f"{spec.get('type', 'string')} {'required' if spec.get('required') is True else 'optional'}"
 
 
 def triggers(text):
-    """The event types a caller workflow listens to, as a set of `event: type` (empty if it names
-    none), so a repo missing a whole event shows too."""
-    return {f"{event}: {t.strip()}" for event, types in TRIGGERS.findall(text or "")
-            for t in types.split(",")}
+    """What a caller workflow listens to, as a set of `event: type`, `push: branch <b>` and
+    `workflow_dispatch: input <name> <type> required|optional`, or the bare event when it narrows nothing (empty if it names
+    no event), so a repo missing a whole event, a branch or the dispatch shows too."""
+    try:
+        doc = yaml.safe_load(text or "") or {}
+    except yaml.YAMLError:
+        return {"(not valid YAML)"}
+    on = doc.get("on", doc.get(True)) if isinstance(doc, dict) else None  # YAML 1.1 reads `on` as true
+    if isinstance(on, str):
+        on = {on: None}
+    elif isinstance(on, list):
+        on = dict.fromkeys(on)
+    found = set()
+    for event, spec in (on or {}).items():
+        spec = spec if isinstance(spec, dict) else {}
+        details = {f"{event}: {t}" for t in listed(spec.get("types"))}
+        details |= {f"{event}: {name} {v}" for key, name in FILTERS.items() for v in listed(spec.get(key))}
+        inputs = spec.get("inputs") if isinstance(spec.get("inputs"), dict) else {}
+        details |= {f"{event}: input {name} {input_spec(i)}" for name, i in inputs.items()}
+        found |= details or {str(event)}
+    return found
+
+
+def peras_repos():
+    return load("peras-repos.json")["repos"]
+
+
+def expected_triggers(path, repo, peras=None):
+    """What a repo's copy of a caller should listen to: this repo's copy's triggers, plus the Peras
+    ones on a caller of the shared checks in a repo Peras delivers to (`peras`, default
+    rulesets/peras-repos.json). An event the Peras ones narrow loses its bare name, as triggers()
+    gives it none once narrowed."""
+    want = triggers((ROOT / path).read_text())
+    if path in CHECK_CALLERS and repo in (peras_repos() if peras is None else peras):
+        want = (want - {t.split(":")[0] for t in PERAS_TRIGGERS}) | PERAS_TRIGGERS
+    return want
 
 
 def main():
@@ -157,15 +210,17 @@ def main():
         problems += [f"{repo}: rulesets/sensitive-paths.json: {d}"
                      for d in sensitive_paths.path_problems(repo, files)]
 
+    problems += [f"rulesets/peras-repos.json: {r} is not in rulesets/repos.txt"
+                 for r in peras_repos() if r not in managed]
     for path in CALLERS:
-        want = triggers((ROOT / path).read_text())
         for repo in managed:
+            want = expected_triggers(path, repo)
             text = read_file(repo, path)
             if text is None:
                 print(f"note: can't read {repo}/{path}; its triggers not checked")
             elif triggers(text) != want:
                 problems.append(f"{repo}/{path}: listens to {sorted(triggers(text))}, expected "
-                                f"{sorted(want)} (copy this repo's)")
+                                f"{sorted(want)} (copy this repo's; README 'New repos')")
 
     for r in gh(f"orgs/{ORG}/repos?per_page=100") or []:
         if r["name"] not in managed and not r["archived"]:
