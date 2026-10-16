@@ -5,7 +5,8 @@ Round one is the full review: the strongest model, more effort, no cap on findin
 the repo's CLAUDE.md, the design sections that apply to the repo and every changed file in full.
 Each finding carries an absolute severity (critical, major, minor, nit) and a confidence; critical
 and major findings become review threads, minor ones and nits lines in the summary. Later rounds
-review only the changes since the last review, with the earlier findings and the replies to them.
+review only the changes since the last review, with the earlier findings and the replies to them;
+in `handbook`, a design changed on `main` since is one of those changes (design 6.4).
 Uses the Claude API directly, not Claude Code: the plan's monthly API credits cover the API but not
 Claude Code (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
@@ -27,7 +28,8 @@ AI_REVIEW_MODEL)
                             [--since <commit>]
 (in a checkout of the branch: prints the request for a local review or a replay: round one against
 <base ref>, the earlier findings, if given, as an earlier round; with --since (the last local run's
-commit), a later round on the branch's own files changed since it, with the earlier findings and
+commit), a later round on the branch's own files changed since it (in handbook, and a design changed
+on main since, with all the branch's files in full to check against it), with the earlier findings and
 their outcomes, built as CI's later rounds are, falling back to round one where CI would, or printing
 {"nothing": why} when none of the branch's own files changed since. review-branch.py checks
 PROMPT_SINCE.)
@@ -190,6 +192,12 @@ incomplete. Don't repeat earlier findings, and don't raise findings about code t
 saw unchanged. Use the same scale; raise an earlier finding's severity only if the new code made
 it worse."""
 
+DESIGN_MOVED_NOTE = """The design changed on `main` since the last review; what changed is in
+<design_changed_on_main>. It was reviewed in its own PR: don't review it. Check this PR's files,
+sent in full, against it: report text or code of this PR, changed since the last review or not, that
+the new design now contradicts or makes wrong, on this PR's own lines. Where its lines also show in
+<changes_since>, they are `main`'s, not this PR's."""
+
 REVIEW_SCHEMA = {
     "type": "object",
     "properties": {
@@ -292,9 +300,10 @@ def design_sections(design, repo):
                    re.match(r"## (\d+)\.", p).group(1) in want)
 
 
-def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
+def full_files(paths, root=".", budget=MAX_INPUT_CHARS, keep=()):
     """({path: text} of the changed files as the PR leaves them, [paths left out for size]):
-    largest left out first past `budget` characters; deleted and binary files are skipped."""
+    largest left out first past `budget` characters, those not in `keep` (a later round's touched
+    files) before any in it; deleted and binary files are skipped."""
     found, omitted = {}, []
     top = os.path.realpath(root)
     for p in paths:
@@ -308,7 +317,7 @@ def full_files(paths, root=".", budget=MAX_INPUT_CHARS):
         except (OSError, UnicodeDecodeError):
             continue
     while found and sum(map(len, found.values())) > budget:
-        largest = max(found, key=lambda k: len(found[k]))
+        largest = max(found, key=lambda k: (k not in keep, len(found[k])))
         del found[largest]
         omitted.append(largest)
     return found, omitted
@@ -351,15 +360,16 @@ def tagged(tag, text):
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
-            history="", generated=(), repo=""):
+            history="", generated=(), repo="", design_changes=""):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
     message to keep the cached prefix the same. A later round's `files` are those the changes
-    touch, and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
+    touch (all the PR's, when the design moved on `main`: later_paths), and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
     the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled. For
     the design's own repo the design is the PR's, which most pushes change, so it isn't cached:
-    writing it to the cache costs more than reading it plainly."""
+    writing it to the cache costs more than reading it plainly. `design_changes` is, in a later
+    round there, the design's diff brought in from `main` (design_moved), labelled as such."""
     shared = {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design)}
     if repo != DESIGN_REPO:
         shared["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
@@ -371,6 +381,8 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
             (tagged("diff", diff_text) if diff_text else ""))
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
+        if design_changes:
+            user += "\n\n" + DESIGN_MOVED_NOTE + "\n" + tagged("design_changed_on_main", design_changes)
     elif history:
         user += ("\n\nThis PR was reviewed before; those findings and the replies are below. Don't "
                  "repeat them or findings the replies settled.\n" + tagged("earlier_review", history))
@@ -468,6 +480,82 @@ def changes_since(commit, paths):
     except (OSError, subprocess.SubprocessError):
         return None
     return run.stdout if run.returncode == 0 else None
+
+
+def git_out(*args, strip=True):
+    """A git command's output, stripped unless told not to; None when it fails."""
+    try:
+        run = subprocess.run(["git", *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (run.stdout.strip() if strip else run.stdout) if run.returncode == 0 else None
+
+
+def later_changes(commit, repo, paths, base=None):
+    """(changes since, design moved, size) for a later round from an earlier reviewed commit: the
+    PR's files' diff since it (changes_since; None for a full round), in the design's own repo the
+    design's diff brought in from `main` since (design_moved), labelled apart in the request, and
+    how much changed, for the "too much changed" limit: main's design diff counted once, also when
+    a conflict leaves it in the changes since too."""
+    since = changes_since(commit, list(paths))
+    if since is None:
+        return None, "", 0
+    moved, own = design_moved(commit, repo, paths, base)
+    if own is not None:  # the PR's own design changes since, without main's
+        others = [p for p in paths if p != DESIGN_PATH]  # no paths would diff the whole tree
+        since = ((changes_since(commit, others) or "") if others else "") + own
+    mixed = DESIGN_PATH in paths and own is None  # main's design diff is in `since` already
+    return since, moved, len(since) + (0 if mixed else len(moved))
+
+
+def design_moved(commit, repo, paths, base=None):
+    """(main's design diff, the PR's own design diff) since an earlier reviewed commit, in the
+    design's own repo: a later round is on what changed in the design, since the PR is judged
+    against the rest of it (6.4). For a PR that doesn't change the design, main's diff is the
+    design's diff since (main brought it in), and the own diff None. For one that does, main's is
+    the design's diff between where the branch met `base` at that commit and where it meets it now,
+    and the own diff is HEAD against that commit with main's diff applied; None (the PR's design
+    diff since then shows both, main's labelled apart) when the two conflict in the design.
+    ("", None) outside the design's repo, when main's design didn't move, the commit isn't in the
+    history, or there is no `base` (nor its merge base) to tell main's part by: the PR's design diff
+    since shows both then, unlabelled, as before .github#195."""
+    if repo != DESIGN_REPO:
+        return "", None
+    if DESIGN_PATH not in paths:
+        return changes_since(commit, [DESIGN_PATH]) or "", None
+    before = git_out("merge-base", commit, base) if base else None
+    now = git_out("merge-base", "HEAD", base) if base else None
+    if not before or not now:
+        print(f"No merge base with {base!r}: main's design changes, if any, aren't labelled apart.", file=sys.stderr)
+        return "", None
+    if before == now:
+        return "", None
+    moved = git_out("diff", before, now, "--", DESIGN_PATH, strip=False)  # a hunk can end in a blank line
+    if not moved:
+        return "", None
+    # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own.
+    # A conflict elsewhere (exit 1, the conflicted paths after the tree) leaves the design's merge good
+    try:
+        run = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", commit, now],
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        run = None
+    if not run or run.returncode not in (0, 1):  # git older than 2.38 has no --write-tree
+        print("git merge-tree failed (" + (run.stderr.strip() if run else "didn't run") + "): the round shows "
+              "the design's own changes and main's together, main's labelled.", file=sys.stderr)
+        return moved, None
+    lines = run.stdout.split("\n")
+    conflicted = lines[1:lines.index("", 1)] if "" in lines[1:] else lines[1:]
+    if not lines[0] or DESIGN_PATH in conflicted:
+        print("The design's own changes and main's conflict: the round shows both, main's labelled.", file=sys.stderr)
+        return moved, None
+    return moved, changes_since(lines[0], [DESIGN_PATH])
+
+
+def later_paths(changed, files, moved):
+    """The files a later round sends in full: those its changes touch, and when the design moved on
+    `main` (design_moved), all the PR's own, which are what it checks against the change."""
+    return list(dict.fromkeys(list(changed) + (list(files) if moved else [])))
 
 
 THREADS_QUERY = """query($owner: String!, $name: String!, $n: Int!, $after: String) {
@@ -636,32 +724,29 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
                 history = f.read()[-MAX_EARLIER_CHARS:]  # latest kept, as earlier_review does
         except OSError as e:
             raise SystemExit(f"can't read the settled findings from {settled_path}: {e}")
-    changes = None
+    changes, moved = None, ""
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
-        changes = changes_since(since, list(files))  # the branch's own files only, as in CI
-        # in the design's own repo a design changed on main is a new round, as CI's fingerprint has it
-        moved = changes_since(since, [DESIGN_PATH]) if repo == DESIGN_REPO else ""
-        design_moved = bool(moved)
-        if design_moved and changes is not None and DESIGN_PATH not in files:
-            changes += moved  # what changed in it is what this round is for (6.4)
-        if changes is not None and not changes.strip() and not changes_since(since, ["CLAUDE.md"]) and not design_moved:
+        # the branch's own files only, and in handbook a design changed on main apart, as in CI
+        changes, moved, size = later_changes(since, repo, files, base)
+        if changes is not None and not changes.strip() and not moved and not changes_since(since, ["CLAUDE.md"]):
             # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
             # as CI's fingerprint skips such a push
             print(json.dumps({"nothing": "nothing of the branch's own changed since the last run"}))
             return 0
         # round one when CLAUDE.md changed since, or too much changed
-        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or len(changes) > MAX_DIFF_CHARS):
+        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or size > MAX_DIFF_CHARS):
             changes = None
     if changes is not None:  # a later round: the changes, and the files they touch in full
         changed = split_diff(changes)  # generated files left out, as in CI
         shown = "".join(changed.values())
         generated = generated_paths(diff)
-        budget = (MAX_INPUT_CHARS - len(shown) - len(design) - len(history) - len(claude_md)
+        budget = (MAX_INPUT_CHARS - len(shown) - len(moved) - len(design) - len(history) - len(claude_md)
                   - sum(len(g) + 1 for g in generated))  # as CI counts it
-        whole, omitted = full_files(review_paths(list(changed), repo), budget=budget)
+        whole, omitted = full_files(review_paths(later_paths(changed, files, moved), repo), budget=budget,
+                                    keep=set(changed))
         system, user = request(claude_md, design, title, "", whole, "", later=(history, shown), omitted=omitted,
-                               generated=generated, repo=repo)  # the whole branch's, as in CI
+                               generated=generated, repo=repo, design_changes=moved)  # the whole branch's, as in CI
     else:
         generated = generated_paths(diff)
         budget = (MAX_INPUT_CHARS - len(text) - len(design) - len(history) - len(claude_md)
@@ -716,24 +801,28 @@ def main(argv):
                   "Not reviewed: the diff is too large. Split the PR, or ask a person to review it."}
     else:
         design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
-        since = changes_since(done[-1]["commit_id"], list(files)) if done else None
+        # in handbook, a design changed on main is what the round is for, labelled apart from the PR's
+        base = (pr.get("base") or {}).get("ref")
+        since, moved, size = (later_changes(done[-1]["commit_id"], name, files, base and f"origin/{base}")
+                              if done else (None, "", 0))
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])
-                                  or len(since) > MAX_DIFF_CHARS):
-            since = None
+                                  or size > MAX_DIFF_CHARS):
+            since, moved = None, ""
         history = earlier_review(repo, number, token, done) if done else ""
         if since is not None:  # a later round: the changes, and the files they touch in full
-            later, shown, paths = (history, since), "", list(split_diff(since))
+            later, shown, paths = (history, since), "", later_paths(split_diff(since), files, moved)
         else:
             later, shown, paths = None, text, list(files)
         description = without_local_review(pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
         generated = generated_paths(diff)  # the whole PR's, every round
-        used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(description)
+        used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(moved) + len(description)
                 + sum(len(g) + 1 for g in generated))
-        whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used)
+        whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used,
+                                    keep=set(split_diff(since)) if since is not None else ())
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated, repo.split("/")[1])
+                               omitted, history, generated, repo.split("/")[1], design_changes=moved)
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:

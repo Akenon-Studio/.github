@@ -4,28 +4,45 @@
 #   on: { pull_request: { types: [opened, edited, synchronize, reopened, assigned, unassigned] } }
 #   jobs: { pr-title: { uses: akenon-studio/.github/.github/workflows/pr-title.yml@main } }
 #
-# One job, the status check "pr-title / checks", one step per check (design 6.3: billing rounds
-# every job up to a minute, so eight small jobs cost eight minutes). Every step runs even when an
-# earlier one fails; the last step fails the job if any blocking step failed and lists them all.
-# The checks:
+# A repo Peras delivers to also calls it on `push` (to `main` and `peras/**`) and on
+# `workflow_dispatch` with a `sha` input (design 6.3, 7.13 Stage 10): see "Runs that aren't a PR's".
+#
+# Three jobs, one per thing a check reads (rulesets/required-checks.json marks each, design 7.13
+# Stage 10), each with one step per check (design 6.3: billing rounds every job up to a minute).
+# Every step runs even when an earlier one fails; the last step fails the job if any blocking step
+# failed and lists them all.
+# "pr-title / pr" reads the PR, so it runs on a PR only:
 #   title: the title is a conventional commit
 #   closes-issue: the body closes at least one whole issue (design 6.8; scripts/pr_closes_issue.py)
-#   claude-md: every CLAUDE.md passes scripts/claude_md.py (design 6.8)
 #   author-assigned: a PR a person opens has its author among the assignees (design 6.8;
 #     scripts/pr_author_assigned.py; it reads the assignees from the event, so callers also listen
 #     to `assigned` and `unassigned`)
 #   stacked: no commit on the branch is on another open PR's branch (handbook#120;
 #     scripts/pr_not_stacked.py)
-#   gaming: the PR doesn't pass by weakening checks: skipped or focused tests, deleted test files,
-#     @ts-ignore, eslint-disable, `any` (design 7.13 stage 6; scripts/gaming_check.py)
+# "pr-title / checks" reads the code (and, on a PR, runs the PR's steps too until .github#196):
+#   claude-md: every CLAUDE.md passes scripts/claude_md.py (design 6.8)
+#   gaming: the change doesn't pass by weakening checks: skipped or focused tests, deleted test
+#     files, @ts-ignore, eslint-disable, `any` (design 7.13 stage 6; scripts/gaming_check.py). On a
+#     PR it diffs against the PR's base; elsewhere against where the commit left `main` (nothing,
+#     on a commit of `main`)
 #   docs: every doc is in the fixed map with its owner/covers header, and names only paths, env
 #     vars and links that exist (design 6.5; scripts/docs_check.py, rulesets/docs.json)
+# "pr-title / docs-tick" is a person's (design 6.5 item 3), so it runs on a PR only:
 #   docs-covered: a PR that changes code a doc covers updates the doc or ticks "Still accurate:
-#     <doc>" in its body (design 6.5 item 3; scripts/docs_covered.py). Advisory while on trial: a
-#     failure is a warning, not a failed job (ADVISORY below).
+#     <doc>" in its body (scripts/docs_covered.py). Advisory while on trial: a failure is a
+#     warning, not a failed job (ADVISORY below).
 # No run is ever cancelled: an edit or assignment re-runs this on the same commit, and GitHub counts
 # a cancelled run there as a failed required check, which blocks the PR. A new step here runs in
 # every repo without changing the callers.
+#
+# Runs that aren't a PR's: GitHub's required-check rule (and Peras with it) reads the newest run of
+# a name on a commit, whatever event made it, so a run on a push to a branch other than `main` (a
+# Peras branch, the head of its PR) reports "<name> (branch)", and a dispatch, whose runs GitHub
+# files under the head of the branch it was dispatched on, "<name> (dispatch)": never a PR's
+# required name. A push to `main` keeps the names: no commit of main is a PR's head. A dispatch
+# checks out the commit its `sha` input names; the caller names that commit in its `run-name`, so
+# Peras can find the run. A job that runs only on a PR is skipped elsewhere, under such a name off
+# main (its id differs from its name, so even an unnamed skip can't pass for it).
 name: pr-title
 
 on:
@@ -35,20 +52,15 @@ permissions:
   contents: read
 
 jobs:
-  checks:
+  pr-checks:
+    name: pr${{ github.event_name == 'workflow_dispatch' && ' (dispatch)' || github.event_name == 'push' && github.ref_name != 'main' && ' (branch)' || '' }}
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - name: Get the repo
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          path: repo
-          fetch-depth: 0 # gaming diffs the PR against its base; docs-covered needs HEAD^1
-          persist-credentials: false
-
       - name: Get the scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -57,9 +69,6 @@ jobs:
           ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
           path: akenon-github
           persist-credentials: false
-
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml==6.0.2
 
       - name: Title is a conventional commit
         id: title
@@ -86,18 +95,6 @@ jobs:
           GH_TOKEN: ${{ github.token }} # a bot's PR: reads its commits
         run: python3 akenon-github/scripts/pr_closes_issue.py
 
-      - name: Every CLAUDE.md is capped and every rule has a reason
-        id: claude-md
-        continue-on-error: true
-        run: |
-          status=0
-          files=$(find repo -name CLAUDE.md -not -path '*/node_modules/*' -not -path '*/.git/*')
-          [ -n "$files" ] || echo "No CLAUDE.md in this repo."
-          for f in $files; do
-            python3 akenon-github/scripts/claude_md.py "$f" --root repo --repo "${GITHUB_REPOSITORY#*/}" || status=1
-          done
-          exit $status
-
       - name: The author is an assignee
         id: author-assigned
         continue-on-error: true
@@ -119,17 +116,157 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 akenon-github/scripts/pr_not_stacked.py
 
+      - name: Result
+        env:
+          OUTCOMES: >-
+            title=${{ steps.title.outcome }}
+            closes-issue=${{ steps.closes-issue.outcome }}
+            author-assigned=${{ steps.author-assigned.outcome }}
+            stacked=${{ steps.stacked.outcome }}
+        run: python3 akenon-github/scripts/step_results.py
+
+  checks:
+    name: checks${{ github.event_name == 'workflow_dispatch' && ' (dispatch)' || github.event_name == 'push' && github.ref_name != 'main' && ' (branch)' || '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # the PR's steps, until .github#196
+    steps:
+      - name: Get the repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: repo
+          ref: ${{ github.event.inputs.sha }} # a dispatch's commit; empty: the event's own
+          fetch-depth: 0 # gaming diffs against the base, or main off a PR
+          persist-credentials: false
+
+      - name: Get the scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the scripts; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: akenon-github
+          persist-credentials: false
+
+      # Until apply-rules.py makes "pr-title / pr" required in every repo, the PR's steps run here
+      # too, so they keep blocking a merge (.github#196 removes them once it has).
+      - name: (until pr-title / pr is required) Title is a conventional commit
+        id: title
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|chore|docs|refactor|test|perf|build|ci|revert)(\([a-z0-9][a-z0-9/-]*\))?!?: [^ ].*'
+          if printf '%s' "$TITLE" | grep -Eq "$pattern"; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::PR title must be a conventional commit, e.g. 'feat: add pairing screen' or 'fix(api): handle expired tokens'. Got: $TITLE"
+            exit 1
+          fi
+
+      - name: (until pr-title / pr is required) Body closes at least one whole issue
+        id: closes-issue
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }} # a bot's PR: reads its commits
+        run: python3 akenon-github/scripts/pr_closes_issue.py
+
+      - name: (until pr-title / pr is required) The author is an assignee
+        id: author-assigned
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          PR_ASSIGNEES: ${{ toJSON(github.event.pull_request.assignees) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 akenon-github/scripts/pr_author_assigned.py
+
+      - name: (until pr-title / pr is required) Not stacked on another open PR
+        id: stacked
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 akenon-github/scripts/pr_not_stacked.py
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml==6.0.2
+
+      - name: Every CLAUDE.md is capped and every rule has a reason
+        id: claude-md
+        continue-on-error: true
+        run: |
+          status=0
+          files=$(find repo -name CLAUDE.md -not -path '*/node_modules/*' -not -path '*/.git/*')
+          [ -n "$files" ] || echo "No CLAUDE.md in this repo."
+          for f in $files; do
+            python3 akenon-github/scripts/claude_md.py "$f" --root repo --repo "${GITHUB_REPOSITORY#*/}" || status=1
+          done
+          exit $status
+
       - name: Nothing weakens the checks
         id: gaming
         continue-on-error: true
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 akenon-github/scripts/gaming_check.py "$BASE_SHA" repo
+          # Off a PR, origin/main...HEAD is what the commit adds since it left main: a Peras
+          # branch's patch, and nothing on a commit of main.
+          BASE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        run: python3 akenon-github/scripts/gaming_check.py "$BASE" repo
 
       - name: Docs are in the map, headed, and name only what exists
         id: docs
         continue-on-error: true
         run: python3 akenon-github/scripts/docs_check.py repo --repo "${GITHUB_REPOSITORY#*/}"
+
+      - name: Result
+        env:
+          OUTCOMES: >-
+            ${{ github.event_name == 'pull_request' && format('title={0} closes-issue={1} author-assigned={2} stacked={3}',
+            steps.title.outcome, steps.closes-issue.outcome, steps.author-assigned.outcome, steps.stacked.outcome) || '' }}
+            claude-md=${{ steps.claude-md.outcome }}
+            gaming=${{ steps.gaming.outcome }}
+            docs=${{ steps.docs.outcome }}
+        run: python3 akenon-github/scripts/step_results.py
+
+  docs-tick-check:
+    name: docs-tick${{ github.event_name == 'workflow_dispatch' && ' (dispatch)' || github.event_name == 'push' && github.ref_name != 'main' && ' (branch)' || '' }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Get the repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: repo
+          fetch-depth: 0 # docs-covered diffs the merge commit against HEAD^1
+          persist-credentials: false
+
+      - name: Get the scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          # this repo's own PRs test their own version of the scripts; every other repo uses main
+          ref: ${{ github.repository == 'akenon-studio/.github' && github.event.pull_request.head.sha || 'main' }}
+          path: akenon-github
+          persist-credentials: false
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml==6.0.2
 
       - name: Docs covering the changed code are updated or still accurate
         id: docs-covered
@@ -141,14 +278,6 @@ jobs:
 
       - name: Result
         env:
-          OUTCOMES: >-
-            title=${{ steps.title.outcome }}
-            closes-issue=${{ steps.closes-issue.outcome }}
-            claude-md=${{ steps.claude-md.outcome }}
-            author-assigned=${{ steps.author-assigned.outcome }}
-            stacked=${{ steps.stacked.outcome }}
-            gaming=${{ steps.gaming.outcome }}
-            docs=${{ steps.docs.outcome }}
-            docs-covered=${{ steps.docs-covered.outcome }}
+          OUTCOMES: docs-covered=${{ steps.docs-covered.outcome }}
           ADVISORY: docs-covered
         run: python3 akenon-github/scripts/step_results.py
