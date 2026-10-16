@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from ai_scorecard import (FIX_TITLE, body, commented_lines, cost, escapes, is_round, last_month,  # noqa: E402
+from ai_scorecard import (FIX_TITLE, body, is_fix, local_runs, commented_lines, cost, escapes, is_round, last_month,  # noqa: E402
                           local_findings, month_range, outcome, pr_record, regraded, removed_lines,
                           score, severity, shares, thread_outcome, usage_of, was_there)
 
@@ -183,6 +183,13 @@ class LocalSectionTest(unittest.TestCase):
         self.assertEqual([f["disputed"] for f in found], [False, False, True, False])
         self.assertEqual(found[0]["path"], "scripts/a.py")
 
+    def test_runs_and_peras_rows(self):
+        self.assertEqual(local_runs(SECTION), 2)
+        self.assertEqual(local_runs("no section"), 0)
+        # on a Peras PR, a fix with no severity after re-grading waits for the person's re-grade
+        self.assertEqual([f["ungraded"] for f in local_findings(SECTION, peras_pr=True)],
+                         [True, False, False, False])
+
     def test_only_inside_the_markers(self):
         self.assertEqual(local_findings("| R1.1 | `a:1` | major | | fixed | |"), [])
         self.assertEqual(len(local_findings(SECTION.replace("<!-- local-review:end -->", ""))), 4)
@@ -197,26 +204,40 @@ class LocalSectionTest(unittest.TestCase):
 
 class ThreadOutcomeTest(unittest.TestCase):
     def test_a_persons_reply_is_their_call(self):
-        got = thread_outcome([reply("Not an issue, re-graded minor: caller checks it")], False)
+        got = thread_outcome([reply("Not an issue, re-graded minor: caller checks it")], False, "major")
         self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("not an issue", "minor", False))
 
     def test_an_agents_re_grade_is_a_dispute_until_a_person_answers(self):
         agent = reply("Not an issue: unreachable.\n\n<!-- agent -->")
-        self.assertTrue(thread_outcome([agent], False)["disputed"])
-        settled = thread_outcome([agent, reply("Not an issue, agreed.")], False)
+        self.assertTrue(thread_outcome([agent], False, "major")["disputed"])
+        settled = thread_outcome([agent, reply("Not an issue, agreed.")], False, "major")
         self.assertEqual((settled["outcome"], settled["disputed"]), ("not an issue", False))
 
     def test_an_agents_fix_counts(self):
-        got = thread_outcome([reply("Fixed in abc.\n\n<!-- agent -->")], False)
+        got = thread_outcome([reply("Fixed in abc.\n\n<!-- agent -->")], False, "major")
         self.assertEqual((got["outcome"], got["disputed"], got["regraded"]), ("fixed", False, None))
+
+    def test_an_agents_own_re_grade_with_a_fix_is_a_dispute(self):
+        agent = reply("Fixed in abc, re-graded minor.\n\n<!-- agent -->")
+        self.assertTrue(thread_outcome([agent], False, "major")["disputed"])
+        got = thread_outcome([agent, reply("Agreed, re-graded minor.")], False, "major")
+        self.assertEqual((got["disputed"], got["regraded"]), (False, "minor"))
+
+    def test_a_person_agreeing_keeps_the_agents_re_grade(self):
+        agent = reply("Moved to #5, re-graded minor.\n\n<!-- agent -->")
+        got = thread_outcome([agent, reply("Moved to #5, agreed")], False, "major")
+        self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("moved", "minor", False))
+        # a re-grade in a later reply than the outcome still counts
+        got = thread_outcome([reply("Fixed"), reply("and re-graded minor")], False, "major")
+        self.assertEqual(got["regraded"], "minor")
 
     def test_peras_fixes_are_ungraded_until_a_person_re_grades(self):
         peras = reply("**Fixed** in abc", "akenon-studio-peras", "Bot")
-        self.assertTrue(thread_outcome([peras], True)["ungraded"])
-        got = thread_outcome([peras, reply("Re-graded minor: the input can't be empty here.")], True)
+        self.assertTrue(thread_outcome([peras], True, "major")["ungraded"])
+        got = thread_outcome([peras, reply("Re-graded minor: the input can't be empty here.")], True, "major")
         self.assertEqual((got["ungraded"], got["regraded"]), (False, "minor"))
         # Peras's "disputed" alone is no outcome (design 7.13 Stage 10)
-        self.assertIsNone(thread_outcome([reply("disputed", "akenon-studio-peras", "Bot")], True)["outcome"])
+        self.assertIsNone(thread_outcome([reply("disputed", "akenon-studio-peras", "Bot")], True, "major")["outcome"])
 
     def test_regrade_phrases(self):
         self.assertEqual(regraded("downgraded to **Minor**"), "minor")
@@ -243,6 +264,8 @@ class SharesTest(unittest.TestCase):
         self.assertEqual((ci["findings"], ci["fixed"], ci["moved"], ci["downgraded"], ci["kept"]), (2, 1, 1, 1, 1))
         s = score([rec])
         self.assertEqual(len(s["disputed"]), 1)
+        self.assertEqual([f["id"] for f in s["no_outcome"]], ["R2.1"])
+        self.assertEqual((s["runs_mean"], s["local_prs"]), (2, 1))
         text = body("2026-10", s)
         self.assertIn("| local | 1 | 3 | 2 | 1 (50%) | 1 (50%) | 0 (0%) | 1 (50%) | 1 (50%) |", text)
         self.assertIn("Disputed, not yet settled by a person:\n- [platform#7, local round 1, major, not an issue](u)", text)
@@ -254,6 +277,13 @@ class EscapesTest(unittest.TestCase):
     def test_removed_lines_are_the_old_side(self):
         self.assertEqual(removed_lines(self.PATCH), [11, 12])
         self.assertEqual(removed_lines("@@ -1,0 +1,2 @@\n+a\n+b"), [])
+
+    def test_a_no_issue_bots_fix_is_no_escape(self):
+        renovate = {"__typename": "Bot", "login": "renovate"}
+        self.assertFalse(is_fix({"title": "fix(deps): update x", "author": renovate}))
+        self.assertTrue(is_fix({"title": "fix(deps): update x", "author": {"__typename": "User", "login": "RuvinduH"}}))
+        self.assertTrue(is_fix({"title": "fix: x", "author": {"__typename": "Bot", "login": "akenon-studio-peras"}}))
+        self.assertFalse(is_fix({"title": "feat: x", "author": {"__typename": "User", "login": "RuvinduH"}}))
 
     def test_fix_titles(self):
         self.assertTrue(FIX_TITLE.match("fix(ai-review): x"))
@@ -287,7 +317,10 @@ class EscapesTest(unittest.TestCase):
         self.assertEqual((e["fix"], e["pr"], e["lines"], e["paths"]), ("platform#9", "platform#4", 1, ["scripts/a.py"]))
         self.assertEqual(e["findings"], ["CI round 1 major: not an issue", "local R1.1 major: fixed",
                                          "local R1.2 critical re-graded minor: issue"])
-        text = body("2026-10", score([], got))
+        s = score([], got + [dict(got[0], pr="platform#5")])
+        self.assertEqual((s["fixes"], len(s["escapes"])), (1, 2))  # one fix, two reviewed PRs behind it
+        text = body("2026-10", s)
+        self.assertIn("| 1 (2 reviewed PR(s) behind them) |", text)
         self.assertIn("[platform#9](u9) changes 1 line(s) [platform#4](u4) last changed (`scripts/a.py`)", text)
 
 
