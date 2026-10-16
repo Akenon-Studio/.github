@@ -1,7 +1,9 @@
 """Tests for the reusable workflows every repo calls (design 4.2): their jobs always run, and this
 repo calls each one itself. Run: python3 -m unittest discover tests"""
 
+import os
 import pathlib
+import subprocess
 import unittest
 
 import yaml
@@ -121,6 +123,44 @@ class ReusableWorkflowsTest(unittest.TestCase):
         # a copy that adds workflow_dispatch gives each dispatched commit a group of its own
         self.assertTrue(caller["concurrency"]["group"].endswith("-${{ github.event.inputs.sha }}"))
 
+
+    def test_a_dispatch_runs_only_on_a_peras_branch_and_saves_no_cache(self):
+        # its code may be unreviewed (a Peras patch): it never runs in main's cache scope, which
+        # every PR reads (Akenon-Studio/.github#206)
+        for name in ("pr-title.yml", "security-scan.yml"):
+            for job_id, job in REUSABLE[name]["jobs"].items():
+                if (name, job_id) in self.PR_ONLY:
+                    continue
+                first = job["steps"][0]
+                self.assertEqual(first["if"], "github.event_name == 'workflow_dispatch'", f"{name}: {job_id}")
+                # run it as the runner does (bash -e), with the env it gets
+                full = "0123456789abcdef0123456789abcdef01234567"
+                for ref, sha, ok in (("refs/heads/peras/12-1", full, True), ("refs/heads/main", full, False),
+                                     ("refs/heads/peras-x", full, False), ("refs/heads/peras/12-1", "main", False),
+                                     ("refs/heads/peras/12-1", full[:12], False),
+                                     ("refs/heads/peras/12-1", full.upper(), False),
+                                     ("refs/heads/peras/12-1", full + "\nmain", False),
+                                     ("refs/heads/peras/12-1", full + " ", False),
+                                     ("refs/heads/peras/12-1", "", False),
+                                     ("refs/heads/peras/12-1", "main\n" + full, False),
+                                     ("refs/heads/peras/12-1", " " + full, False),
+                                     ("refs/heads/peras/12-1", "refs/tags/" + full, False),
+                                     ("", full, False)):
+                    run = subprocess.run(["bash", "-e", "-c", first["run"]], capture_output=True,
+                                         env={"REF": ref, "SHA": sha, "PATH": os.environ["PATH"]})
+                    self.assertEqual(run.returncode == 0, ok, f"{name}: {job_id}: {ref} {sha}")
+                self.assertEqual(first["env"], {"REF": "${{ github.ref }}", "SHA": "${{ github.event.inputs.sha }}"})
+                # and its failure stops the job: nothing after it runs anyway
+                self.assertNotIn("continue-on-error", first, f"{name}: {job_id}")
+                for step in job["steps"][1:]:
+                    # no status function at all (Actions matches names in any case): success() stays implied
+                    self.assertNotRegex(str(step.get("if", "")), r"(?i)\b(always|failure|cancelled|success)\s*\(",
+                                        f"{name}: {job_id}: {step.get('name')}")
+                for step in job["steps"]:
+                    cache = step.get("with", {}).get("cache")
+                    if cache:
+                        self.assertEqual(cache, "${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}",
+                                         f"{name}: {job_id}")
 
     def test_one_job_per_check_workflow_and_every_check_step_reported(self):
         # design 6.3: billing rounds every job up to a minute; a check step that isn't in the
