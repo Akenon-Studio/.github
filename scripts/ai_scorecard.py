@@ -571,9 +571,10 @@ def is_open(f):
     return not f.get("outcome") or bool(f.get("disputed"))
 
 
-def links(items, text):
-    """The items as links; one still open is only counted, since the issue is public (design 6.2)."""
-    named = [i for i in items if not is_open(i)]
+def links(items, text, findings=True):
+    """The items as links. Of findings, one still open is only counted, since the issue is public
+    (design 6.2); PRs (`findings=False`) are always named."""
+    named = [i for i in items if not (findings and is_open(i))]
     left = len(items) - len(named)
     lines = [f"- [{text(i)}]({i['url']})" for i in named]
     lines += [f"- {left} still open, counted only (this issue is public; the PR's threads name them)"] if left else []
@@ -615,7 +616,7 @@ False alarms:
 {links(s['false_alarms'], lambda t: f"{t['pr']}, round {t['round']}, {t['severity']}")}
 
 Round 4 or later:
-{links(s['long'], lambda p: f"{p['repo']}#{p['number']}, {p['rounds']} rounds")}
+{links(s['long'], lambda p: f"{p['repo']}#{p['number']}, {p['rounds']} rounds", findings=False)}
 
 No readable outcome (the reply should start with Fixed, Not an issue or Moved to): {len(s['unreadable'])},
 counted only, since each is still open (this issue is public, design 6.2).
