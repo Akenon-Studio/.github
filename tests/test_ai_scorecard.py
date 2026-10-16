@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 import ai_scorecard  # noqa: E402
 from ai_scorecard import (FIX_TITLE, body, is_fix, local_runs, commented_lines, cost, escapes, is_round, last_month,  # noqa: E402
-                          later_escapes, later_outcomes, later_range, with_later, local_findings, month_range, outcome, pr_record, regraded, removed_lines,
+                          later_escapes, later_outcomes, later_ranges, with_later, local_findings, month_range, outcome, pr_record, regraded, removed_lines,
                           score, severity, shares, thread_outcome, usage_of, was_there)
 
 MARKER = "<!-- ai-review -->"
@@ -453,6 +453,7 @@ class LaterOutcomesTest(unittest.TestCase):
         got = later_outcomes([
             said(),
             said(),  # the same outcome said twice is one
+            said(kind="revert", ref="Akenon-Studio/platform#8", editor=PERAS_APP),  # the app's own edit
             said(kind="bug", ref="Akenon-Studio/peras#3", at="2026-10-31T23:00:00Z"),
             said(kind="revert", ref="Akenon-Studio/platform#10", by=person),
             said(kind="revert", ref="Akenon-Studio/platform#11", by={"__typename": "User", "login": "RuvinduH"}),
@@ -464,7 +465,7 @@ class LaterOutcomesTest(unittest.TestCase):
             {"author": PERAS_APP, "body": "<!-- peras:later-outcome v1 {not json} -->"},
             {"author": PERAS_APP, "body": "Said, not marked: <!-- peras:later-outcome v1 {} -->"},
         ], "2026-10")
-        self.assertEqual([(o["kind"], o["ref"]) for o in got], [("fix", "platform#9"), ("bug", "peras#3")])
+        self.assertEqual([(o["kind"], o["ref"]) for o in got], [("fix", "platform#9"), ("revert", "platform#8"), ("bug", "peras#3")])
 
     def test_a_later_outcome_is_an_escape_of_that_prs_review(self):
         outcomes = later_outcomes([said(kind="bug", ref="Akenon-Studio/peras#3")], "2026-10")
@@ -495,7 +496,9 @@ class LaterOutcomesTest(unittest.TestCase):
         self.assertNotIn("later", blamed[0])  # the blame's list is left as it was
 
     def test_collect_reads_peras_prs_merged_up_to_90_days_before(self):
-        self.assertEqual(later_range("2026-10"), "2026-07-03..2026-10-31")
+        self.assertEqual(later_ranges("2026-10"), ["2026-07-03..2026-07-31", "2026-08-01..2026-08-31",
+                                                   "2026-09-01..2026-09-30", "2026-10-01..2026-10-31"])
+        self.assertEqual(later_ranges("2026-03")[0], "2025-12-01..2025-12-31")
         peras_pr = {"number": 4, "url": "u4", "repository": {"name": "platform"}, "author": PERAS_APP,
                     "comments": {"nodes": [said(kind="bug", ref="Akenon-Studio/peras#3")]}}
         other = dict(peras_pr, number=5, author={"__typename": "User", "login": "akenon-studio-peras"})
@@ -520,8 +523,10 @@ class LaterOutcomesTest(unittest.TestCase):
                 data = json.loads(out.read_text())
         finally:
             ai_scorecard.graphql, ai_scorecard.managed_repos = saved
-        self.assertIn("org:akenon-studio is:pr is:merged author:app/akenon-studio-peras merged:2026-07-03..2026-10-31",
+        self.assertIn("org:akenon-studio is:pr is:merged author:app/akenon-studio-peras merged:2026-07-03..2026-07-31",
                       queries)
+        self.assertEqual(sum("author:app/" in (q or "") for q in queries), 4)
+        # the same PR, found by each of the four searches, gives its outcome once
         self.assertEqual([(e["fix"], e["pr"], e["later"]) for e in data["escapes"]], [("peras#3", "platform#4", "bug")])
 
 

@@ -541,10 +541,16 @@ def search(query, q):
         after = page["pageInfo"]["endCursor"]
 
 
-def later_range(month):
-    """The merge dates of the PRs whose later outcomes can fall in `month`: ESCAPE_DAYS before it, on."""
-    start, end = month_range(month).split("..")
-    return f"{datetime.date.fromisoformat(start) - datetime.timedelta(days=ESCAPE_DAYS)}..{end}"
+def later_ranges(month):
+    """The merge dates of the PRs whose later outcomes can fall in `month` (ESCAPE_DAYS before it,
+    on), a month or less per search, since a search finds at most 1,000."""
+    start, end = (datetime.date.fromisoformat(d) for d in month_range(month).split(".."))
+    day, out = start - datetime.timedelta(days=ESCAPE_DAYS), []
+    while day <= end:
+        last = min(end, (day.replace(day=1) + datetime.timedelta(days=32)).replace(day=1) - datetime.timedelta(days=1))
+        out.append(f"{day}..{last}")
+        day = last + datetime.timedelta(days=1)
+    return out
 
 
 def collect(path, month):
@@ -580,7 +586,9 @@ def collect(path, month):
             escaped += escapes(repo, fix, files, lambda p, r=repo, sha=parents[0]["oid"]: blame(r, sha, p),
                                lambda m, r=repo: reviewed(r, m))
     later = []
-    for n in search(LATER_QUERY, f"org:{ORG} is:pr is:merged author:app/{PERAS} merged:{later_range(month)}"):
+    peras_prs = [n for dates in later_ranges(month)
+                 for n in search(LATER_QUERY, f"org:{ORG} is:pr is:merged author:app/{PERAS} merged:{dates}")]
+    for n in peras_prs:
         repo = n["repository"]["name"]
         if repo in repos and is_peras(n.get("author")):
             outcomes = later_outcomes(n["comments"]["nodes"], month)
