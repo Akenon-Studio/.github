@@ -109,6 +109,14 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual(out["comments"], [])
         self.assertNotIn("again", out["body"])
 
+    def test_the_ask_names_the_severity_after_re_grading(self):
+        # design 6.4: a reply gives the outcome and the severity after re-grading (.github#201)
+        self.assertIn("severity after re-grading", ai_review.OUTCOME_ASK)
+        self.assertIn("**Fixed (major, kept)**", ai_review.OUTCOME_ASK)
+        # a thread from before keeps its earlier ask, which is still left out of what the model reads
+        old = "**Major**\n\nx\n\n" + ai_review.OUTCOME_ASKS[1] + "\n\n<!-- ai-review -->"
+        self.assertEqual(ai_review.without_ask(old.replace("<!-- ai-review -->", "")).strip(), "**Major**\n\nx")
+
     def test_it_never_approves(self):
         self.assertEqual(to_github({"summary": "fine", "comments": []}, {}, [])["event"], "COMMENT")
 

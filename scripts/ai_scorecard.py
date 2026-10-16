@@ -22,12 +22,15 @@ What it reports (design 6.4):
 - rounds per PR: the reviews that finished (not a cut-off or too-large note).
 - cost per PR: from the tokens each review records (its usage marker), at PRICES.
 - threads with no readable outcome: resolved without a reply that starts with Fixed, Not an issue
-  or Moved to (the reply the reviewer asks for on every thread).
+  or Moved to (the reply the reviewer asks for on every thread, with the severity after re-grading
+  in brackets: `Fixed (major, kept)`).
 - each outcome's share by round, for local and CI review apart: of the critical and major findings
   (CI's threads, the local runs' rows), the severity after re-grading (kept, downgraded, raised) and
   the outcome, counted apart, so a finding downgraded and then fixed counts in both. A local row
-  gives both; a CI reply gives the outcome and, if it says one (`re-graded minor`, `downgraded to
-  minor`), the new severity, else the severity is kept. An agent's re-grade is a dispute, counted
+  gives both; a CI reply gives the outcome and the severity after re-grading, in brackets on its
+  first line (`Fixed (major, kept)`, `Moved to #12 (minor, downgraded)`) or in words (`re-graded
+  minor`, `downgraded to minor`); a CI finding whose replies name none is counted as unstated, not
+  kept (.github#201). An agent's re-grade is a dispute, counted
   only once settled: in a local row, review-branch.py marks it "(an agent's, settled)" or "(an
   agent's, not settled)", whoever authored the PR; in a thread, a reply carrying the agent marker
   (`<!-- agent -->`), or the Peras app's, states an outcome other than Fixed, or a Fixed with a new
@@ -66,6 +69,10 @@ RANK = {"nit": 0, "minor": 1, "major": 2, "critical": 3}
 # A reply's new severity: `re-graded minor`, `downgraded to minor`, `raised to critical`
 REGRADE = re.compile(r"\b(?:re-?graded(?:\s+(?:to|as)\b)?|downgraded\s+to|raised\s+to)\s*:?\s*\**"
                      r"(critical|major|minor|nit)\b", re.I)
+# The same, as the reviewer asks for it (scripts/ai_review.py OUTCOME_ASK): in brackets on the
+# reply's first line, `Fixed (major, kept)`, `**Moved to** #12 **(minor)**`
+STATED = re.compile(r"\(\s*\**\s*(critical|major|minor|nit)\b\s*(?:,\s*(?:kept|downgraded|raised)\s*)?\**\s*\)",
+                    re.I)
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
 # review-branch.py's section in a PR's description (design 6.4); ai_review.py skips the same markers
@@ -76,7 +83,7 @@ LOCAL_RUNS = re.compile(r"(\d+) local run\(s\)")
 LOCAL_OUTCOMES = {"fixed": "fixed", "issue": "issue", "future": "future", "not-an-issue": "not an issue"}
 # Every outcome, in the report's order: local runs give issue or future, CI's replies "Moved to" either
 SHARE_OUTCOMES = ("fixed", "issue", "future", "moved", "not an issue")
-GRADES = ("kept", "downgraded", "raised")
+GRADES = ("kept", "downgraded", "raised", "unstated")
 FIX_TITLE = re.compile(r"fix(\([^)]*\))?!?:")
 ESCAPE_DAYS = 90
 HUNK_HEAD = re.compile(r"@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@")
@@ -216,8 +223,9 @@ def is_agent(comment):
 
 
 def regraded(text):
-    """The severity a reply re-grades a finding to (`re-graded minor`), or None."""
-    found = REGRADE.search(text or "")
+    """The severity after re-grading a reply states: in brackets on its first line (`Fixed (major,
+    kept)`), else in words (`re-graded minor`); or None."""
+    found = STATED.search((text or "").strip().partition("\n")[0]) or REGRADE.search(text or "")
     return found.group(1).lower() if found else None
 
 
@@ -485,6 +493,10 @@ def findings_of(prs):
 
 
 def grade(f):
+    """Kept, downgraded or raised; unstated for a CI finding whose replies name no severity (a
+    local row's blank one is review-branch.py's: nobody re-graded it, so it is kept)."""
+    if f.get("kind") == "CI" and not f.get("regraded"):
+        return "unstated"
     after = f.get("regraded") or f["severity"]
     return "kept" if RANK[after] == RANK[f["severity"]] else "downgraded" if RANK[after] < RANK[f["severity"]] else "raised"
 
@@ -551,8 +563,8 @@ def share(n, of):
 
 
 def shares_table(table):
-    head = ("| Review | Round | Findings | Counted | Kept | Downgraded | Raised | Fixed | Issue | Future | Moved "
-            "| Not an issue | Disputed | No outcome | Ungraded |\n|" + "---|" * 15)
+    head = ("| Review | Round | Findings | Counted | Kept | Downgraded | Raised | Unstated | Fixed | Issue | Future "
+            "| Moved | Not an issue | Disputed | No outcome | Ungraded |\n|" + "---|" * 16)
     rows = [f"| {kind} | {n} | {r['findings']} | {r['counted']} | "
             + " | ".join(share(r[k], r["counted"]) for k in (*GRADES, *SHARE_OUTCOMES))
             + f" | {r['disputed']} | {r['no outcome']} | {r['ungraded']} |" for (kind, n), r in table.items()]
@@ -601,8 +613,8 @@ The AI review scorecard for {month} (design 6.4), from {s['prs']} merged PR(s) a
 | Escapes: `fix` PRs changing lines a reviewed PR last changed in the {ESCAPE_DAYS} days before | {s['fixes']} ({len(s['escapes'])} reviewed PR(s) behind them) | near 0 |{unrated}
 
 Each outcome's share by round, of the critical and major findings counted: those with an outcome,
-an agent's re-grade only once settled. The severity after re-grading (kept, downgraded, raised) and
-the outcome are counted apart. Local review's outcomes come from the PR's local-review section, CI's
+an agent's re-grade only once settled. The severity after re-grading (kept, downgraded, raised, or
+unstated: a CI reply that names none) and the outcome are counted apart. Local review's outcomes come from the PR's local-review section, CI's
 from the thread replies; disputed, ungraded and outcome-less findings aren't counted in the shares.
 This issue is public (design 6.2), so findings still open (disputed, or with no outcome) are only
 counted here; each PR's threads and local-review section name them.
@@ -618,7 +630,8 @@ False alarms:
 Round 4 or later:
 {links(s['long'], lambda p: f"{p['repo']}#{p['number']}, {p['rounds']} rounds", findings=False)}
 
-No readable outcome (the reply should start with Fixed, Not an issue or Moved to): {len(s['unreadable'])},
+No readable outcome (the reply should start with Fixed, Not an issue or Moved to, then the severity
+after re-grading in brackets: `Fixed (major, kept)`): {len(s['unreadable'])},
 counted only, since each is still open (this issue is public, design 6.2).
 
 Ungraded (Peras fixed them; no person's re-grade yet):
