@@ -353,11 +353,13 @@ def run_one(gh, number, required, deadline, threads_required=True, reviewed=Fals
             print(f"#{number}: merged")
             return "merged", pr.get("author") or {}
         no_review = reviewed and review_state(pr) is None
-        if no_review:
+        if no_review and all(v == "PASS" for v in check_states(pr, required).values()):
+            # from when the checks are green, the look that would merge: slow checks don't use it up
             no_review_since.setdefault(head, time.time())
+        no_review_for = time.time() - no_review_since[head] if head in no_review_since else 0
         action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0,
                                 threads_required,
-                                (time.time() - no_review_since[head] if no_review else 0) if reviewed else None)
+                                (no_review_for if no_review else 0) if reviewed else None)
         if updated_from and head != updated_from[0]:
             updated_from = None
         if updated_from and action not in ("gone", "drop"):

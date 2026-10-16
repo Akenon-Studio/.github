@@ -443,6 +443,16 @@ class RunOneTest(unittest.TestCase):
         self.assertGreaterEqual(waited, merge_lane.REVIEW_GRACE)
         self.assertLess(waited, merge_lane.REVIEW_GRACE + 2 * merge_lane.POLL)
 
+    def test_slow_checks_do_not_use_up_the_review_grace(self):
+        # the checks take 10 minutes; the review run shows a minute after they pass
+        slow = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
+                            run("security-scan / code")], status="BLOCKED")
+        minute = 60 // merge_lane.POLL
+        gh = FakeGitHub([slow] * (10 * minute) + [green()] * minute
+                        + [green(review(status="QUEUED", conclusion=None)), green(review())])
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"), reviewed=True)[0], "merged")
+        self.assertEqual(len(gh.looks), 1)  # it waited for the late review, then merged
+
     def test_without_the_review_a_green_pr_merges_at_once(self):
         gh = FakeGitHub([green()])
         self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"), reviewed=False)[0], "merged")
