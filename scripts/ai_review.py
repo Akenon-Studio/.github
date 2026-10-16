@@ -482,27 +482,30 @@ def changes_since(commit, paths):
     return run.stdout if run.returncode == 0 else None
 
 
-def git_out(*args):
-    """A git command's output, stripped; None when it fails."""
+def git_out(*args, strip=True):
+    """A git command's output, stripped unless told not to; None when it fails."""
     try:
         run = subprocess.run(["git", *args], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
-    return run.stdout.strip() if run.returncode == 0 else None
+    return (run.stdout.strip() if strip else run.stdout) if run.returncode == 0 else None
 
 
 def later_changes(commit, repo, paths, base=None):
-    """(changes since, design moved) for a later round from an earlier reviewed commit: the PR's
-    files' diff since it (changes_since; None for a full round), and in the design's own repo, the
-    design's diff brought in from `main` since (design_moved), labelled apart in the request."""
+    """(changes since, design moved, size) for a later round from an earlier reviewed commit: the
+    PR's files' diff since it (changes_since; None for a full round), in the design's own repo the
+    design's diff brought in from `main` since (design_moved), labelled apart in the request, and
+    how much changed, for the "too much changed" limit: main's design diff counted once, also when
+    a conflict leaves it in the changes since too."""
     since = changes_since(commit, list(paths))
     if since is None:
-        return None, ""
+        return None, "", 0
     moved, own = design_moved(commit, repo, paths, base)
     if own is not None:  # the PR's own design changes since, without main's
         others = [p for p in paths if p != DESIGN_PATH]  # no paths would diff the whole tree
         since = ((changes_since(commit, others) or "") if others else "") + own
-    return since, moved
+    mixed = DESIGN_PATH in paths and own is None  # main's design diff is in `since` already
+    return since, moved, len(since) + (0 if mixed else len(moved))
 
 
 def design_moved(commit, repo, paths, base=None):
@@ -527,7 +530,7 @@ def design_moved(commit, repo, paths, base=None):
         return "", None
     if before == now:
         return "", None
-    moved = git_out("diff", before, now, "--", DESIGN_PATH)
+    moved = git_out("diff", before, now, "--", DESIGN_PATH, strip=False)  # a hunk can end in a blank line
     if not moved:
         return "", None
     # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own.
@@ -537,12 +540,16 @@ def design_moved(commit, repo, paths, base=None):
                              capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         run = None
-    lines = run.stdout.split("\n") if run and run.returncode in (0, 1) else []
+    if not run or run.returncode not in (0, 1):  # git older than 2.38 has no --write-tree
+        print("git merge-tree failed (" + (run.stderr.strip() if run else "didn't run") + "): the round shows "
+              "the design's own changes and main's together, main's labelled.", file=sys.stderr)
+        return moved, None
+    lines = run.stdout.split("\n")
     conflicted = lines[1:lines.index("", 1)] if "" in lines[1:] else lines[1:]
-    if not lines or not lines[0] or DESIGN_PATH in conflicted:
+    if not lines[0] or DESIGN_PATH in conflicted:
         print("The design's own changes and main's conflict: the round shows both, main's labelled.", file=sys.stderr)
-        return moved + "\n", None
-    return moved + "\n", changes_since(lines[0], [DESIGN_PATH])
+        return moved, None
+    return moved, changes_since(lines[0], [DESIGN_PATH])
 
 
 def later_paths(changed, files, moved):
@@ -721,14 +728,14 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     if since and files and subprocess.run(["git", "merge-base", "--is-ancestor", since, "HEAD"],
                                 capture_output=True).returncode == 0:
         # the branch's own files only, and in handbook a design changed on main apart, as in CI
-        changes, moved = later_changes(since, repo, files, base)
+        changes, moved, size = later_changes(since, repo, files, base)
         if changes is not None and not changes.strip() and not moved and not changes_since(since, ["CLAUDE.md"]):
             # nothing of the branch's own changed since (main merged in, a lockfile): nothing to review,
             # as CI's fingerprint skips such a push
             print(json.dumps({"nothing": "nothing of the branch's own changed since the last run"}))
             return 0
         # round one when CLAUDE.md changed since, or too much changed
-        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or len(changes) + len(moved) > MAX_DIFF_CHARS):
+        if changes is not None and (changes_since(since, ["CLAUDE.md"]) or size > MAX_DIFF_CHARS):
             changes = None
     if changes is not None:  # a later round: the changes, and the files they touch in full
         changed = split_diff(changes)  # generated files left out, as in CI
@@ -796,12 +803,12 @@ def main(argv):
         design = read_design(os.environ.get("DESIGN_FILE"), repo.split("/")[1])
         # in handbook, a design changed on main is what the round is for, labelled apart from the PR's
         base = (pr.get("base") or {}).get("ref")
-        since, moved = (later_changes(done[-1]["commit_id"], name, files, base and f"origin/{base}")
-                        if done else (None, ""))
+        since, moved, size = (later_changes(done[-1]["commit_id"], name, files, base and f"origin/{base}")
+                              if done else (None, "", 0))
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])
-                                  or len(since) + len(moved) > MAX_DIFF_CHARS):
+                                  or size > MAX_DIFF_CHARS):
             since, moved = None, ""
         history = earlier_review(repo, number, token, done) if done else ""
         if since is not None:  # a later round: the changes, and the files they touch in full

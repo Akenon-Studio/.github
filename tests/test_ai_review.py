@@ -520,7 +520,8 @@ class MainTest(unittest.TestCase):
         Returns the reviewed commit; main is `main-line` and `origin/main`."""
         import subprocess
         g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-        lines = ["## 6. Engineering", "a rule", *(f"filler {i}" for i in range(8)), "the end"]
+        # blank lines after the rule: main's diff ends in blank context lines, which must survive
+        lines = ["## 6. Engineering", "a rule", "", "", "", *(f"filler {i}" for i in range(8)), "the end"]
 
         def write(text, message, notes="notes\n"):
             with open("design.md", "w") as f:
@@ -602,10 +603,12 @@ class MainTest(unittest.TestCase):
         reviewed = self.design_pr_repo(conflict=True)
         files = ai_review.split_diff(subprocess.run(["git", "diff", "main-line...HEAD"], capture_output=True,
                                                     text=True).stdout)
-        since, moved = ai_review.later_changes(reviewed, "handbook", files, "main-line")
+        since, moved, size = ai_review.later_changes(reviewed, "handbook", files, "main-line")
         self.assertIn("+main's own last line", moved)
         self.assertIn("+the PR's fix", since)
         self.assertIn("main's own last line", since)
+        # main's diff is in `since` already: the "too much changed" limit counts it once
+        self.assertEqual(size, len(since))
 
     def test_a_conflict_in_another_file_still_shows_the_design_prs_own_changes_apart(self):
         # the merge's conflict is in notes.md, which the author resolved; the design's merged cleanly
@@ -613,8 +616,13 @@ class MainTest(unittest.TestCase):
         reviewed = self.design_pr_repo(other_conflict=True)
         files = ai_review.split_diff(subprocess.run(["git", "diff", "main-line...HEAD"], capture_output=True,
                                                     text=True).stdout)
-        since, moved = ai_review.later_changes(reviewed, "handbook", files, "main-line")
+        since, moved, size = ai_review.later_changes(reviewed, "handbook", files, "main-line")
         self.assertIn("+a rule changed on main", moved)
+        self.assertEqual(size, len(since) + len(moved))
+        # whole, as git gives it: a hunk's trailing blank context lines kept
+        self.assertEqual(moved, subprocess.run(["git", "diff", reviewed + "~1", "main-line", "--", "design.md"],
+                                               capture_output=True, text=True).stdout)
+        self.assertTrue(moved.endswith(" \n"))
         self.assertIn("+the PR's fix", since)
         self.assertNotIn("a rule changed on main", since)
 
