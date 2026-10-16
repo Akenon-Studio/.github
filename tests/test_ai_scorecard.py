@@ -169,11 +169,11 @@ class RecordTest(unittest.TestCase):
         self.assertIn("- [platform#7, round 2, major](u/r2/x = compute_everything(inputs))", text)
         self.assertIn("- 1 still open, counted only", text)
         self.assertIn("No readable outcome (the reply should start with Fixed, Not an issue or Moved to): 1,", text)
+        self.assertIn("### Done when", text)  # a Task form, so issue-fields can file it
 
     def test_a_long_pr_is_named(self):
         long = {"repo": "platform", "number": 8, "url": "u8", "rounds": 4, "cost": None, "threads": []}
         self.assertIn("Round 4 or later:\n- [platform#8, 4 rounds](u8)", body("2026-10", score([long])))
-        self.assertIn("### Done when", text)  # a Task form, so issue-fields can file it
 
 
 # review-branch.py's section as it writes it (peras/core/workspace/bin/review-branch.py, section())
