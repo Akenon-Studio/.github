@@ -7,8 +7,9 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from ai_scorecard import (body, commented_lines, cost, is_round, last_month, month_range,  # noqa: E402
-                          outcome, pr_record, score, severity, usage_of, was_there)
+from ai_scorecard import (FIX_TITLE, body, commented_lines, cost, escapes, is_round, last_month,  # noqa: E402
+                          local_findings, month_range, outcome, pr_record, regraded, removed_lines,
+                          score, severity, shares, thread_outcome, usage_of, was_there)
 
 MARKER = "<!-- ai-review -->"
 USAGE = '<!-- ai-review-usage: {"model": "claude-opus-5-5", "input": 1000000, "cache_read": 0, ' \
@@ -147,6 +148,147 @@ class RecordTest(unittest.TestCase):
         self.assertIn("| 1 of 3 |", text)
         self.assertIn("1 thread(s) from the reviewer before 2026-10-10", text)
         self.assertIn("### Done when", text)  # a Task form, so issue-fields can file it
+
+
+# review-branch.py's section as it writes it (peras/core/workspace/bin/review-branch.py, section())
+SECTION = """Summary.
+
+<!-- local-review:start -->
+## Local review
+2 local run(s) (design 6.4); each critical or major finding and what became of it:
+
+| Finding | Where | Claimed | After re-grading | Outcome | Why |
+|---|---|---|---|---|---|
+| R1.1 | `scripts/a.py:12` | major | | fixed | |
+| R1.2 | `scripts/a.py:40` | critical | minor | issue .github#300 (an agent's, settled) | rare \\| edge |
+| R1.3 | `b.py:3` | major | minor | not-an-issue (an agent's, not settled) | guarded |
+| R2.1 | `b.py:9` | major | | none | |
+<!-- local-review:end -->
+
+Closes #1"""
+
+
+def reply(text, login="RuvinduH", typename="User"):
+    return {"author": {"__typename": typename, "login": login}, "body": text}
+
+
+class LocalSectionTest(unittest.TestCase):
+    def test_rows_as_review_branch_writes_them(self):
+        found = local_findings(SECTION)
+        self.assertEqual([f["id"] for f in found], ["R1.1", "R1.2", "R1.3", "R2.1"])
+        self.assertEqual([f["round"] for f in found], [1, 1, 1, 2])
+        self.assertEqual([f["regraded"] for f in found], [None, "minor", "minor", None])
+        self.assertEqual([f["outcome"] for f in found], ["fixed", "issue", "not an issue", None])
+        # an agent's re-grade is a dispute until settled, by the row's mark, never by the PR's author
+        self.assertEqual([f["disputed"] for f in found], [False, False, True, False])
+        self.assertEqual(found[0]["path"], "scripts/a.py")
+
+    def test_only_inside_the_markers(self):
+        self.assertEqual(local_findings("| R1.1 | `a:1` | major | | fixed | |"), [])
+        self.assertEqual(len(local_findings(SECTION.replace("<!-- local-review:end -->", ""))), 4)
+
+    def test_the_section_counts_only_in_the_orgs_own_description(self):
+        data = {"reviews": {"nodes": []}, "reviewThreads": {"nodes": []}, "body": SECTION,
+                "author": {"__typename": "User", "login": "RuvinduH"}}
+        self.assertEqual(len(pr_record("platform", 9, "u", data)["local"]), 4)
+        self.assertIsNone(pr_record("platform", 9, "u", dict(data, editor={"login": "someone"})))
+        self.assertIsNone(pr_record("platform", 9, "u", dict(data, author={"login": "someone"})))
+
+
+class ThreadOutcomeTest(unittest.TestCase):
+    def test_a_persons_reply_is_their_call(self):
+        got = thread_outcome([reply("Not an issue, re-graded minor: caller checks it")], False)
+        self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("not an issue", "minor", False))
+
+    def test_an_agents_re_grade_is_a_dispute_until_a_person_answers(self):
+        agent = reply("Not an issue: unreachable.\n\n<!-- agent -->")
+        self.assertTrue(thread_outcome([agent], False)["disputed"])
+        settled = thread_outcome([agent, reply("Not an issue, agreed.")], False)
+        self.assertEqual((settled["outcome"], settled["disputed"]), ("not an issue", False))
+
+    def test_an_agents_fix_counts(self):
+        got = thread_outcome([reply("Fixed in abc.\n\n<!-- agent -->")], False)
+        self.assertEqual((got["outcome"], got["disputed"], got["regraded"]), ("fixed", False, None))
+
+    def test_peras_fixes_are_ungraded_until_a_person_re_grades(self):
+        peras = reply("**Fixed** in abc", "akenon-studio-peras", "Bot")
+        self.assertTrue(thread_outcome([peras], True)["ungraded"])
+        got = thread_outcome([peras, reply("Re-graded minor: the input can't be empty here.")], True)
+        self.assertEqual((got["ungraded"], got["regraded"]), (False, "minor"))
+        # Peras's "disputed" alone is no outcome (design 7.13 Stage 10)
+        self.assertIsNone(thread_outcome([reply("disputed", "akenon-studio-peras", "Bot")], True)["outcome"])
+
+    def test_regrade_phrases(self):
+        self.assertEqual(regraded("downgraded to **Minor**"), "minor")
+        self.assertEqual(regraded("re-graded: nit"), "nit")
+        self.assertEqual(regraded("raised to critical"), "critical")
+        self.assertIsNone(regraded("this is a minor point"))
+
+
+class SharesTest(unittest.TestCase):
+    def test_by_round_for_local_and_ci_apart(self):
+        data = {"reviews": {"nodes": [review("r1", "2026-10-11T01:00:00Z", "c1")]}, "body": SECTION,
+                "author": {"__typename": "User", "login": "RuvinduH"}, "reviewThreads": {"nodes": [
+                    thread("r1", "**Major** · high confidence", "y = new_code_here()", ["Fixed, re-graded minor"]),
+                    thread("r1", "**Critical** · high", "z = other_code()", ["Moved to #5"]),
+                    thread("r1", "**Minor** · high", "q = minor_code()", ["Fixed"])]}}
+        rec = pr_record("platform", 7, "u", data, lambda *a: "")
+        table = shares([rec])
+        self.assertEqual(list(table), [("local", 1), ("local", 2), ("CI", 1)])
+        local1 = table["local", 1]
+        self.assertEqual((local1["findings"], local1["counted"], local1["disputed"]), (3, 2, 1))
+        self.assertEqual((local1["fixed"], local1["issue"], local1["kept"], local1["downgraded"]), (1, 1, 1, 1))
+        self.assertEqual(table["local", 2]["no outcome"], 1)
+        ci = table["CI", 1]  # the minor thread isn't a critical or major finding
+        self.assertEqual((ci["findings"], ci["fixed"], ci["moved"], ci["downgraded"], ci["kept"]), (2, 1, 1, 1, 1))
+        s = score([rec])
+        self.assertEqual(len(s["disputed"]), 1)
+        text = body("2026-10", s)
+        self.assertIn("| local | 1 | 3 | 2 | 1 (50%) | 1 (50%) | 0 (0%) | 1 (50%) | 1 (50%) |", text)
+        self.assertIn("Disputed, not yet settled by a person:\n- [platform#7, local round 1, major, not an issue](u)", text)
+
+
+class EscapesTest(unittest.TestCase):
+    PATCH = "@@ -10,4 +10,4 @@\n keep()\n-old_one()\n-old_two()\n+new()\n+new2()\n keep()\n@@ -30,1 +30,2 @@\n same()\n+added()"
+
+    def test_removed_lines_are_the_old_side(self):
+        self.assertEqual(removed_lines(self.PATCH), [11, 12])
+        self.assertEqual(removed_lines("@@ -1,0 +1,2 @@\n+a\n+b"), [])
+
+    def test_fix_titles(self):
+        self.assertTrue(FIX_TITLE.match("fix(ai-review): x"))
+        self.assertTrue(FIX_TITLE.match("fix!: x"))
+        self.assertFalse(FIX_TITLE.match("feat: fix x"))
+        self.assertFalse(FIX_TITLE.match("fixup: x"))
+
+    def test_a_fix_changing_a_reviewed_prs_recent_lines(self):
+        def pr(n, merged):
+            return {"commit": {"associatedPullRequests": {"nodes": [{"number": n, "url": f"u{n}", "mergedAt": merged}]}}}
+        ranges = [dict(pr(4, "2026-09-20T00:00:00Z"), startingLine=1, endingLine=11),  # reviewed, recent
+                  dict(pr(3, "2026-05-01T00:00:00Z"), startingLine=12, endingLine=12),  # over 90 days
+                  dict(pr(2, "2026-09-25T00:00:00Z"), startingLine=13, endingLine=99)]  # not reviewed
+        files = [{"filename": "scripts/a.py", "status": "modified", "patch": self.PATCH},
+                 {"filename": "new.py", "status": "added", "patch": "@@ -0,0 +1 @@\n+x"},
+                 {"filename": "b.py", "status": "modified",
+                  "patch": "@@ -13,1 +13,1 @@\n-old()\n+new()"}]
+        record = {"repo": "platform", "number": 4, "url": "u4", "rounds": 1, "threads": [
+            {"severity": "major", "round": 1, "outcome": "not an issue", "path": "scripts/a.py", "url": "t"}],
+            "local": local_findings(SECTION)}
+        blames = []
+
+        def blame(path):
+            blames.append(path)
+            return ranges
+        got = escapes("platform", {"number": 9, "url": "u9", "mergedAt": "2026-10-10T00:00:00Z"}, files,
+                      blame, lambda n: record if n == 4 else None)
+        self.assertEqual(blames, ["scripts/a.py", "b.py"])  # an added file has no earlier lines
+        self.assertEqual(len(got), 1)
+        e = got[0]
+        self.assertEqual((e["fix"], e["pr"], e["lines"], e["paths"]), ("platform#9", "platform#4", 1, ["scripts/a.py"]))
+        self.assertEqual(e["findings"], ["CI round 1 major: not an issue", "local R1.1 major: fixed",
+                                         "local R1.2 critical re-graded minor: issue"])
+        text = body("2026-10", score([], got))
+        self.assertIn("[platform#9](u9) changes 1 line(s) [platform#4](u4) last changed (`scripts/a.py`)", text)
 
 
 if __name__ == "__main__":
