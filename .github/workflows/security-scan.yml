@@ -19,8 +19,10 @@
 #   In a repo without a pnpm-lock.yaml both pass with nothing to check; the job always runs, so it
 #   can be required everywhere and starts checking the day a lockfile is committed.
 # The repo is checked out under repo/ in the code job, so the scans don't read the scripts' copy.
-# A newer push cancels the run still going, on main too: every scan reads the whole repo (gitleaks
-# its whole history), so the newer commit's scan covers the older one's.
+# A newer push to a branch cancels its run still going: every scan reads the whole repo (gitleaks
+# its whole history), so the newer commit's scan covers the older one's. Every commit of main keeps
+# its own run, since Peras reads a check on its starting commit and on main's head, and re-runs one
+# left with none (design 7.13 Stage 10); a re-run then cancels no other commit's.
 # A repo Peras delivers to also calls it on a push to `peras/**` and on `workflow_dispatch` with a
 # `sha` input (design 6.3, 7.13 Stage 10). Those runs report "<job> (branch)" and "<job> (dispatch)",
 # never a PR's required name, and a dispatch scans the commit its `sha` names, in a concurrency group
@@ -39,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: security-scan-code-${{ github.repository }}-${{ github.ref }}-${{ github.event.inputs.sha }}
+      group: security-scan-code-${{ github.repository }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event.inputs.sha }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -109,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: security-scan-dependencies-${{ github.repository }}-${{ github.ref }}-${{ github.event.inputs.sha }}
+      group: security-scan-dependencies-${{ github.repository }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event.inputs.sha }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

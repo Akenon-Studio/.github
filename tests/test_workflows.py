@@ -156,7 +156,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
         for name in ("security-scan.yml",):  # runs only on new commits, so a cancelled run is stale
             for job_id, job in REUSABLE[name]["jobs"].items():
                 self.assertTrue(job["concurrency"]["cancel-in-progress"], f"{name}: {job_id}")
-                self.assertIn("github.ref", job["concurrency"]["group"])
+                # a branch's runs share a group; each commit of main has its own (Peras reads them)
+                self.assertIn("github.ref == 'refs/heads/main' && github.sha || github.ref",
+                              job["concurrency"]["group"], f"{name}: {job_id}")
 
     def test_the_merge_lane_runs_only_mains_code_one_at_a_time(self):
         caller = load("merge-lane-caller.yml")
