@@ -136,8 +136,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
                 # and its failure stops the job: nothing after it runs anyway
                 self.assertNotIn("continue-on-error", first, f"{name}: {job_id}")
                 for step in job["steps"][1:]:
-                    # Actions matches function names in any case; without one, success() is implied
-                    self.assertNotRegex(str(step.get("if", "")), r"(?i)\b(always|failure|cancelled)\s*\(",
+                    # no status function at all (Actions matches names in any case): success() stays implied
+                    self.assertNotRegex(str(step.get("if", "")), r"(?i)\b(always|failure|cancelled|success)\s*\(",
                                         f"{name}: {job_id}: {step.get('name')}")
                 for step in job["steps"]:
                     cache = step.get("with", {}).get("cache")
