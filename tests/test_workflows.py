@@ -133,6 +133,12 @@ class ReusableWorkflowsTest(unittest.TestCase):
                 self.assertEqual(first["if"], "github.event_name == 'workflow_dispatch'", f"{name}: {job_id}")
                 self.assertIn('refs/heads/peras/*', first["run"], f"{name}: {job_id}")
                 self.assertIn("^[0-9a-f]{40}$", first["run"], f"{name}: {job_id}")
+                # and its failure stops the job: nothing after it runs anyway
+                self.assertNotIn("continue-on-error", first, f"{name}: {job_id}")
+                for step in job["steps"][1:]:
+                    condition = str(step.get("if", ""))
+                    self.assertNotIn("always()", condition, f"{name}: {job_id}: {step.get('name')}")
+                    self.assertNotIn("failure()", condition, f"{name}: {job_id}: {step.get('name')}")
                 for step in job["steps"]:
                     cache = step.get("with", {}).get("cache")
                     if cache:
