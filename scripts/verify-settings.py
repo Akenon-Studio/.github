@@ -9,7 +9,7 @@ and linked repos (rulesets/board.json), the files that list every repo and the f
 with write access, that each CODEOWNERS ends with its generated sensitive-areas block and every
 sensitive path exists (rulesets/sensitive-paths.json), a public repo's fork PR workflow approval,
 that every required check is marked with what it reads (rulesets/required-checks.json),
-that every repo's caller workflows listen to the same events as this
+that every repo's caller workflows listen to the same PR event types as this
 repo's, and any repo in the org that is neither managed nor archived.
 """
 

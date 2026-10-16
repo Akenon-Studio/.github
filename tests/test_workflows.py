@@ -118,6 +118,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
         # each commit of main keeps its own run (Peras reads them); a branch's newer push cancels
         self.assertIn("github.ref == 'refs/heads/main' && github.sha || github.ref",
                       caller["concurrency"]["group"])
+        # a copy that adds workflow_dispatch gives each dispatched commit a group of its own
+        self.assertTrue(caller["concurrency"]["group"].endswith("-${{ github.event.inputs.sha }}"))
 
 
     def test_one_job_per_check_workflow_and_every_check_step_reported(self):

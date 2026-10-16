@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-scan-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: security-scan-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}-${{ github.event.inputs.sha }}
   cancel-in-progress: true
 
 jobs:

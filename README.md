@@ -42,8 +42,8 @@ same rules, applied by the script. The verify script catches any repo that drift
 
 Every repo carries two small caller workflows, copied from this repo: `pr-title-caller.yml` and
 `issue-fields-caller.yml` (in the copy, `uses:` points at
-`akenon-studio/.github/.github/workflows/<name>.yml@main`, and the triggers stay the same as
-here: the PR checks also run on `assigned` and `unassigned`; a repo Peras delivers to also runs
-the shared checks on pushes to `main` and `peras/**` and by a `sha` dispatch, as `pr-title.yml`
-says). The issue automation logs in as the org's GitHub App: org variable `AKENON_APP_ID`, org
+`akenon-studio/.github/.github/workflows/<name>.yml@main`, and the PR triggers stay the same as
+here: the PR checks also run on `assigned` and `unassigned`). A repo Peras delivers to adds to its
+callers of the shared checks pushes to `main` and `peras/**` and a `sha` dispatch, as `pr-title.yml`
+says. The issue automation logs in as the org's GitHub App: org variable `AKENON_APP_ID`, org
 secret `AKENON_APP_PRIVATE_KEY`.
