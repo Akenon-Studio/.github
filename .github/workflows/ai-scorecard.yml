@@ -1,6 +1,7 @@
 # Monthly: the AI review scorecard (design 6.4). Reads the AI review's threads and their outcome
-# replies on every PR merged last month, and files one issue for the month: late catches, false
-# alarms, rounds and cost per PR (scripts/ai_scorecard.py). Run it by hand with a month to report
+# replies, and the local-review section, on every PR merged last month, and the blame behind each
+# `fix` PR, and files one issue for the month: late catches, false alarms, rounds and cost per PR,
+# each outcome's share by round, and escapes (scripts/ai_scorecard.py). Run it by hand with a month to report
 # another one (a re-run updates that month's issue).
 #
 # Reads every repo's PRs and files (to tell whether a late finding's line was there in round one)
