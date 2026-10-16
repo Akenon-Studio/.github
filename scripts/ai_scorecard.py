@@ -222,7 +222,8 @@ def regraded(text):
 def thread_outcome(replies, peras_pr, claimed):
     """A CI thread's counted outcome from the org's replies (design 6.4): {outcome, regraded,
     disputed, ungraded}. A person's reply that states an outcome is their own call, with the severity
-    a person's reply gives (or, agreeing to an agent's re-grade, the agent's). An agent's Fixed counts
+    a person's reply gives (or, stating the agent's own outcome, which agrees to its re-grade, the
+    agent's). An agent's Fixed counts
     (the next round checks it), but its own re-grade is a dispute until a person's reply gives one;
     an agent's other outcome is a dispute until a person's reply states one. On a Peras PR, a
     finding Peras fixed is ungraded until a person's reply gives its severity after re-grading."""
@@ -232,7 +233,9 @@ def thread_outcome(replies, peras_pr, claimed):
     agent = next(((c, o) for c in replies if is_agent(c) for o in [outcome([c["body"]])] if o), None)
     agent_grade = regraded(agent[0]["body"]) if agent else None
     if said:
-        return {"outcome": said, "regraded": person_grade or agent_grade, "disputed": False,
+        # stating the agent's own outcome agrees to its re-grade; another outcome sets it aside
+        agreed = agent_grade if agent and agent[1] == said else None
+        return {"outcome": said, "regraded": person_grade or agreed, "disputed": False,
                 "ungraded": False}
     if not agent:
         return {"outcome": None, "regraded": person_grade, "disputed": False, "ungraded": False}

@@ -227,6 +227,9 @@ class ThreadOutcomeTest(unittest.TestCase):
         agent = reply("Moved to #5, re-graded minor.\n\n<!-- agent -->")
         got = thread_outcome([agent, reply("Moved to #5, agreed")], False, "major")
         self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("moved", "minor", False))
+        # another outcome than the agent's sets its re-grade aside
+        got = thread_outcome([agent, reply("Fixed in abc")], False, "major")
+        self.assertEqual((got["outcome"], got["regraded"]), ("fixed", None))
         # a re-grade in a later reply than the outcome still counts
         got = thread_outcome([reply("Fixed"), reply("and re-graded minor")], False, "major")
         self.assertEqual(got["regraded"], "minor")
