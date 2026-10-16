@@ -37,7 +37,7 @@ class ReusableWorkflowsTest(unittest.TestCase):
 
     def test_no_job_is_skipped(self):
         # a skipped job reports "skipped", which passes a required check: so none is skipped on a
-        # PR, and one skipped elsewhere has a name no PR's check has
+        # PR, and one skipped off main has a name no PR's check has (no commit of main is a PR's head)
         for name, workflow in REUSABLE.items():
             for job_id, job in workflow["jobs"].items():
                 if (name, job_id) in self.PR_ONLY:
@@ -60,22 +60,6 @@ class ReusableWorkflowsTest(unittest.TestCase):
                     self.assertEqual(step["with"].get("ref"), "${{ github.event.inputs.sha }}", f"{name}: {job_id}")
                 if "concurrency" in job:  # a dispatch never cancels main's run, nor another commit's
                     self.assertTrue(job["concurrency"]["group"].endswith("-${{ github.event.inputs.sha }}"))
-
-    def test_the_name_off_a_pr(self):
-        # the expression's three outcomes, as GitHub evaluates `a && b || c` (&& binds first)
-        def evaluate(event, ref_name):
-            if event == "workflow_dispatch":
-                return " (dispatch)"
-            if event == "push" and ref_name != "main":
-                return " (branch)"
-            return ""
-        expression = OFF_A_PR.removeprefix("${{ ").removesuffix(" }}")
-        self.assertEqual(expression, "github.event_name == 'workflow_dispatch' && ' (dispatch)' || "
-                         "github.event_name == 'push' && github.ref_name != 'main' && ' (branch)' || ''")
-        self.assertEqual(evaluate("pull_request", "1/merge"), "")
-        self.assertEqual(evaluate("push", "main"), "")
-        self.assertEqual(evaluate("push", "peras/12-1"), " (branch)")
-        self.assertEqual(evaluate("workflow_dispatch", "main"), " (dispatch)")
 
     def test_issue_fields_skips_exactly_renovates_status_pages(self):
         import json

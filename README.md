@@ -44,5 +44,5 @@ Every repo carries two small caller workflows, copied from this repo: `pr-title-
 `issue-fields-caller.yml` (in the copy, `uses:` points at
 `akenon-studio/.github/.github/workflows/<name>.yml@main`, and the triggers stay the same as
 here: the PR checks also run on `assigned` and `unassigned`; a repo Peras delivers to also runs
-the shared checks on pushes to `peras/**` and by a `sha` dispatch, as `pr-title.yml` says). The issue automation logs in as the
-org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.
+the shared checks on pushes to `main` and `peras/**` and by a `sha` dispatch, as `pr-title.yml`
+says). The issue automation logs in as the org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.
