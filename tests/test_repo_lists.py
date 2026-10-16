@@ -121,10 +121,8 @@ class ExpectedTriggers(unittest.TestCase):
         self.assertEqual(want, {"pull_request"} | verify.PERAS_TRIGGERS)
 
     def test_every_peras_repo_is_managed(self):
-        managed = [l for l in (ROOT / "rulesets/repos.txt").read_text().split()
-                   if l and not l.startswith("#")]
         self.assertTrue(verify.peras_repos())
-        self.assertTrue(set(verify.peras_repos()) <= set(managed))
+        self.assertTrue(set(verify.peras_repos()) <= set(verify.managed_repos()))
 
     def test_the_security_scan_caller_is_checked(self):
         self.assertIn(".github/workflows/security-scan-caller.yml", verify.CALLERS)
