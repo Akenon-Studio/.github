@@ -463,6 +463,22 @@ class RunOneTest(unittest.TestCase):
         gh = FakeGitHub([running] * looks + [finished] + [checks_running] * looks + [new_green])
         self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"))[0], "merged")
 
+    def test_only_the_first_bringing_main_in_gives_the_checks_their_time_again(self):
+        behind, running = pr(status="BEHIND"), pr(contexts=[
+            run("pr-title / checks", status="IN_PROGRESS", conclusion=None), run("security-scan / code")],
+            status="BLOCKED", head="def")
+        behind_again = pr(status="BEHIND", head="def")
+        later_running = pr(contexts=running["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"],
+                           status="BLOCKED", head="ghi")
+        minute = 60 // merge_lane.POLL
+        gh = FakeGitHub([behind] + [running] * (20 * minute) + [behind_again] + [later_running])
+        start, dropped_at = merge_lane.time.time(), []
+        with mock.patch.object(merge_lane, "drop", lambda gh, pr, reason: dropped_at.append(merge_lane.time.time())):
+            self.assertEqual(run_one(gh, 7, REQUIRED, float("inf")), "done")
+        self.assertEqual(sum(w == ("PUT", "7/update-branch") for w in self.writes(gh)), 2)
+        # dropped CHECKS_TIMEOUT after the first update (at the start), not after the second
+        self.assertLess(dropped_at[0] - start, merge_lane.CHECKS_TIMEOUT + 2 * merge_lane.POLL)
+
     def test_the_deadline_pauses_without_dropping(self):
         running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
                                run("security-scan / code")], status="BLOCKED")

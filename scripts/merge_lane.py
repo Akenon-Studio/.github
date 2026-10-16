@@ -329,9 +329,10 @@ def run_one(gh, number, required, deadline, threads_required=True, reviewed=Fals
     """Take one PR through the lane. Returns ("merged", author), or "done" once it is dropped or gone, or
     "paused" if the run's deadline came first (it stays labelled, at the front). The timers are
     per run: a paused PR is first in the next run, which gives it CHECKS_TIMEOUT from its start,
-    so it waits at most DEADLINE + 2 * CHECKS_TIMEOUT in all: the lane's first bringing main in
-    starts CHECKS_TIMEOUT again, so waiting for the review before it doesn't shorten the checks'
-    time after it (only the first, so main moving again and again can't keep it at the front).
+    so it waits at most DEADLINE + CHECKS_TIMEOUT in all, plus one CHECKS_TIMEOUT in each run that
+    brings main in: a run's first bringing main in starts CHECKS_TIMEOUT again, so waiting for the
+    review before it doesn't shorten the checks' time after it (only the first, as MAX_UPDATES is
+    counted per run).
     `reviewed`: the repo runs the AI review (GitHub.calls_review)."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
     updated_from = None  # (head before the update, when): until GitHub shows the new commit
