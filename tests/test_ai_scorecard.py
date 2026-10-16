@@ -1,14 +1,19 @@
 """Tests for scripts/ai_scorecard.py. Run: python3 -m unittest discover tests"""
 
+import contextlib
 import datetime
+import io
+import json
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
+import ai_scorecard  # noqa: E402
 from ai_scorecard import (FIX_TITLE, body, is_fix, local_runs, commented_lines, cost, escapes, is_round, last_month,  # noqa: E402
-                          local_findings, month_range, outcome, pr_record, regraded, removed_lines,
+                          later_escapes, later_outcomes, later_ranges, with_later, local_findings, month_range, outcome, pr_record, regraded, removed_lines,
                           score, severity, shares, thread_outcome, usage_of, was_there)
 
 MARKER = "<!-- ai-review -->"
@@ -427,6 +432,102 @@ class EscapesTest(unittest.TestCase):
                       [{"filename": "a.py", "status": "modified", "patch": "@@ -5,1 +5,1 @@\n-x\n+y"}],
                       lambda path: ranges, lambda n: record)
         self.assertEqual(got[0]["findings"], ["2 still open"])
+
+
+PERAS_APP = {"__typename": "Bot", "login": "akenon-studio-peras"}
+
+
+def said(kind="fix", ref="Akenon-Studio/platform#9", at="2026-10-10T03:00:00Z", by=PERAS_APP, editor=None, words=""):
+    return {"author": by, "editor": editor, "body": '<!-- peras:later-outcome v1 {"kind":"%s","ref":"%s","at":"%s"} -->'
+            "\nA later outcome of this PR (design 7.7).%s" % (kind, ref, at, words)}
+
+
+class LaterOutcomesTest(unittest.TestCase):
+    """Peras's later outcomes (design 7.7) count as escapes of its PR's review (.github#202)."""
+    RECORD = {"repo": "platform", "number": 4, "url": "u4", "rounds": 1, "local": [], "threads": [
+        {"severity": "major", "round": 1, "outcome": "fixed", "path": "a.py", "url": "t"},
+        {"severity": "critical", "round": 1, "outcome": "not an issue", "path": "b.py", "url": "t"}]}
+
+    def test_only_the_peras_apps_unedited_comments_in_the_month_count(self):
+        person = {"__typename": "User", "login": "akenon-studio-peras"}  # a login that looks like the app's
+        got = later_outcomes([
+            said(),
+            said(),  # the same outcome said twice is one
+            said(kind="revert", ref="Akenon-Studio/platform#8", editor=PERAS_APP),  # the app's own edit
+            said(kind="bug", ref="Akenon-Studio/peras#3", at="2026-10-31T23:00:00Z"),
+            said(kind="revert", ref="Akenon-Studio/platform#10", by=person),
+            said(kind="revert", ref="Akenon-Studio/platform#11", by={"__typename": "User", "login": "RuvinduH"}),
+            said(kind="revert", ref="Akenon-Studio/platform#12", editor={"__typename": "User", "login": "RuvinduH"}),
+            said(kind="fix", ref="Akenon-Studio/platform#13", at="2026-09-30T23:00:00Z"),  # last month's
+            said(kind="feat", ref="Akenon-Studio/platform#14"),
+            said(ref="someone/else#15"),
+            said(at="not a time"),
+            {"author": PERAS_APP, "body": "<!-- peras:later-outcome v1 {not json} -->"},
+            {"author": PERAS_APP, "body": "Said, not marked: <!-- peras:later-outcome v1 {} -->"},
+        ], "2026-10")
+        self.assertEqual([(o["kind"], o["ref"]) for o in got], [("fix", "platform#9"), ("revert", "platform#8"), ("bug", "peras#3")])
+
+    def test_a_later_outcome_is_an_escape_of_that_prs_review(self):
+        outcomes = later_outcomes([said(kind="bug", ref="Akenon-Studio/peras#3")], "2026-10")
+        got = later_escapes("platform", {"number": 4, "url": "u4"}, outcomes, lambda n: self.RECORD)
+        self.assertEqual(len(got), 1)
+        e = got[0]
+        self.assertEqual((e["fix"], e["pr"], e["later"], e["lines"]), ("peras#3", "platform#4", "bug", None))
+        self.assertEqual(e["url"], "https://github.com/akenon-studio/peras/issues/3")
+        self.assertEqual(e["findings"], ["CI round 1 major: fixed", "CI round 1 critical: not an issue"])
+        self.assertEqual(later_escapes("platform", {"number": 4, "url": "u4"}, outcomes, lambda n: None), [])
+        s = score([], got)
+        self.assertEqual((s["fixes"], len(s["escapes"])), (1, 1))
+        self.assertIn("- [peras#3](https://github.com/akenon-studio/peras/issues/3), a bug filed, is a later outcome "
+                      "of [platform#4](u4) (Peras, design 7.7); its findings: CI round 1 major: fixed", body("2026-10", s))
+
+    def test_a_fix_found_both_ways_is_one_escape(self):
+        blamed = [{"fix": "platform#9", "url": "u9", "pr": "platform#4", "pr_url": "u4", "lines": 2,
+                   "paths": ["a.py"], "findings": ["CI round 1 major: fixed"]}]
+        outcomes = later_outcomes([said(), said(kind="revert", ref="Akenon-Studio/platform#10")], "2026-10")
+        later = later_escapes("platform", {"number": 4, "url": "u4"}, outcomes, lambda n: self.RECORD)
+        got = with_later(blamed, later)
+        self.assertEqual([(e["fix"], e.get("later"), e["lines"]) for e in got],
+                         [("platform#9", "fix", 2), ("platform#10", "revert", None)])
+        s = score([], got)
+        self.assertEqual((s["fixes"], len(s["escapes"])), (2, 2))
+        self.assertIn("[platform#9](u9) changes 2 line(s) [platform#4](u4) last changed (a later outcome Peras "
+                      "recorded too); its findings in those files: CI round 1 major: fixed", body("2026-10", s))
+        self.assertNotIn("later", blamed[0])  # the blame's list is left as it was
+
+    def test_collect_reads_peras_prs_merged_up_to_90_days_before(self):
+        self.assertEqual(later_ranges("2026-10"), ["2026-07-03..2026-07-31", "2026-08-01..2026-08-31",
+                                                   "2026-09-01..2026-09-30", "2026-10-01..2026-10-31"])
+        self.assertEqual(later_ranges("2026-03")[0], "2025-12-01..2025-12-31")
+        peras_pr = {"number": 4, "url": "u4", "repository": {"name": "platform"}, "author": PERAS_APP,
+                    "comments": {"nodes": [said(kind="bug", ref="Akenon-Studio/peras#3")]}}
+        other = dict(peras_pr, number=5, author={"__typename": "User", "login": "akenon-studio-peras"})
+        queries = []
+
+        def graphql(query, fail=True, **v):
+            queries.append(v.get("q"))
+            if query == ai_scorecard.LATER_QUERY:
+                return {"search": {"pageInfo": {"hasNextPage": False}, "nodes": [peras_pr, other]}}
+            if query == ai_scorecard.PRS_QUERY:
+                return {"search": {"pageInfo": {"hasNextPage": False}, "nodes": []}}
+            return {"repository": {"pullRequest": {"title": "feat: x", "body": "", "mergedAt": "2026-09-01T00:00:00Z",
+                                                   "author": PERAS_APP, "editor": None, "mergeCommit": None,
+                                                   "reviews": {"nodes": [review("r1", "2026-09-01", "c1")]},
+                                                   "reviewThreads": {"nodes": []}}}}
+        saved = ai_scorecard.graphql, ai_scorecard.managed_repos
+        ai_scorecard.graphql, ai_scorecard.managed_repos = graphql, lambda: ["platform"]
+        try:
+            with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+                out = pathlib.Path(tmp, "scorecard.json")
+                ai_scorecard.collect(str(out), "2026-10")
+                data = json.loads(out.read_text())
+        finally:
+            ai_scorecard.graphql, ai_scorecard.managed_repos = saved
+        self.assertIn("org:akenon-studio is:pr is:merged author:app/akenon-studio-peras merged:2026-07-03..2026-07-31",
+                      queries)
+        self.assertEqual(sum("author:app/" in (q or "") for q in queries), 4)
+        # the same PR, found by each of the four searches, gives its outcome once
+        self.assertEqual([(e["fix"], e["pr"], e["later"]) for e in data["escapes"]], [("peras#3", "platform#4", "bug")])
 
 
 if __name__ == "__main__":

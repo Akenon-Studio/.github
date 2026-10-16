@@ -41,7 +41,12 @@ What it reports (design 6.4):
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
   the fix's parent commit, with that review's findings and outcomes in the files concerned. A fix
-  that only adds lines changes none, so it isn't one.
+  that only adds lines changes none, so it isn't one. On a Peras PR, also its later outcomes (design
+  7.7): a revert, a Bug or a `fix` that mentions it within 90 days of its merge, which the Peras app
+  says on the PR in a comment starting with LATER_MARKER and the outcome as JSON (peras's
+  docs/architecture/delivery.md). Read only from the app's own comments that no one else edited,
+  counted in the month the outcome happened (its `at`), with that review's findings in every file;
+  a `fix` found both ways is one escape, the blame's, marked as a later outcome too.
 Threads from before the severity scale (2026-10-10, .github#106) are unrated: they are counted, and
 left out of the rest, since they have no severity and no reply convention.
 """
@@ -79,6 +84,11 @@ LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
 CODE = re.compile(r"`[^`\n]*`")
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
+# What the Peras app's later-outcome comment on its PR starts with (design 7.7), then the outcome as
+# JSON: peras's core/delivery/closeout.ts LATER_MARKER, which never changes
+LATER_MARKER = re.compile(r"<!-- peras:later-outcome v1 (\{[^<>]*\}) -->")
+LATER_WORDS = {"revert": "a revert", "bug": "a bug filed", "fix": "a fix"}
+LATER_REF = re.compile(rf"{re.escape(ORG)}/([A-Za-z0-9._-]+)#(\d+)", re.I)
 # review-branch.py's section in a PR's description (design 6.4); ai_review.py skips the same markers
 LOCAL_START = "<!-- local-review:start -->"
 LOCAL_END = "<!-- local-review:end -->"
@@ -110,6 +120,11 @@ PR_QUERY = """query($owner: String!, $name: String!, $n: Int!) {
     reviews(first: 100) { nodes { id author { login } body submittedAt commit { oid } } }
     reviewThreads(first: 100) { nodes { isResolved path
       comments(first: 30) { nodes { author { __typename login } body url diffHunk pullRequestReview { id } } } } } } } }"""
+# Peras's merged PRs, with the comments that say their later outcomes (the latest, as they come last)
+LATER_QUERY = """query($q: String!, $after: String) {
+  search(query: $q, type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor }
+    nodes { ... on PullRequest { number url repository { name } author { __typename login }
+      comments(last: 100) { nodes { author { __typename login } editor { __typename login } body } } } } } }"""
 BLAME_QUERY = """query($owner: String!, $name: String!, $oid: GitObjectID!, $path: String!) {
   repository(owner: $owner, name: $name) { object(oid: $oid) { ... on Commit { blame(path: $path) {
     ranges { startingLine endingLine commit { oid
@@ -224,6 +239,12 @@ def file_at(repo, sha, path):
     if res.returncode != 0:
         return None
     return base64.b64decode(json.loads(res.stdout).get("content", "")).decode(errors="replace")
+
+
+def is_peras(actor):
+    """The Peras app itself: a bot with its login (a person may hold a login that looks like it)."""
+    actor = actor or {}
+    return actor.get("__typename", actor.get("type")) == "Bot" and bot_login(actor.get("login")) == PERAS
 
 
 def is_agent(comment):
@@ -443,23 +464,97 @@ def escapes(repo, fix, files, blame, reviewed):
         record = reviewed(number)
         if not record:
             continue
-        there = [finding_text(f) for f in findings_of([record]) if f.get("path") in hit["paths"]]
-        findings = [t for t in there if t] + ([f"{there.count(None)} still open"] if None in there else [])
+        findings = findings_texts(f for f in findings_of([record]) if f.get("path") in hit["paths"])
         out.append({"fix": f"{repo}#{fix['number']}", "url": fix["url"], "pr": f"{repo}#{number}",
                     "pr_url": hit["pr"]["url"], "lines": hit["lines"], "paths": sorted(set(hit["paths"])),
                     "findings": findings})
     return out
 
 
-def collect(path, month):
+def findings_texts(found):
+    """Findings as the escapes list shows them, those still open only counted (design 6.2)."""
+    there = [finding_text(f) for f in found]
+    return [t for t in there if t] + ([f"{there.count(None)} still open"] if None in there else [])
+
+
+def later_outcomes(comments, month):
+    """The later outcomes (design 7.7) the Peras app said on its PR that happened in `month`, each
+    once: [{kind, ref, at}], `ref` as `repo#n` in the org. Only the app's own comments, and only if
+    no one else edited them, are read: anyone else's could claim or hide an escape. A comment whose
+    marker or JSON doesn't read is skipped."""
+    out, seen = [], set()
+    for c in comments:
+        if not is_peras(c.get("author")) or (c.get("editor") and not is_peras(c["editor"])):
+            continue
+        found = LATER_MARKER.match((c.get("body") or "").lstrip())
+        try:
+            said = json.loads(found.group(1)) if found else None
+            ref = LATER_REF.fullmatch(said.get("ref") or "") if isinstance(said, dict) else None
+            at = when(said["at"]).astimezone(datetime.timezone.utc) if ref else None
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+        if not at or said.get("kind") not in LATER_WORDS or at.strftime("%Y-%m") != month:
+            continue
+        key = f"{ref.group(1)}#{ref.group(2)}"
+        if key not in seen:
+            seen.add(key)
+            out.append({"kind": said["kind"], "ref": key, "at": at.isoformat()})
+    return out
+
+
+def later_escapes(repo, pr, outcomes, reviewed):
+    """Escapes from a Peras PR's later outcomes (design 6.4, 7.7): each an escape of that PR's review,
+    with its findings in every file (an outcome names no lines). `pr` is {number, url},
+    `reviewed(number)` its record or None (no review ran, so nothing escaped one)."""
+    record = reviewed(pr["number"]) if outcomes else None
+    if not record:
+        return []
+    findings = findings_texts(findings_of([record]))
+    return [{"fix": o["ref"], "url": "https://github.com/{}/{}/issues/{}".format(ORG, *o["ref"].split("#")),
+             "pr": f"{repo}#{pr['number']}", "pr_url": pr["url"], "lines": None, "paths": [],
+             "findings": findings, "later": o["kind"]} for o in outcomes]
+
+
+def with_later(found, later):
+    """The blame's escapes and the later outcomes' together: a `fix` PR found both ways (the same
+    fix behind the same reviewed PR) is one escape, the blame's, marked as a later outcome too."""
+    out = [dict(e) for e in found]
+    by = {(e["fix"], e["pr"]): e for e in out}
+    for e in later:
+        same = by.get((e["fix"], e["pr"]))
+        if same:
+            same["later"] = e["later"]
+        else:
+            by[e["fix"], e["pr"]] = e
+            out.append(e)
+    return out
+
+
+def search(query, q):
+    """Every node a search finds, page by page."""
     found, after = [], None
     while True:
-        page = graphql(PRS_QUERY, q=f"org:{ORG} is:pr is:merged merged:{month_range(month)}",
-                       after=after)["search"]
+        page = graphql(query, q=q, after=after)["search"]
         found += [n for n in page["nodes"] if n]
         if not page["pageInfo"]["hasNextPage"]:
-            break
+            return found
         after = page["pageInfo"]["endCursor"]
+
+
+def later_ranges(month):
+    """The merge dates of the PRs whose later outcomes can fall in `month` (ESCAPE_DAYS before it,
+    on), a month or less per search, since a search finds at most 1,000."""
+    start, end = (datetime.date.fromisoformat(d) for d in month_range(month).split(".."))
+    day, out = start - datetime.timedelta(days=ESCAPE_DAYS), []
+    while day <= end:
+        last = min(end, (day.replace(day=1) + datetime.timedelta(days=32)).replace(day=1) - datetime.timedelta(days=1))
+        out.append(f"{day}..{last}")
+        day = last + datetime.timedelta(days=1)
+    return out
+
+
+def collect(path, month):
+    found = search(PRS_QUERY, f"org:{ORG} is:pr is:merged merged:{month_range(month)}")
     repos = set(managed_repos())
     prs, escaped, cache = [], [], {}
 
@@ -490,6 +585,15 @@ def collect(path, month):
             fix = {"number": n["number"], "url": n["url"], "mergedAt": data["mergedAt"]}
             escaped += escapes(repo, fix, files, lambda p, r=repo, sha=parents[0]["oid"]: blame(r, sha, p),
                                lambda m, r=repo: reviewed(r, m))
+    later = []
+    peras_prs = [n for dates in later_ranges(month)
+                 for n in search(LATER_QUERY, f"org:{ORG} is:pr is:merged author:app/{PERAS} merged:{dates}")]
+    for n in peras_prs:
+        repo = n["repository"]["name"]
+        if repo in repos and is_peras(n.get("author")):
+            outcomes = later_outcomes(n["comments"]["nodes"], month)
+            later += later_escapes(repo, n, outcomes, lambda m, r=repo: reviewed(r, m))
+    escaped = with_later(escaped, later)
     with open(path, "w") as f:
         json.dump({"month": month, "prs": prs, "escapes": escaped}, f, indent=1)
     print(f"{month}: {len(prs)} merged PR(s) a review ran on, of {len(found)} merged; {len(escaped)} escape(s)")
@@ -585,11 +689,19 @@ def shares_table(table):
     return "\n".join([head, *rows]) if rows else "No critical or major findings."
 
 
-def escape_lines(items):
+def escape_line(e):
     # no file paths: this issue is public and the files are often in private repos (design 6.2)
-    return "\n".join(f"- [{e['fix']}]({e['url']}) changes {e['lines']} line(s) [{e['pr']}]({e['pr_url']}) last "
-                     f"changed; its findings in those files: {'; '.join(e['findings']) or 'none'}"
-                     for e in items) or "- none"
+    found = "; ".join(e["findings"]) or "none"
+    if e.get("lines") is None:  # only a later outcome
+        return (f"- [{e['fix']}]({e['url']}), {LATER_WORDS[e['later']]}, is a later outcome of "
+                f"[{e['pr']}]({e['pr_url']}) (Peras, design 7.7); its findings: {found}")
+    also = " (a later outcome Peras recorded too)" if e.get("later") else ""
+    return (f"- [{e['fix']}]({e['url']}) changes {e['lines']} line(s) [{e['pr']}]({e['pr_url']}) last "
+            f"changed{also}; its findings in those files: {found}")
+
+
+def escape_lines(items):
+    return "\n".join(map(escape_line, items)) or "- none"
 
 
 def is_open(f):
@@ -624,7 +736,7 @@ The AI review scorecard for {month} (design 6.4), from {s['prs']} merged PR(s) a
 | Local runs per PR | {s['runs_mean']:.1f} mean, {s['runs_max']} most | |
 | Cost per PR | {mean_cost} mean, ${s['cost_total']:.2f} in all ({s['costed']} of {s['ci_prs']} CI-reviewed PRs recorded it) | |
 | Threads resolved with no readable outcome | {len(s['unreadable'])} | 0 |
-| Escapes: `fix` PRs changing lines a reviewed PR last changed in the {ESCAPE_DAYS} days before | {s['fixes']} ({len(s['escapes'])} reviewed PR(s) behind them) | near 0 |{unrated}
+| Escapes: `fix` PRs changing lines a reviewed PR last changed in the {ESCAPE_DAYS} days before, and Peras's later outcomes (a revert, bug or fix within {ESCAPE_DAYS} days of its PR's merge) | {s['fixes']} ({len(s['escapes'])} reviewed PR(s) behind them) | near 0 |{unrated}
 
 Each outcome's share by round, of the critical and major findings counted: those with an outcome,
 an agent's re-grade only once settled. The severity after re-grading (kept, downgraded, raised, or
