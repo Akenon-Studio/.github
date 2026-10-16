@@ -2,9 +2,9 @@
 """The merge lane (design 6.2): merge a repo's approved, green PRs one at a time.
 
 An author labels a PR `ready-to-merge` once it is approved and green, and moves on. This takes the
-labelled PRs oldest label first and, for each: brings `main` in if the branch is behind (once, now
-that it is next), waits for its required checks and for any run of the AI review on its last
-commit, and squash-merges it. The review stays advisory (design 6.4): it isn't a required check,
+labelled PRs oldest label first and, for each: waits for any run of the AI review on its last
+commit, brings `main` in if the branch is behind (once, now that it is next; after the review, which
+the push would cancel), waits for its required checks and the review again, and squash-merges it. The review stays advisory (design 6.4): it isn't a required check,
 the lane waits only while its run is queued or going, and a run that fails or never starts doesn't
 hold the PR; one still going at CHECKS_TIMEOUT drops it, as a slow check does. The findings it
 posts are review threads, which the rules want resolved, so an open one blocks the merge. A PR that can't merge
@@ -221,6 +221,9 @@ def decide(pr, required, missing_for, threads_required=True):
     waiting_on = people_needed(pr, threads_required)
     if waiting_on:
         return "blocked", "the rules block it: " + waiting_on
+    # Before bringing main in: the lane's push would cancel the review, which then starts again
+    if review_running(pr):
+        return "wait", "the AI review is still running on its last commit"
     if pr["mergeStateStatus"] == "BEHIND":
         return "update", "behind main"
     if pr["mergeable"] == "UNKNOWN" or pr["mergeStateStatus"] == "UNKNOWN":
@@ -231,8 +234,6 @@ def decide(pr, required, missing_for, threads_required=True):
                         + ". Push a commit (or edit the description, for pr-title) to run them")
     if missing or "PENDING" in states.values():
         return "wait", "required checks still running"
-    if review_running(pr):
-        return "wait", "the AI review is still running on its last commit"
     if pr["mergeStateStatus"] in MERGEABLE:
         return "merge", "approved and green"
     return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']})"
@@ -306,6 +307,7 @@ def run_one(gh, number, required, deadline, threads_required=True):
     so it waits at most DEADLINE + CHECKS_TIMEOUT in all."""
     started, missing_since, blocked_looks, updates, update_errors, refusals = time.time(), {}, 0, 0, 0, 0
     updated_from = None  # (head before the update, when): until GitHub shows the new commit
+    waited_on = ""  # the last reason it waited, for the time-limit drop
     while True:
         pr = gh.graphql(PR, number=number)["pullRequest"]
         if pr is None:
@@ -331,8 +333,9 @@ def run_one(gh, number, required, deadline, threads_required=True):
                 drop(gh, pr, f"main was brought in, but the new commit didn't appear within "
                              f"{UPDATE_LAG // 60} minutes: bring main in by hand")
                 return "done"
-            action = "wait"
+            action, reason = "wait", "GitHub to show the commit that brought main in"
         blocked_looks = blocked_looks + 1 if action == "blocked" else 0
+        waited_on = reason if action == "wait" else waited_on
         if action == "gone":
             print(f"#{number}: {reason}")
             return "done"
@@ -379,7 +382,8 @@ def run_one(gh, number, required, deadline, threads_required=True):
         else:
             refusals = 0
         if time.time() - started > CHECKS_TIMEOUT:
-            drop(gh, pr, f"it stayed at the front for over {CHECKS_TIMEOUT // 60} minutes without merging")
+            drop(gh, pr, f"it stayed at the front for over {CHECKS_TIMEOUT // 60} minutes without merging"
+                         + (f" (last waiting on: {waited_on})" if waited_on else ""))
             return "done"
         if time.time() > deadline:
             print(f"#{number}: this run's time is up; a new run carries on")

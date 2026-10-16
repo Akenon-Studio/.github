@@ -391,10 +391,43 @@ class RunOneTest(unittest.TestCase):
 
     def test_a_review_that_never_finishes_leaves_at_the_lanes_time_limit(self):
         gh = FakeGitHub([green(review(status="IN_PROGRESS", conclusion=None))])
-        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf")), "done")
-        self.assertNotIn(("PUT", "7/merge"), self.writes(gh))
-        self.assertEqual(self.writes(gh), [("POST", "7/comments"), ("DELETE", "7/labels/ready-to-merge")])
+        said = []
+        with mock.patch.object(merge_lane, "drop", lambda gh, pr, reason: said.append(reason)):
+            self.assertEqual(run_one(gh, 7, REQUIRED, float("inf")), "done")
+        self.assertEqual(self.writes(gh), [])  # neither merged nor updated
         self.assertGreater(merge_lane.time.time() - 1_000_000.0, merge_lane.CHECKS_TIMEOUT)
+        self.assertEqual(len(said), 1)
+        self.assertIn("AI review", said[0])  # the author hears what held it
+
+    def test_behind_waits_for_the_review_before_bringing_main_in(self):
+        # the lane's push would cancel the run, so main comes in only once it has finished
+        running = green(review(status="IN_PROGRESS", conclusion=None))
+        running["mergeStateStatus"] = "BEHIND"
+        finished = green(review())
+        finished["mergeStateStatus"] = "BEHIND"
+        new_head = pr(contexts=[run("pr-title / checks"), run("security-scan / code"),
+                                review(started="2026-10-10T03:00:00Z")], head="def")
+        gh = FakeGitHub([running, running, finished, new_head])
+        call, left_at_update = gh.call, []
+
+        def recording(path, method="GET", body=None, tries=4):
+            if path.endswith("update-branch"):
+                left_at_update.append(len(gh.looks))
+            return call(path, method, body, tries)
+        gh.call = recording
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"))[0], "merged")
+        self.assertEqual(self.writes(gh), [("PUT", "7/update-branch"), ("PUT", "7/merge")])
+        self.assertEqual(left_at_update, [1])  # main came in on the look that saw the review finished
+
+    def test_no_review_run_yet_while_required_checks_run_is_not_merged(self):
+        # the lane looks for the review run only once the required checks have finished, by when
+        # GitHub has queued it alongside them
+        checks_running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
+                                      run("security-scan / code")], status="BLOCKED")
+        then_review = green(review(status="QUEUED", conclusion=None))
+        gh = FakeGitHub([checks_running, then_review, then_review, green(review())])
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"))[0], "merged")
+        self.assertEqual(len(gh.looks), 1)
 
     def test_the_deadline_pauses_without_dropping(self):
         running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
