@@ -219,8 +219,8 @@ def decide(pr, required, missing_for, threads_required=True, review_missing_for=
     action: merge, update (bring main in), wait, blocked (green, but the rules block it: dropped
     once it stays so), drop (leave the lane), gone (no longer in it).
     `missing_for`: seconds the lane has seen a required check with no run on this commit.
-    `review_missing_for`: seconds it has seen no AI review run on this commit, in a repo that runs
-    the review; None where it doesn't."""
+    `review_missing_for`: seconds since the lane first saw this commit's required checks green with
+    no AI review run, in a repo that runs the review; None where it doesn't."""
     if pr["state"] != "OPEN" or LABEL not in {l["name"] for l in pr["labels"]["nodes"]}:
         return "gone", "no longer open or labelled"
     if pr["baseRefName"] != "main":
