@@ -3,7 +3,11 @@
 
 An author labels a PR `ready-to-merge` once it is approved and green, and moves on. This takes the
 labelled PRs oldest label first and, for each: brings `main` in if the branch is behind (once, now
-that it is next), waits for its required checks, and squash-merges it. A PR that can't merge
+that it is next), waits for its required checks and for any run of the AI review on its last
+commit, and squash-merges it. The review stays advisory (design 6.4): it isn't a required check,
+the lane waits only while its run is queued or going, and a run that fails or never starts doesn't
+hold the PR; one still going at CHECKS_TIMEOUT drops it, as a slow check does. The findings it
+posts are review threads, which the rules want resolved, so an open one blocks the merge. A PR that can't merge
 (conflict, a failed or missing required check, a missing approval or an unresolved conversation,
 a draft) gets a comment saying why and loses the label, and the lane goes on to the next. It never
 bypasses the rules: GitHub refuses a merge they don't allow.
@@ -49,6 +53,7 @@ DEADLINE = 45 * 60        # a run stops after this: the app's token expires at 6
 UPDATE_LAG = 3 * 60       # after bringing main in, the longest GitHub may take to show the new commit
 MORE_LEFT = 3             # exit code: PRs are still labelled; start another run
 MORE_LEFT_UNCLOSED = 4    # exit code: both that, and issues to close by hand (start another run, fail)
+REVIEW_CHECK = "ai-review / review"  # every repo's caller job is `ai-review` (ai-review.yml)
 PASSING = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 MERGEABLE = {"CLEAN", "UNSTABLE", "HAS_HOOKS"}  # UNSTABLE: only a check that isn't required failed
 TRANSIENT = {500, 502, 503, 504}
@@ -144,10 +149,27 @@ def queue(repo_data):
     return sorted(when, key=lambda n: (when[n], n))
 
 
+def contexts_of(pr):
+    commit = pr["commits"]["nodes"][0]["commit"]
+    return ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
+
+
+def review_running(pr):
+    """Whether the newest AI review run on the PR's last commit is queued or going (design 6.4).
+    No run at all is not running: the review is advisory, so the lane doesn't wait for one to start."""
+    newest = None  # (started, still going)
+    for c in contexts_of(pr):
+        if c["__typename"] == "CheckRun" and c["name"] == REVIEW_CHECK:
+            # as in check_states: a run still queued has no start time yet, and is the newest
+            started = c.get("startedAt") or ("" if c["status"] == "COMPLETED" else "~")
+            if newest is None or started >= newest[0]:
+                newest = (started, c["status"] != "COMPLETED")
+    return bool(newest and newest[1])
+
+
 def check_states(pr, required):
     """{required check: PASS, FAIL or PENDING}; one with no run at all is MISSING."""
-    commit = pr["commits"]["nodes"][0]["commit"]
-    contexts = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
+    contexts = contexts_of(pr)
     latest = {}  # {name: (started, state)}: a re-run leaves the old run in the list; the newest counts
     for c in contexts:
         if c["__typename"] == "CheckRun":
@@ -209,6 +231,8 @@ def decide(pr, required, missing_for, threads_required=True):
                         + ". Push a commit (or edit the description, for pr-title) to run them")
     if missing or "PENDING" in states.values():
         return "wait", "required checks still running"
+    if review_running(pr):
+        return "wait", "the AI review is still running on its last commit"
     if pr["mergeStateStatus"] in MERGEABLE:
         return "merge", "approved and green"
     return "blocked", f"the rules block it (GitHub says {pr['mergeStateStatus']})"

@@ -117,6 +117,53 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(self.action(pr(mergeable="UNKNOWN", status="UNKNOWN")), "wait")
 
 
+def green(*review_runs):
+    """The required checks passed, plus these runs of the AI review (design 6.4: not required)."""
+    return pr(contexts=[run("pr-title / checks"), run("security-scan / code"), *review_runs])
+
+
+def review(status="COMPLETED", conclusion="SUCCESS", started="2026-10-10T01:00:00Z"):
+    return run("ai-review / review", status=status, conclusion=conclusion, required=False,
+               started=None if status == "QUEUED" else started)
+
+
+class ReviewWaitTest(unittest.TestCase):
+    """.github#177: the lane waits for the AI review's run on the last commit; it stays advisory."""
+
+    def test_a_queued_or_running_review_waits(self):
+        for status in ("QUEUED", "IN_PROGRESS"):
+            action, reason = decide(green(review(status=status, conclusion=None)), REQUIRED, 0)
+            self.assertEqual(action, "wait", status)
+            self.assertIn("AI review", reason)
+
+    def test_a_finished_review_merges_whatever_it_concluded(self):
+        for conclusion in ("SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "SKIPPED"):
+            self.assertEqual(decide(green(review(conclusion=conclusion)), REQUIRED, 0)[0], "merge", conclusion)
+
+    def test_no_review_run_is_not_waited_for(self):
+        self.assertEqual(decide(green(), REQUIRED, 0)[0], "merge")
+
+    def test_the_newest_review_run_counts_in_any_order(self):
+        # the lane's push cancels the run on the old commit's diff; the new run is the one waited for
+        cancelled = review(conclusion="CANCELLED", started="2026-10-10T01:00:00Z")
+        for newer in (review(status="QUEUED", conclusion=None),
+                      review(status="IN_PROGRESS", conclusion=None, started="2026-10-10T02:00:00Z")):
+            for runs in ([cancelled, newer], [newer, cancelled]):
+                self.assertEqual(decide(green(*runs), REQUIRED, 0)[0], "wait")
+        done = review(started="2026-10-10T02:00:00Z")
+        for runs in ([cancelled, done], [done, cancelled]):
+            self.assertEqual(decide(green(*runs), REQUIRED, 0)[0], "merge")
+
+    def test_a_check_with_another_name_is_not_the_review(self):
+        other = run("ai-review-extra / review", status="IN_PROGRESS", conclusion=None, required=False)
+        self.assertEqual(decide(green(other), REQUIRED, 0)[0], "merge")
+
+    def test_failed_required_checks_still_drop_while_the_review_runs(self):
+        p = pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code"),
+                         review(status="IN_PROGRESS", conclusion=None)], status="BLOCKED")
+        self.assertEqual(decide(p, REQUIRED, 0)[0], "drop")
+
+
 class QueueTest(unittest.TestCase):
     def test_oldest_label_first_by_its_latest_labelling(self):
         def node(n, *events):
@@ -324,6 +371,30 @@ class RunOneTest(unittest.TestCase):
         run_one(gh, 7, REQUIRED, float("inf"))
         self.assertEqual(sum(w == ("PUT", "7/merge") for w in self.writes(gh)), 3)
         self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_waits_for_the_review_then_merges(self):
+        running = green(review(status="IN_PROGRESS", conclusion=None))
+        gh = FakeGitHub([running, running, green(review())])
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"))[0], "merged")
+        self.assertEqual(self.writes(gh), [("PUT", "7/merge")])
+        self.assertEqual(len(gh.looks), 1)  # it looked until the review had finished
+
+    def test_a_thread_the_review_posts_keeps_it_from_merging(self):
+        running = green(review(status="IN_PROGRESS", conclusion=None))
+        posted = green(review())
+        posted["reviewThreads"]["nodes"] = [{"isResolved": False}]
+        posted["mergeStateStatus"] = "BLOCKED"
+        gh = FakeGitHub([running, posted])
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf")), "done")
+        self.assertNotIn(("PUT", "7/merge"), self.writes(gh))
+        self.assertEqual(self.writes(gh)[-1], ("DELETE", "7/labels/ready-to-merge"))
+
+    def test_a_review_that_never_finishes_leaves_at_the_lanes_time_limit(self):
+        gh = FakeGitHub([green(review(status="IN_PROGRESS", conclusion=None))])
+        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf")), "done")
+        self.assertNotIn(("PUT", "7/merge"), self.writes(gh))
+        self.assertEqual(self.writes(gh), [("POST", "7/comments"), ("DELETE", "7/labels/ready-to-merge")])
+        self.assertGreater(merge_lane.time.time() - 1_000_000.0, merge_lane.CHECKS_TIMEOUT)
 
     def test_the_deadline_pauses_without_dropping(self):
         running = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
