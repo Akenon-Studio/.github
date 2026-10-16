@@ -99,9 +99,6 @@ class FlaggedTest(unittest.TestCase):
         self.assertEqual(flagged, ["3 snapshot files updated: check each change is intended"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class OffAPrTest(unittest.TestCase):
     """Off a PR, pr-title.yml passes `origin/main` as the base: the diff is from where the commit left
@@ -116,7 +113,7 @@ class OffAPrTest(unittest.TestCase):
         (pathlib.Path(self.dir) / path).write_text(text)
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp()
+        self.dir = self.enterContext(tempfile.TemporaryDirectory())
         self.git("init", "-q", "-b", "main")
         self.write("tests/test_a.py", "def test_a(): assert True\n")
         self.git("add", ".")
@@ -138,3 +135,7 @@ class OffAPrTest(unittest.TestCase):
 
     def test_a_commit_of_main_has_nothing_to_check(self):
         self.assertEqual(parse(run_diff("main", self.dir)), {})
+
+
+if __name__ == "__main__":
+    unittest.main()
