@@ -291,6 +291,11 @@ class ThreadOutcomeTest(unittest.TestCase):
         self.assertEqual(regraded("Fixed (critical)"), "critical")
         self.assertIsNone(regraded("Not an issue (major claim, but unreachable)"))
         self.assertIsNone(regraded("Fixed in abc.\n\nSee (minor) below"))  # first line only
+        self.assertIsNone(regraded("Why (minor)? The input is user-controlled."))  # no outcome stated
+        self.assertIsNone(regraded("Please fix this (minor)"))
+        agent = reply("Fixed (minor, downgraded)\n\n<!-- agent -->")
+        got = thread_outcome([agent, reply("Why (minor)? The input is user-controlled.")], False, "major")
+        self.assertEqual((got["disputed"], got["regraded"]), (True, "minor"))  # a question settles nothing
         got = thread_outcome([reply("Fixed (major, kept) in abc.\n\n<!-- agent -->")], False, "major")
         self.assertEqual((got["outcome"], got["regraded"], got["disputed"]), ("fixed", "major", False))
         got = thread_outcome([reply("Fixed (minor, downgraded)\n\n<!-- agent -->")], False, "major")

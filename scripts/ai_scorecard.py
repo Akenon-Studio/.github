@@ -27,8 +27,8 @@ What it reports (design 6.4):
 - each outcome's share by round, for local and CI review apart: of the critical and major findings
   (CI's threads, the local runs' rows), the severity after re-grading (kept, downgraded, raised) and
   the outcome, counted apart, so a finding downgraded and then fixed counts in both. A local row
-  gives both; a CI reply gives the outcome and the severity after re-grading, in brackets on its
-  first line (`Fixed (major, kept)`, `Moved to #12 (minor, downgraded)`) or in words (`re-graded
+  gives both; a CI reply gives the outcome and the severity after re-grading, in brackets right
+  after the outcome that starts it (`Fixed (major, kept)`, `Moved to #12 (minor, downgraded)`) or in words (`re-graded
   minor`, `downgraded to minor`); a CI finding whose replies name none is counted as unstated, not
   kept (.github#201). An agent's re-grade is a dispute, counted
   only once settled: in a local row, review-branch.py marks it "(an agent's, settled)" or "(an
@@ -69,10 +69,11 @@ RANK = {"nit": 0, "minor": 1, "major": 2, "critical": 3}
 # A reply's new severity: `re-graded minor`, `downgraded to minor`, `raised to critical`
 REGRADE = re.compile(r"\b(?:re-?graded(?:\s+(?:to|as)\b)?|downgraded\s+to|raised\s+to)\s*:?\s*\**"
                      r"(critical|major|minor|nit)\b", re.I)
-# The same, as the reviewer asks for it (scripts/ai_review.py OUTCOME_ASK): in brackets on the
-# reply's first line, `Fixed (major, kept)`, `**Moved to** #12 **(minor)**`
-STATED = re.compile(r"\(\s*\**\s*(critical|major|minor|nit)\b\s*(?:,\s*(?:kept|downgraded|raised)\s*)?\**\s*\)",
-                    re.I)
+# The same, as the reviewer asks for it (scripts/ai_review.py OUTCOME_ASK): the first bracket after
+# the outcome that starts the reply, `Fixed (major, kept)`, `**Moved to** #12 **(minor)**`; a
+# bracket in a reply that states no outcome (`Why (minor)?`) is no re-grade
+STATED = re.compile(r"\W*(?:fixed|not an issue|moved to)\b[^(\n]*\(\s*\**\s*(critical|major|minor|nit)\b"
+                    r"\s*(?:,\s*(?:kept|downgraded|raised)\s*)?\**\s*\)", re.I)
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
 # review-branch.py's section in a PR's description (design 6.4); ai_review.py skips the same markers
@@ -223,9 +224,9 @@ def is_agent(comment):
 
 
 def regraded(text):
-    """The severity after re-grading a reply states: in brackets on its first line (`Fixed (major,
-    kept)`), else in words (`re-graded minor`); or None."""
-    found = STATED.search((text or "").strip().partition("\n")[0]) or REGRADE.search(text or "")
+    """The severity after re-grading a reply states: in brackets after the outcome that starts it
+    (`Fixed (major, kept)`), else in words (`re-graded minor`); or None."""
+    found = STATED.match((text or "").strip()) or REGRADE.search(text or "")
     return found.group(1).lower() if found else None
 
 
