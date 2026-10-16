@@ -115,6 +115,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertEqual(list(caller["jobs"]), ["security-scan"])
         self.assertEqual(sorted(REUSABLE["security-scan.yml"]["jobs"]), ["code", "dependencies"])
         self.assertEqual(set(caller["on"]), {"pull_request", "push"})
+        # each commit of main keeps its own run (Peras reads them); a branch's newer push cancels
+        self.assertIn("github.ref == 'refs/heads/main' && github.sha || github.ref",
+                      caller["concurrency"]["group"])
 
 
     def test_one_job_per_check_workflow_and_every_check_step_reported(self):
