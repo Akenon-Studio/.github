@@ -33,7 +33,7 @@ What it reports (design 6.4):
   kept (.github#201). An agent's re-grade is a dispute, counted
   only once settled: in a local row, review-branch.py marks it "(an agent's, settled)" or "(an
   agent's, not settled)", whoever authored the PR; in a thread, a reply carrying the agent marker
-  (`<!-- agent -->`), or the Peras app's, states an outcome other than Fixed, or a Fixed with a new
+  (`<!-- agent -->`), or either Peras app's (design 7.6), states an outcome other than Fixed, or a Fixed with a new
   severity, and only a person's reply that states one settles it; the latest reply that states an
   outcome decides. Disputed and outcome-less findings aren't counted in the shares, and since the
   issue is public (design 6.2) they are only counted, never named: they are still open. On a Peras
@@ -84,6 +84,7 @@ LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
 CODE = re.compile(r"`[^`\n]*`")
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
+PERAS_READER = "akenon-studio-peras-reader"  # Peras's second app (design 7.6): its replies are an agent's too
 # What the Peras app's later-outcome comment on its PR starts with (design 7.7), then the outcome as
 # JSON: peras's core/delivery/closeout.ts LATER_MARKER, which never changes
 LATER_MARKER = re.compile(r"<!-- peras:later-outcome v1 (\{[^<>]*\}) -->")
@@ -248,9 +249,9 @@ def is_peras(actor):
 
 
 def is_agent(comment):
-    """A reply an agent posted: under its person's login with the agent marker, or as the Peras app."""
+    """A reply an agent posted: under its person's login with the agent marker, or as either Peras app."""
     author = comment.get("author") or {}
-    return AGENT in (comment.get("body") or "") or bot_login(author.get("login")) == PERAS
+    return AGENT in (comment.get("body") or "") or bot_login(author.get("login")) in (PERAS, PERAS_READER)
 
 
 def regraded(text):
