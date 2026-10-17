@@ -33,7 +33,7 @@ What it reports (design 6.4):
   kept (.github#201). An agent's re-grade is a dispute, counted
   only once settled: in a local row, review-branch.py marks it "(an agent's, settled)" or "(an
   agent's, not settled)", whoever authored the PR; in a thread, a reply carrying the agent marker
-  (`<!-- agent -->`), or the Peras app's, states an outcome other than Fixed, or a Fixed with a new
+  (`<!-- agent -->`), or either Peras app's (design 7.6), states an outcome other than Fixed, or a Fixed with a new
   severity, and only a person's reply that states one settles it; the latest reply that states an
   outcome decides. Disputed and outcome-less findings aren't counted in the shares, and since the
   issue is public (design 6.2) they are only counted, never named: they are still open. On a Peras
