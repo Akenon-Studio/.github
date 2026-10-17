@@ -17,7 +17,9 @@ Links between issues are checked too (design 6.8): every issue has a parent unle
 or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report), and an epic has none; an issue whose
 board Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
 flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
-and a closed issue with open sub-issues is reopened with a comment naming them.
+and a closed issue with open sub-issues is reopened with a comment naming them. Adding a
+sub-issue to a closed parent sends the parent no event, so an open issue's own run reopens its
+closed parent the same way (.github#217).
 
 Who is assigned is checked too (design 6.8, "Every hand-off goes to an assigned human"): an issue a
 person opened must have its author assigned, and an issue whose board Status is Waiting for human
@@ -298,9 +300,10 @@ EPIC_DEPTH = 6  # parents followed up to an epic: epic > part > work leaves plen
 
 def ancestors(depth=EPIC_DEPTH):
     """The GraphQL for an issue's parent chain, `depth` levels up."""
-    node = "number title issueType { name } repository { nameWithOwner }"
+    node = "number title state issueType { name } repository { nameWithOwner }"
     for _ in range(depth - 1):
-        node = f"number title issueType {{ name }} repository {{ nameWithOwner }} parent {{ {node} }}"
+        node = (f"number title state issueType {{ name }} repository {{ nameWithOwner }} "
+                f"parent {{ {node} }}")
     return node
 
 
@@ -529,6 +532,29 @@ def reopen_if_early(repo, number, issue):
     return True
 
 
+def parent_to_reopen(issue):
+    """'owner/repo', number of the issue's parent when the issue is open and its parent closed: a
+    sub-issue added to a closed parent sends the parent no event, so the sub-issue's own run checks
+    it (design 6.8, check 5; .github#217). None otherwise."""
+    parent = issue.get("parent")
+    if issue.get("state") != "OPEN" or not parent or parent.get("state") != "CLOSED":
+        return None
+    return parent["repository"]["nameWithOwner"], parent["number"]
+
+
+def reopen_closed_parent(issue):
+    """Reopen the closed parent parent_to_reopen() names, with reopen_if_early()'s comment naming
+    its open sub-issues. The parent's ref if it did, else None."""
+    found = parent_to_reopen(issue)
+    if not found:
+        return None
+    repo, number = found
+    if not reopen_if_early(repo, number, load_issue(repo, number)):
+        return None
+    issue["parent"]["state"] = "OPEN"
+    return f"{repo}#{number}"
+
+
 def reclose_due(issue):
     """True for an open parent the automation reopened (its last reopen was by AUTOMATION_APP, as
     reopen_if_early does when a PR closes it too early) whose sub-issues are now all closed: its
@@ -754,6 +780,7 @@ def sync(repo, number, forms, board):
                 "cleaned": clean_status_page(repo, number, issue, board)}
     reopened = reopen_if_early(repo, number, issue)
     reclosed = not reopened and reclose_if_done(repo, number, issue)
+    parent_reopened = reopen_closed_parent(issue)
     issue_type = (issue["issueType"] or {}).get("name")
     item_id, status = board_item(board, issue)
     names = {f.get("name") for f in board["fields"]["nodes"]}
@@ -773,7 +800,8 @@ def sync(repo, number, forms, board):
     want = epic_of(issue)
     return {"issue": f"{repo}#{number}", "type": issue_type, "set": values, "assigned": assign,
             "epic": want[1] if want else None,
-            "reopened": reopened, "reclosed": reclosed, "problems": problems}
+            "reopened": reopened, "reclosed": reclosed, "parent_reopened": parent_reopened,
+            "problems": problems}
 
 
 def main():
