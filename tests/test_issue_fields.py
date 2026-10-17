@@ -504,6 +504,13 @@ class ClosedParentTest(unittest.TestCase):
         self.assertEqual(done, "Akenon-Studio/peras#140")
         self.assertIn("Akenon-Studio/peras#163", calls[1][2]["body"])
 
+    def test_a_child_moved_away_from_a_large_parent_does_not_reopen_it(self):
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssuesSummary": {"total": 51, "completed": 51},
+                  "subIssues": {"nodes": [sub(n, "CLOSED") for n in range(50)]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertEqual((done, calls), (None, []))
+
     def test_a_child_moved_away_since_does_not_reopen_its_old_parent(self):
         parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
                   "subIssuesSummary": {"total": 2, "completed": 2},
