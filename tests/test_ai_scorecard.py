@@ -274,6 +274,12 @@ class ThreadOutcomeTest(unittest.TestCase):
         # Peras's "disputed" alone is no outcome (design 7.13 Stage 10)
         self.assertIsNone(thread_outcome([reply("disputed", "akenon-studio-peras", "Bot")], True, "major")["outcome"])
 
+    def test_the_peras_readers_re_grade_is_an_agents_too(self):
+        # Peras's second app (design 7.6) never settles a finding either
+        reader = reply("Not an issue: unreachable.", "akenon-studio-peras-reader", "Bot")
+        self.assertTrue(thread_outcome([reader], False, "major")["disputed"])
+        self.assertFalse(thread_outcome([reply("Not an issue: unreachable.")], False, "major")["disputed"])
+
     def test_the_latest_reply_with_an_outcome_decides(self):
         replies = [reply("Not an issue: unreachable.\n\n<!-- agent -->"), reply("Please fix this."),
                    reply("Fixed in def.\n\n<!-- agent -->")]
