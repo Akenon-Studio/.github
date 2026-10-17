@@ -19,7 +19,7 @@ board Status is Blocked has a "blocked by" link; an open issue whose sub-issues 
 flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
 and a closed issue with open sub-issues is reopened with a comment naming them. Adding a
 sub-issue to a closed parent sends the parent no event, so an open issue's own run reopens its
-closed parent the same way (.github#217).
+closed parent the same way (.github#217), and scripts/issue_sweep.py picks such an issue up.
 
 Who is assigned is checked too (design 6.8, "Every hand-off goes to an assigned human"): an issue a
 person opened must have its author assigned, and an issue whose board Status is Waiting for human
@@ -61,7 +61,7 @@ import yaml
 
 import reason
 from board import find_board_fields, graphql, spec
-from rules import (PERAS_RUNNERS, ROOT, bot_login, ensure_label, gh, org_people, peras_runners, source_labels,
+from rules import (PERAS_RUNNERS, ROOT, acts_for, bot_login, ensure_label, gh, org_people, peras_runners, source_labels,
                    status_page)
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
@@ -544,12 +544,16 @@ def parent_to_reopen(issue):
 
 def reopen_closed_parent(issue):
     """Reopen the closed parent parent_to_reopen() names, with reopen_if_early()'s comment naming
-    its open sub-issues. The parent's ref if it did, else None."""
+    its open sub-issues. The parent's ref if it did, else None. In a public repo an outsider's
+    parent is left alone (design 6.2), as the sweep leaves an outsider's issue."""
     found = parent_to_reopen(issue)
     if not found:
         return None
     repo, number = found
-    if not reopen_if_early(repo, number, load_issue(repo, number)):
+    parent = load_issue(repo, number)
+    if not acts_for(parent.get("author"), parent["repository"].get("isPrivate", False)):
+        return None
+    if not reopen_if_early(repo, number, parent):
         return None
     issue["parent"]["state"] = "OPEN"
     return f"{repo}#{number}"
@@ -780,7 +784,6 @@ def sync(repo, number, forms, board):
                 "cleaned": clean_status_page(repo, number, issue, board)}
     reopened = reopen_if_early(repo, number, issue)
     reclosed = not reopened and reclose_if_done(repo, number, issue)
-    parent_reopened = reopen_closed_parent(issue)
     issue_type = (issue["issueType"] or {}).get("name")
     item_id, status = board_item(board, issue)
     names = {f.get("name") for f in board["fields"]["nodes"]}
@@ -797,6 +800,8 @@ def sync(repo, number, forms, board):
         gh(f"repos/{repo}/issues/{number}/assignees", "-X", "POST", body={"assignees": [assign]})
     set_reason(board, item_id, reason_on(board["id"], issue),
                want_reason(issue, bool(problems), values.get("Status", status)))
+    # Last, so a parent the app can't write to never stops the issue's own fields being set
+    parent_reopened = reopen_closed_parent(issue)
     want = epic_of(issue)
     return {"issue": f"{repo}#{number}", "type": issue_type, "set": values, "assigned": assign,
             "epic": want[1] if want else None,

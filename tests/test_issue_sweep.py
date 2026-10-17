@@ -84,6 +84,18 @@ class OutOfDateTest(unittest.TestCase):
         self.assertFalse(out_of_date(issue(subs=(3, 2)), FORMS, BOARD))
         self.assertTrue(out_of_date(issue(subs=(3, 3)), FORMS, BOARD))
 
+    def test_open_issue_under_a_closed_parent_is_synced(self):
+        # Adding a sub-issue to a closed parent sends neither issue an event (.github#217).
+        def under(state):
+            item = issue()
+            item["parent"] = {"number": 140, "state": state,
+                              "repository": {"nameWithOwner": "Akenon-Studio/peras"}}
+            return item
+        self.assertTrue(out_of_date(under("CLOSED"), FORMS, BOARD))
+        self.assertFalse(out_of_date(under("OPEN"), FORMS, BOARD))
+        from issue_sweep import ISSUE_SEARCH
+        self.assertIn("parent { number title state", ISSUE_SEARCH)
+
     def test_the_sweep_query_reads_what_reclose_due_needs(self):
         from issue_sweep import ISSUE_SEARCH
         self.assertIn("reopenEvents", ISSUE_SEARCH)
