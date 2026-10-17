@@ -82,6 +82,11 @@
         "path": "skills/simplify/SKILL.md",
         "why": "The simplify skill peras owns (design 7.16), which the verifier stage gives its agent in its prompt (core/verifier/prompt.ts): agent instructions, not a doc",
         "no_header": true
+      },
+      {
+        "path": "skills/scout/SKILL.md",
+        "why": "The scout skill peras owns (design 7.16), which the scout stage gives its agent in its prompt (core/scout/prompt.ts): agent instructions, not a doc",
+        "no_header": true
       }
     ]
   },
