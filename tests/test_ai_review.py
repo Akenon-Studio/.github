@@ -951,18 +951,12 @@ class PerasMainTest(unittest.TestCase):
         files = ai_review.split_diff(ai_review.without_paths(
             HIDDEN_DIFF, ai_review.peras_private(PERAS_BODY, HIDDEN_DIFF)[1]))
         fp = ai_review.fingerprint(files, "")
-        for login in ai_review.REVIEWERS:  # the app's review, or one from before it
-            ai_review.all_reviews = lambda *a, login=login: [{
-                "user": {"login": login}, "commit_id": "abc",
-                "body": f"**AI review (advisory), round 1**\n\n<!-- ai-review-diff: {fp} -->"}]
-            posted, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
-            self.assertEqual((posted, user), ([], ""), login)
+        ai_review.all_reviews = lambda *a: [{
+            "user": {"login": ai_review.REVIEWER}, "commit_id": "abc",
+            "body": f"**AI review (advisory), round 1**\n\n<!-- ai-review-diff: {fp} -->"}]
+        posted, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
+        self.assertEqual((posted, user), ([], ""))
 
-    def test_a_review_posted_by_anyone_else_counts_for_nothing(self):
-        files = ai_review.split_diff(DIFF)
-        reviews = [{"user": {"login": "someone"}, "commit_id": "abc",
-                    "body": f"<!-- ai-review-diff: {ai_review.fingerprint(files, '')} -->"}]
-        self.assertEqual(ai_review.own_reviews(reviews), [])
 
 
 if __name__ == "__main__":

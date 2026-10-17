@@ -64,8 +64,7 @@ from rules import ORG, acts_for, bot_login, bot_sources, managed_repos
 
 REPO = f"{ORG}/.github"
 LABEL = "ai-scorecard"
-# who posts the reviews: its own app, or the workflow's token before it (GraphQL drops [bot])
-REVIEWER = {"akenon-studio-ai-review", "akenon-studio-ai-review[bot]", "github-actions", "github-actions[bot]"}
+REVIEWER = {"github-actions", "github-actions[bot]"}  # who posts the reviews (GraphQL drops [bot])
 MARKER = "<!-- ai-review -->"
 USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
 SEVERITY = re.compile(r"\*\*(Critical|Major|Minor|Nit)\*\*")

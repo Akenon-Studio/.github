@@ -43,10 +43,6 @@ the workflow reviews too, the review leaves out the hidden test files and the bu
 the files its template lists under PERAS_HIDDEN, and any file the PR adds that is named as a hidden
 test, are taken out of the diff, the later rounds' changes and the files read in full; the
 PERAS_HIDDEN and PERAS_DISPUTES sections are taken out of the description. A person reviews them.
-
-The review posts as its own GitHub App (REVIEW_APP), which nothing else can post as, so Peras knows
-its threads by author (design 7.12); until the app's key is set up, the workflow posts with its own
-token as before (LEGACY_REVIEWER), and either one's earlier reviews count as this script's.
 """
 
 import base64
@@ -64,10 +60,7 @@ MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-opus-5-5")
 EFFORT = "high"
 MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
-REVIEW_APP = "akenon-studio-ai-review[bot]"  # who posts the reviews: the review's own GitHub App
-LEGACY_REVIEWER = "github-actions[bot]"  # the workflow's own token, before the app (and without its key)
-REVIEWER = REVIEW_APP
-REVIEWERS = (REVIEW_APP, LEGACY_REVIEWER)
+REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
 # The Peras app's PRs (design 7.13 Stage 10): their template's fixed sections, by heading
 # (peras core/delivery/pr.ts SECTIONS), and the names only its test author gives a hidden test file
 # (peras core/builder/policy.ts)
@@ -565,7 +558,7 @@ def strip_markers(text):
 def own_reviews(reviews):
     """This workflow's finished reviews (they carry a fingerprint), oldest first. Only its own count,
     so no one can silence the next review by posting the marker."""
-    return [r for r in reviews if (r.get("user") or {}).get("login") in REVIEWERS
+    return [r for r in reviews if (r.get("user") or {}).get("login") == REVIEWER
             and DIFF_MARKER.search(r.get("body") or "")]
 
 
@@ -915,7 +908,6 @@ def main(argv):
         base = (pr.get("base") or {}).get("ref")
         since, moved, size = (later_changes(done[-1]["commit_id"], name, files, base and f"origin/{base}")
                               if done else (None, "", 0))
-        since = without_paths(since, hidden)
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])

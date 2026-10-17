@@ -100,17 +100,6 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertIn("github.event.pull_request.user.login == 'akenon-studio-peras[bot]'", wanted)
         self.assertIn("github.event.pull_request.user.type == 'Bot'", wanted)
 
-    def test_ai_review_posts_as_its_app_when_it_has_the_key(self):
-        steps = REUSABLE["ai-review.yml"]["jobs"]["review"]["steps"]
-        app = next(s for s in steps if s.get("id") == "review_app")
-        self.assertEqual(app["with"]["permission-pull-requests"], "write")
-        self.assertEqual(app["with"]["repositories"], "${{ github.event.repository.name }}")
-        self.assertTrue(app.get("continue-on-error"))
-        review = next(s for s in steps if s.get("name") == "Review")
-        self.assertEqual(review["env"]["GITHUB_TOKEN"], "${{ steps.review_app.outputs.token || github.token }}")
-        caller = load("ai-review-caller.yml")["jobs"]["ai-review"]["secrets"]
-        self.assertIn("AI_REVIEW_APP_PRIVATE_KEY", caller)
-
     def test_every_renovate_has_the_same_status_pages(self):
         # the issue-fields condition, the failures report and status_page() each read one copy
         import json
