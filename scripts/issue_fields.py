@@ -299,12 +299,13 @@ EPIC_DEPTH = 6  # parents followed up to an epic: epic > part > work leaves plen
 
 
 def ancestors(depth=EPIC_DEPTH):
-    """The GraphQL for an issue's parent chain, `depth` levels up."""
-    node = "number title state issueType { name } repository { nameWithOwner }"
-    for _ in range(depth - 1):
-        node = (f"number title state issueType {{ name }} repository {{ nameWithOwner }} "
-                f"parent {{ {node} }}")
-    return node
+    """The GraphQL for an issue's parent chain, `depth` levels up. The nearest parent also has
+    its author and whether its repo is private, for parent_to_reopen()."""
+    level = "number title state issueType {{ name }} repository {{ nameWithOwner{} }}"
+    node = level.format("")
+    for i in range(depth - 1):
+        node = level.format("") + f" parent {{ {node} }}"
+    return node.replace(level.format(""), level.format(" isPrivate") + " author { __typename login }", 1)
 
 
 def epic_of(issue):
@@ -535,25 +536,31 @@ def reopen_if_early(repo, number, issue):
 def parent_to_reopen(issue):
     """'owner/repo', number of the issue's parent when the issue is open and its parent closed: a
     sub-issue added to a closed parent sends the parent no event, so the sub-issue's own run checks
-    it (design 6.8, check 5; .github#217). None otherwise."""
+    it (design 6.8, check 5; .github#217). None otherwise, and for an outsider's parent in a public
+    repo, which is left alone (design 6.2) as the sweep leaves an outsider's issue."""
     parent = issue.get("parent")
     if issue.get("state") != "OPEN" or not parent or parent.get("state") != "CLOSED":
+        return None
+    if not acts_for(parent.get("author"), parent["repository"].get("isPrivate", False)):
         return None
     return parent["repository"]["nameWithOwner"], parent["number"]
 
 
 def reopen_closed_parent(issue):
     """Reopen the closed parent parent_to_reopen() names, with reopen_if_early()'s comment naming
-    its open sub-issues. The parent's ref if it did, else None. In a public repo an outsider's
-    parent is left alone (design 6.2), as the sweep leaves an outsider's issue."""
+    its open sub-issues. The parent's ref if it did, else None. A parent the app can't read or
+    write (an archived repo, say) is reported on stderr, not raised, so it never stops the sweep
+    that picks this issue on every run."""
     found = parent_to_reopen(issue)
     if not found:
         return None
     repo, number = found
-    parent = load_issue(repo, number)
-    if not acts_for(parent.get("author"), parent["repository"].get("isPrivate", False)):
-        return None
-    if not reopen_if_early(repo, number, parent):
+    try:
+        if not reopen_if_early(repo, number, load_issue(repo, number)):
+            return None
+    except SystemExit as e:  # gh() and graphql() exit on an error
+        print(f"Couldn't reopen {repo}#{number}, the closed parent of an open issue: {e}",
+              file=sys.stderr)
         return None
     issue["parent"]["state"] = "OPEN"
     return f"{repo}#{number}"

@@ -5,6 +5,7 @@ Run: python3 -m unittest discover tests"""
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -89,10 +90,17 @@ class OutOfDateTest(unittest.TestCase):
         def under(state):
             item = issue()
             item["parent"] = {"number": 140, "state": state,
-                              "repository": {"nameWithOwner": "Akenon-Studio/peras"}}
+                              "author": {"__typename": "User", "login": "someone"},
+                              "repository": {"nameWithOwner": "Akenon-Studio/peras", "isPrivate": True}}
             return item
         self.assertTrue(out_of_date(under("CLOSED"), FORMS, BOARD))
         self.assertFalse(out_of_date(under("OPEN"), FORMS, BOARD))
+        # an outsider's parent in a public repo is never reopened, so it isn't picked every run
+        public = under("CLOSED")
+        public["parent"]["repository"]["isPrivate"] = False
+        public["parent"]["author"]["login"] = "stranger"
+        with mock.patch("issue_fields.acts_for", lambda author, private: private):
+            self.assertFalse(out_of_date(public, FORMS, BOARD))
         from issue_sweep import ISSUE_SEARCH
         self.assertIn("parent { number title state", ISSUE_SEARCH)
 

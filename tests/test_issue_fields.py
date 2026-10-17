@@ -423,9 +423,11 @@ class EarlyCloseTest(unittest.TestCase):
 class ClosedParentTest(unittest.TestCase):
     """An open sub-issue's own run reopens its closed parent (design 6.8, check 5; .github#217)."""
 
-    def child(self, state="OPEN", parent_state="CLOSED"):
+    def child(self, state="OPEN", parent_state="CLOSED", author="member", private=True):
         return {"state": state, "parent": {"number": 140, "state": parent_state,
-                                           "repository": {"nameWithOwner": "Akenon-Studio/peras"}}}
+                                           "author": {"__typename": "User", "login": author},
+                                           "repository": {"nameWithOwner": "Akenon-Studio/peras",
+                                                          "isPrivate": private}}}
 
     def test_open_issue_under_a_closed_parent_names_it(self):
         from issue_fields import parent_to_reopen
@@ -439,6 +441,20 @@ class ClosedParentTest(unittest.TestCase):
 
     def test_the_parents_state_is_read(self):
         self.assertIn("number title state", ancestors(2))
+        # whose it is, for the outsider rule, on the nearest parent only
+        self.assertEqual(ancestors(3).count("isPrivate"), 1)
+        self.assertEqual(ancestors(3).count("author {"), 1)
+        self.assertTrue(ancestors(3).startswith(
+            "number title state issueType { name } repository { nameWithOwner isPrivate } author"))
+
+    def test_an_outsiders_parent_in_a_public_repo_is_not_named(self):
+        import issue_fields
+        from unittest import mock
+        with mock.patch.object(issue_fields, "acts_for",
+                               lambda author, private: private or author.get("login") == "member"):
+            self.assertIsNone(issue_fields.parent_to_reopen(self.child(author="stranger", private=False)))
+            self.assertEqual(issue_fields.parent_to_reopen(self.child(private=False)),
+                             ("Akenon-Studio/peras", 140))
 
     def run_reopen(self, issue, parent):
         import issue_fields
@@ -481,12 +497,23 @@ class ClosedParentTest(unittest.TestCase):
 
     def test_an_outsiders_parent_in_a_public_repo_is_left_alone(self):
         # design 6.2: no outsider's issue is touched by a job holding the app's key
+        done, calls, loaded = self.run_reopen(self.child(author="stranger", private=False), None)
+        self.assertEqual((done, calls, loaded), (None, [], []))
+
+    def test_a_parent_it_cant_write_is_reported_not_raised(self):
+        import io
+        import issue_fields
+        from unittest import mock
         parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
-                  "author": {"__typename": "User", "login": "stranger"},
-                  "repository": {"nameWithOwner": "Akenon-Studio/peras", "isPrivate": False},
                   "subIssues": {"nodes": [sub(163, "OPEN")]}}
-        done, calls, _ = self.run_reopen(self.child(), parent)
-        self.assertEqual((done, calls), (None, []))
+        def fail(*a, **k):
+            sys.exit("gh api repos/Akenon-Studio/peras/issues/140 failed:\nRepository was archived")
+        err = io.StringIO()
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=parent), gh=fail), \
+                mock.patch("sys.stderr", err):
+            self.assertIsNone(issue_fields.reopen_closed_parent(self.child()))
+        self.assertIn("Couldn't reopen Akenon-Studio/peras#140", err.getvalue())
+        self.assertIn("archived", err.getvalue())
 
     def test_an_open_parent_is_not_even_loaded(self):
         done, calls, loaded = self.run_reopen(self.child(parent_state="OPEN"), None)
