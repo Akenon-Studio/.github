@@ -9,8 +9,8 @@ assigns anyone that line @-mentions. `Waiting on: nothing` (or none, no one) doe
 comment without such a line (the person's answer, or the next progress comment) takes an issue in
 Waiting for human back to In progress, or Todo if nobody is assigned, except while the item's board
 Peras field says Peras's cycle waits on a person (a value starting `waiting`, rulesets/board.json):
-a paused or gated cycle stays in Waiting for human until Peras moves on and clears it (design 6.6,
-7.12). The Peras apps' comments (rulesets/bots.json sources labelled `peras`) count as a person's,
+a paused or gated cycle stays in Waiting for human until Peras moves on, which clears the field
+before it posts, so its own comment then takes the item back (design 6.6, 7.12). The Peras apps' comments (rulesets/bots.json sources labelled `peras`) count as a person's,
 so Peras's own waits and hand-overs reach whom they name. Comments on PRs, by other bots, or on
 closed issues change nothing, nor do comments from outside the org or edits. A `Waiting on` line
 moves only Todo or In progress: In review, Blocked and Done stay. Runs as the org app.
