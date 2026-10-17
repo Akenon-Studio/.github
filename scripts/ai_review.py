@@ -347,7 +347,9 @@ def diff_sections(diff):
         else:
             m = PATH_LINE.match(text)
             if m:
-                name = unquote(m.group(1))
+                raw = m.group(1)
+                # git ends an unquoted ---/+++ path holding a space with a tab
+                name = unquote(raw) if raw.startswith('"') else raw.rstrip("\t")
                 if text.startswith(("---", "+++")):
                     if name == "/dev/null":
                         continue
@@ -375,10 +377,14 @@ HIDDEN_NOTE = ("This PR's hidden test files (design 7.13 Stage 10) are left out 
                "see; a test the PR shows you is reviewed as usual.")
 
 
+HIDDEN_SUMMARY = "Left out for a person, as the Peras app's hidden test files:"
+
+
 def hidden_summary(paths):
-    """The line the posted review ends with on a Peras PR, naming what it left out for a person."""
-    names = ", ".join(f"`{p.replace('`', chr(39))}`" for p in sorted(paths))
-    return f"\n\nLeft out for a person, as the Peras app's hidden test files: {names}."
+    """The line the posted review ends with on a Peras PR, naming what it left out for a person.
+    earlier_review() takes it out again, so no later round reads the names."""
+    names = ", ".join(f"`{p.replace('`', chr(39)).replace(chr(10), ' ')}`" for p in sorted(paths))
+    return f"\n\n{HIDDEN_SUMMARY} {names}."
 
 
 def split_diff(diff):
@@ -730,7 +736,8 @@ def earlier_review(repo, number, token, reviews):
         if not page["pageInfo"]["hasNextPage"]:
             break
         after = page["pageInfo"]["endCursor"]
-    out = [strip_markers(r["body"]).strip() for r in reviews]
+    out = [re.sub(rf"(?m)^{re.escape(HIDDEN_SUMMARY)}.*$", "", strip_markers(r["body"])).strip()
+           for r in reviews]
     for t in threads:
         comments = t["comments"]["nodes"]
         if not comments or MARKER not in (comments[0]["body"] or ""):

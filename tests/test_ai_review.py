@@ -888,7 +888,7 @@ class PerasPrTest(unittest.TestCase):
         self.assertEqual(ai_review.added_hidden_tests(quoted), {"t/caf\u00e9.hidden.test.ts"})
         self.assertEqual(ai_review.without_paths(quoted, {"t/caf\u00e9.hidden.test.ts"}), "")
         spaced = ("diff --git a/x b/y.hidden.test.ts b/x b/y.hidden.test.ts\nnew file mode 100644\n"
-                  "--- /dev/null\n+++ b/x b/y.hidden.test.ts\n@@ -0,0 +1 @@\n+x\n")
+                  "--- /dev/null\n+++ b/x b/y.hidden.test.ts\t\n@@ -0,0 +1 @@\n+x\n")
         self.assertEqual(ai_review.without_paths(spaced, {"x b/y.hidden.test.ts"}), "")
         renamed = DIFF + ("diff --git a/old.ts b/new.ts\nsimilarity index 90%\nrename from old.ts\n"
                           "rename to new.ts\n")
@@ -960,6 +960,18 @@ class PerasMainTest(unittest.TestCase):
             self.assertNotIn(private, user)
         self.assertIn("const c = 4;", user)
         self.assertIn("delivered(2)", user)  # a delivered regression test the builder changed
+
+    def test_a_later_round_doesnt_read_the_names_back(self):
+        posted, _ = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
+        saved = ai_review.graphql
+        ai_review.graphql = lambda *a, **k: {"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": {"hasNextPage": False}, "nodes": []}}}}
+        try:
+            text = ai_review.earlier_review("akenon-studio/peras", 7, "t", [{"body": posted[0]["body"]}])
+        finally:
+            ai_review.graphql = saved
+        self.assertIn("Fine.", text)
+        self.assertNotIn("b.hidden.test.ts", text)
 
     def test_a_persons_pr_is_reviewed_whole(self):
         posted, user = self.run_main({"login": "someone", "type": "User"})
