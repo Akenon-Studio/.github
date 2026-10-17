@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Re-check issues on a schedule, for changes that send no event every repo's caller listens to
 (design 6.8): a part moved to another epic (the Epic board field of the work under it, 6.6), a board Status set to Blocked or Waiting for human, an assignee added or removed, a parent or "blocked by" link added or removed, a
-parent closed while its sub-issues are open, a parent's last open sub-issue closed (which sends the
+parent closed while its sub-issues are open, a sub-issue added to a closed parent (.github#217), a parent's last open sub-issue closed (which sends the
 parent no event), a `peras:cancel` no Peras machine has read in an hour (design 7.13 Stage 0). Runs the issue_fields.py checks on every open issue in
 the managed repos and syncs only those whose `needs-fields` label or comment is out of date, then
 reopens any issue closed in the last few hours that must stay open: a parent with open sub-issues,
@@ -33,7 +33,8 @@ import sys
 from board import find_board_fields, graphql, spec
 from issue_fields import (EPIC_FIELD, ISSUE_FIELDS, LABEL, MARKER, all_problems, by_automation,
                           cancel_to_assign, closed_too_early,
-                          epic_stale, flagged_status_page, load_forms, problems_text, reason_on,
+                          epic_stale, flagged_status_page, load_forms, parent_to_reopen,
+                          problems_text, reason_on,
                           reclose_due, status_on, sync, want_reason)
 from reason import FIELD as REASON_FIELD
 from rules import ORG, acts_for, automation_owners, gh, managed_repos, status_page, try_gh
@@ -72,8 +73,9 @@ def out_of_date(issue, forms, board_id, epic_field=False, reason_field=False):
     board has an Epic field) its Epic value doesn't match its parents, e.g. after a part moved to
     another epic, which sends the work under it no event, (when the board has a Reason field) its
     Reason is out of step, e.g. after a Status set by hand or the triage label removed, or it is a
-    parent to close again (reclose_due)."""
-    if reclose_due(issue):
+    parent to close again (reclose_due) or an open issue whose parent is closed (parent_to_reopen:
+    making it a sub-issue sends neither issue an event)."""
+    if reclose_due(issue) or parent_to_reopen(issue):
         return True
     if epic_field and epic_stale(board_id, issue):
         return True
