@@ -46,6 +46,7 @@ PERAS_HIDDEN and PERAS_DISPUTES sections are taken out of the description. A per
 """
 
 import base64
+import codecs
 import hashlib
 import json
 import os
@@ -263,14 +264,17 @@ def by_peras(pr):
 
 
 def without_section(text, heading):
-    """(the text without the section under `heading`, up to the next `## ` heading, the section's
-    lines). Every copy of the heading is taken out, so a second one can't hide anything."""
-    kept, section, inside = [], [], False
+    """(the text without the section under `heading`, up to the next `## ` heading outside a code
+    fence, the section's lines). Every copy of the heading is taken out, so a second one can't hide
+    anything, and a `## ` line inside a fenced block in the section doesn't end it."""
+    kept, section, inside, fenced = [], [], False, False
     for line in (text or "").splitlines(keepends=True):
         if line.rstrip() == heading:
-            inside = True
+            inside, fenced = True, False
             continue
-        if inside and line.startswith("## "):
+        if inside and line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif inside and not fenced and line.startswith("## "):
             inside = False
         (section if inside else kept).append(line)
     return "".join(kept), section
@@ -302,30 +306,79 @@ def peras_private(description, diff):
     return description, listed_paths(hidden) | added_hidden_tests(diff)
 
 
+def unquote(path):
+    """A path as git prints it, without the C-style quoting it uses for unusual characters."""
+    if len(path) > 1 and path[0] == path[-1] == '"':
+        try:
+            return codecs.escape_decode(path[1:-1].encode())[0].decode("utf-8", "replace")
+        except ValueError:
+            return path[1:-1]
+    return path
+
+
+# The header lines of a file's diff that name its old or new path
+PATH_LINE = re.compile(r"^(?:(?:---|\+\+\+) |(?:rename|copy) (?:from|to) )(.+)$")
+
+
+def diff_sections(diff):
+    """[(paths, text, added)] per file of a unified diff: every path its header names (the
+    `diff --git` line, read both ways since a path may hold " b/", and the `---`, `+++`, rename and
+    copy lines, unquoted), and whether it adds the file. Hunk lines are content, never paths."""
+    out = []
+    for line in (diff or "").splitlines(keepends=True):
+        if line.startswith("diff --git ") or not out:
+            out.append({"paths": set(), "lines": [], "added": False, "header": True})
+        section = out[-1]
+        section["lines"].append(line)
+        text = line.rstrip("\n")
+        if line.startswith("@@"):
+            section["header"] = False
+        if not section["header"]:
+            continue
+        if line.startswith("diff --git "):
+            head = text[len("diff --git "):]
+            quoted = re.findall(r'"(?:[^"\\]|\\.)*"', head)
+            names = [unquote(q) for q in quoted] if head.startswith('"') else [
+                head.split(" b/", 1)[0], "b/" + head.split(" b/", 1)[-1], head.rsplit(" b/", 1)[0],
+                "b/" + head.rsplit(" b/", 1)[-1]]
+            section["paths"].update(n[2:] if n[:2] in ("a/", "b/") else n for n in names)
+        elif line.startswith("new file mode"):
+            section["added"] = True
+        else:
+            m = PATH_LINE.match(text)
+            if m:
+                name = unquote(m.group(1))
+                if text.startswith(("---", "+++")):
+                    if name == "/dev/null":
+                        continue
+                    name = name[2:] if name[:2] in ("a/", "b/") else name
+                section["paths"].add(name)
+    return [(s["paths"], "".join(s["lines"]), s["added"]) for s in out]
+
+
 def added_hidden_tests(diff):
     """Paths the diff adds that are named as a hidden test; one already in the repo (a delivered
     regression test, which a builder may change) is reviewed as any file."""
-    out, path = set(), None
-    for line in (diff or "").splitlines():
-        if line.startswith("diff --git "):
-            path = line.rstrip().split(" b/", 1)[-1]
-        elif line.startswith("new file mode") and path and HIDDEN_TEST_NAME.match(path.rsplit("/", 1)[-1]):
-            out.add(path)
-    return out
+    return {p for paths, _, added in diff_sections(diff) if added
+            for p in paths if HIDDEN_TEST_NAME.match(p.rsplit("/", 1)[-1])}
 
 
 def without_paths(diff, paths):
-    """A unified diff without the files at `paths` (by their new path or their old one)."""
+    """A unified diff without the files at `paths` (by any path its diff names)."""
     if not paths or diff is None:
         return diff
-    out, keep = [], True
-    for line in diff.splitlines(keepends=True):
-        if line.startswith("diff --git "):
-            old, _, new = line.rstrip()[len("diff --git a/"):].partition(" b/")
-            keep = old not in paths and new not in paths
-        if keep:
-            out.append(line)
-    return "".join(out)
+    return "".join(text for names, text, _ in diff_sections(diff) if not names & set(paths))
+
+
+HIDDEN_NOTE = ("This PR's hidden test files (design 7.13 Stage 10) are left out of what you read: a "
+               "person reviews them. Don't report a change as untested for want of tests you can't "
+               "see; a test the PR shows you is reviewed as usual.")
+
+
+def hidden_summary(paths):
+    """The line the posted review ends with on a Peras PR, naming what it left out for a person."""
+    names = ", ".join(f"`{p.replace('`', chr(39))}`" for p in sorted(paths))
+    return f"\n\nLeft out for a person, as the Peras app's hidden test files: {names}."
 
 
 def split_diff(diff):
@@ -458,7 +511,7 @@ def tagged(tag, text):
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
-            history="", generated=(), repo="", design_changes=""):
+            history="", generated=(), repo="", design_changes="", hidden=False):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
@@ -477,6 +530,8 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
             (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
             (tagged("generated_files", "\n".join(generated)) + "\n\n" if generated else "") +
             (tagged("diff", diff_text) if diff_text else ""))
+    if hidden:
+        user += "\n\n" + tagged("hidden_tests_left_out", HIDDEN_NOTE)
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
         if design_changes:
@@ -925,7 +980,8 @@ def main(argv):
         whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used,
                                     keep=set(split_diff(since)) if since is not None else ())
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated, repo.split("/")[1], design_changes=moved)
+                               omitted, history, generated, repo.split("/")[1], design_changes=moved,
+                               hidden=bool(hidden))
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:
@@ -940,6 +996,8 @@ def main(argv):
                            round_no=len(done) + 1)
     # The model's text can be steered by the diff: it must not carry a marker that skips a later
     # push or forges the cost. Ours go last, so they are the ones read.
+    if hidden:
+        review["body"] += hidden_summary(hidden)
     markers = usage_marker(usage) + (f"\n\n<!-- ai-review-diff: {fp} -->" if fp else "")
     review["body"] = strip_markers(review["body"])
     post = {**review, "body": review["body"] + markers, "commit_id": pr["head"]["sha"]}

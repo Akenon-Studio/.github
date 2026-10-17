@@ -877,6 +877,23 @@ class PerasPrTest(unittest.TestCase):
         renamed = "diff --git a/x.py b/tests/test_hidden_x.py\nnew file mode 100644\n"
         self.assertEqual(ai_review.added_hidden_tests(renamed), {"tests/test_hidden_x.py"})
 
+    def test_a_fenced_heading_doesnt_end_the_disputes(self):
+        body = "## Disputes\n```\n## not a heading\nsecret reason\n```\n## Risk\nlow\n"
+        text, _ = ai_review.without_section(body, "## Disputes")
+        self.assertEqual(text, "## Risk\nlow\n")
+
+    def test_quoted_and_odd_paths_are_read(self):
+        quoted = ('diff --git "a/t/caf\\303\\251.hidden.test.ts" "b/t/caf\\303\\251.hidden.test.ts"\n'
+                  'new file mode 100644\n--- /dev/null\n+++ "b/t/caf\\303\\251.hidden.test.ts"\n@@ -0,0 +1 @@\n+x\n')
+        self.assertEqual(ai_review.added_hidden_tests(quoted), {"t/caf\u00e9.hidden.test.ts"})
+        self.assertEqual(ai_review.without_paths(quoted, {"t/caf\u00e9.hidden.test.ts"}), "")
+        spaced = ("diff --git a/x b/y.hidden.test.ts b/x b/y.hidden.test.ts\nnew file mode 100644\n"
+                  "--- /dev/null\n+++ b/x b/y.hidden.test.ts\n@@ -0,0 +1 @@\n+x\n")
+        self.assertEqual(ai_review.without_paths(spaced, {"x b/y.hidden.test.ts"}), "")
+        renamed = DIFF + ("diff --git a/old.ts b/new.ts\nsimilarity index 90%\nrename from old.ts\n"
+                          "rename to new.ts\n")
+        self.assertEqual(ai_review.without_paths(renamed, {"old.ts"}), DIFF)
+
     def test_without_paths_drops_whole_files(self):
         out = ai_review.without_paths(HIDDEN_DIFF, {"src/b.hidden.test.ts", "pkg/@scope/d.test.ts"})
         self.assertNotIn("secretAnswer", out)
@@ -935,6 +952,9 @@ class PerasMainTest(unittest.TestCase):
     def test_a_peras_pr_is_reviewed_without_its_hidden_tests_and_disputes(self):
         posted, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
         self.assertEqual(len(posted), 1)
+        self.assertIn(ai_review.HIDDEN_NOTE, user)  # told they exist, not what they are
+        self.assertIn("Left out for a person, as the Peras app's hidden test files: "
+                      "`a'b.ts`, `pkg/@scope/d.test.ts`, `src/b.hidden.test.ts`.", posted[0]["body"])
         for private in ("secretAnswer", "b.hidden.test.ts", "listedOnly", "d.test.ts", "unreachable",
                         "Hidden test files"):
             self.assertNotIn(private, user)
@@ -942,7 +962,9 @@ class PerasMainTest(unittest.TestCase):
         self.assertIn("delivered(2)", user)  # a delivered regression test the builder changed
 
     def test_a_persons_pr_is_reviewed_whole(self):
-        _, user = self.run_main({"login": "someone", "type": "User"})
+        posted, user = self.run_main({"login": "someone", "type": "User"})
+        self.assertNotIn(ai_review.HIDDEN_NOTE, user)
+        self.assertNotIn("Left out for a person", posted[0]["body"])
         for shown in ("secretAnswer", "listedOnly", "unreachable"):
             self.assertIn(shown, user)
 
