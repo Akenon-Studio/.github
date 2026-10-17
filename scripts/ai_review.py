@@ -37,6 +37,16 @@ PROMPT_SINCE.)
 A PR's description may hold a local-review section, between LOCAL_REVIEW_START and LOCAL_REVIEW_END,
 with the local runs' findings and the author's outcomes and reasons (review-branch.py writes it,
 design 6.4). The review never reads it, so no review reads the author's reasons first.
+
+On the Peras app's PRs only (design 6.4 "Peras's PRs", 7.13 Stage 10; .github#178), whose drafts
+the workflow reviews too, the review leaves out the hidden test files and the builder's disputes:
+the files its template lists under PERAS_HIDDEN, and any file the PR adds that is named as a hidden
+test, are taken out of the diff, the later rounds' changes and the files read in full; the
+PERAS_HIDDEN and PERAS_DISPUTES sections are taken out of the description. A person reviews them.
+
+The review posts as its own GitHub App (REVIEW_APP), which nothing else can post as, so Peras knows
+its threads by author (design 7.12); until the app's key is set up, the workflow posts with its own
+token as before (LEGACY_REVIEWER), and either one's earlier reviews count as this script's.
 """
 
 import base64
@@ -54,7 +64,17 @@ MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-opus-5-5")
 EFFORT = "high"
 MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
-REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
+REVIEW_APP = "akenon-studio-ai-review[bot]"  # who posts the reviews: the review's own GitHub App
+LEGACY_REVIEWER = "github-actions[bot]"  # the workflow's own token, before the app (and without its key)
+REVIEWER = REVIEW_APP
+REVIEWERS = (REVIEW_APP, LEGACY_REVIEWER)
+# The Peras app's PRs (design 7.13 Stage 10): their template's fixed sections, by heading
+# (peras core/delivery/pr.ts SECTIONS), and the names only its test author gives a hidden test file
+# (peras core/builder/policy.ts)
+PERAS_APP = "akenon-studio-peras[bot]"
+PERAS_HIDDEN, PERAS_DISPUTES = "## Hidden test files", "## Disputes"
+HIDDEN_TEST_NAME = re.compile(r"^[^/]+\.hidden\.(?:test|spec)\.[A-Za-z0-9]+$|^test_hidden_[A-Za-z0-9_]+\.py$")
+WORD_JOINER = "\u2060"  # Peras defuses @ and # in what it posts with it (design 7.12)
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 # The tokens a review used, in its body, for the monthly scorecard's cost per PR (scripts/ai_scorecard.py)
 USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
@@ -241,6 +261,78 @@ REVIEW_SCHEMA = {
 class CutOff(Exception):
     """The model stopped before it finished the review. `usage` is what it spent, when it ran."""
     usage = None
+
+
+def by_peras(pr):
+    """True for a PR the Peras app opened (a bot's login can't be taken by a person)."""
+    user = pr.get("user") or {}
+    return user.get("login") == PERAS_APP and user.get("type") == "Bot"
+
+
+def without_section(text, heading):
+    """(the text without the section under `heading`, up to the next `## ` heading, the section's
+    lines). Every copy of the heading is taken out, so a second one can't hide anything."""
+    kept, section, inside = [], [], False
+    for line in (text or "").splitlines(keepends=True):
+        if line.rstrip() == heading:
+            inside = True
+            continue
+        if inside and line.startswith("## "):
+            inside = False
+        (section if inside else kept).append(line)
+    return "".join(kept), section
+
+
+def listed_paths(lines):
+    """The paths a Peras template section lists, one `- `path`` item a line (its inline code span,
+    with Peras's defusing undone)."""
+    out = set()
+    for line in lines:
+        item = line.strip()
+        if not item.startswith("- "):
+            continue
+        item = item[2:].strip()
+        fence = len(item) - len(item.lstrip("`"))
+        if fence and item.endswith("`" * fence):
+            item = item[fence:len(item) - fence].strip()
+        item = item.replace(WORD_JOINER, "")
+        if item:
+            out.add(item)
+    return out
+
+
+def peras_private(description, diff):
+    """(the description without the Hidden test files and Disputes sections, the paths to leave
+    out: those listed under Hidden test files, and any the diff adds named as a hidden test)."""
+    description, hidden = without_section(description, PERAS_HIDDEN)
+    description, _ = without_section(description, PERAS_DISPUTES)
+    return description, listed_paths(hidden) | added_hidden_tests(diff)
+
+
+def added_hidden_tests(diff):
+    """Paths the diff adds that are named as a hidden test; one already in the repo (a delivered
+    regression test, which a builder may change) is reviewed as any file."""
+    out, path = set(), None
+    for line in (diff or "").splitlines():
+        if line.startswith("diff --git "):
+            path = line.rstrip().split(" b/", 1)[-1]
+        elif line.startswith("new file mode") and path and HIDDEN_TEST_NAME.match(path.rsplit("/", 1)[-1]):
+            out.add(path)
+    return out
+
+
+def without_paths(diff, paths):
+    """A unified diff without the files at `paths` (by their new path or their old one)."""
+    if not paths or diff is None:
+        return diff
+    out, keep = [], True
+    for line in diff.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            old, _, new = line.rstrip()[len("diff --git a/"):].partition(" b/")
+            keep = old not in paths and new not in paths
+        if keep:
+            out.append(line)
+    return "".join(out)
 
 
 def split_diff(diff):
@@ -473,7 +565,7 @@ def strip_markers(text):
 def own_reviews(reviews):
     """This workflow's finished reviews (they carry a fingerprint), oldest first. Only its own count,
     so no one can silence the next review by posting the marker."""
-    return [r for r in reviews if (r.get("user") or {}).get("login") == REVIEWER
+    return [r for r in reviews if (r.get("user") or {}).get("login") in REVIEWERS
             and DIFF_MARKER.search(r.get("body") or "")]
 
 
@@ -789,6 +881,11 @@ def main(argv):
         if e.code != 406:
             raise
         diff = None  # GitHub refuses diffs over its size limits
+    description = without_local_review(pr.get("body") or "")
+    hidden = set()
+    if by_peras(pr):  # its hidden tests and the builder's disputes are a person's to read
+        description, hidden = peras_private(description, diff)
+        diff = without_paths(diff, hidden)
     files = split_diff(diff) if diff is not None else {}
     if diff is not None and not files:
         print("Nothing to review: the PR changes only generated or lock files.")
@@ -818,6 +915,7 @@ def main(argv):
         base = (pr.get("base") or {}).get("ref")
         since, moved, size = (later_changes(done[-1]["commit_id"], name, files, base and f"origin/{base}")
                               if done else (None, "", 0))
+        since = without_paths(since, hidden)
         # A full round instead when a new CLAUDE.md rule applies to the whole PR, or the changes
         # are as big as a diff can be
         if since is not None and (changes_since(done[-1]["commit_id"], ["CLAUDE.md"])
@@ -828,7 +926,7 @@ def main(argv):
             later, shown, paths = (history, since), "", later_paths(split_diff(since), files, moved)
         else:
             later, shown, paths = None, text, list(files)
-        description = without_local_review(pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
+        description = description[:MAX_DESCRIPTION_CHARS]
         generated = generated_paths(diff)  # the whole PR's, every round
         used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(moved) + len(description)
                 + sum(len(g) + 1 for g in generated))

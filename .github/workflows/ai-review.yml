@@ -5,8 +5,9 @@
 #   on: { pull_request: { types: [opened, synchronize, ready_for_review, reopened] } }
 #   permissions: { contents: read, pull-requests: write, id-token: write }
 #   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main,
-#     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
-#   (handbook passes no secrets: its review reads the design from its own checkout)
+#     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }},
+#                AI_REVIEW_APP_PRIVATE_KEY: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }} } } }
+#   (handbook passes only AI_REVIEW_APP_PRIVATE_KEY: its review reads the design from its own checkout)
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
 # a token for the handbook repo only, contents read only. A handbook PR is checked against its own
@@ -19,9 +20,15 @@
 # of those five repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
 # org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
 # job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
-# every caller, this repo's included, uses the main copy. The review is posted with the
-# workflow's own token (github-actions[bot]) as one review with event COMMENT. Skipped: drafts,
-# fork PRs (GitHub gives them no OIDC token) and Renovate's dependency PRs.
+# every caller, this repo's included, uses the main copy. The review is posted as one review with
+# event COMMENT by its own GitHub App, akenon-studio-ai-review (app ID in the org variable
+# AI_REVIEW_APP_ID, key in the secret AI_REVIEW_APP_PRIVATE_KEY, Pull requests: write), which nothing
+# else posts as, so Peras knows the review's threads by author (design 7.12); without the key it
+# posts with the workflow's own token (github-actions[bot]) as before. Skipped: drafts, except the
+# Peras app's (design 6.4 "Peras's PRs": Peras fixes what the review finds before asking a person;
+# another draft gets round one when marked ready, and a reviewed Peras draft marked ready with its
+# diff unchanged gets no new round, by ai_review.py's fingerprint), fork PRs (GitHub gives them no
+# OIDC token) and Renovate's dependency PRs.
 name: ai-review
 
 on:
@@ -29,6 +36,8 @@ on:
     secrets:
       AKENON_APP_PRIVATE_KEY:
         required: false  # without it the review runs without the design, and says so
+      AI_REVIEW_APP_PRIVATE_KEY:
+        required: false  # without it the review posts as github-actions[bot]
 
 permissions:
   contents: read
@@ -45,15 +54,19 @@ jobs:
     # The skips are on the steps, not the job: a skipped job reports "skipped" (tests/test_workflows.py).
     env:
       HAS_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY != '' }}
+      HAS_REVIEW_KEY: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY != '' }}
+      # A draft only from the Peras app (a person's login can't end in [bot])
       WANTED: >-
-        ${{ !github.event.pull_request.draft &&
+        ${{ (!github.event.pull_request.draft ||
+             (github.event.pull_request.user.login == 'akenon-studio-peras[bot]' &&
+              github.event.pull_request.user.type == 'Bot')) &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             github.event.pull_request.user.login != 'renovate[bot]' &&
             github.event.pull_request.user.login != 'akenon-studio-renovate[bot]' }}
     steps:
       - name: Nothing to review (draft, fork or dependency update)
         if: env.WANTED != 'true'
-        run: echo "Skipped, a draft, fork PR or Renovate update."
+        run: echo "Skipped, a draft (not the Peras app's), fork PR or Renovate update."
 
       - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'
@@ -90,6 +103,20 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           persist-credentials: false
 
+      # Posts the review as its own app; without the key, or if the sign-in fails, the workflow's
+      # own token posts it (the Review step), so the review never stops for want of the app
+      - name: Log in as the review app, to post the review
+        if: env.WANTED == 'true' && env.HAS_REVIEW_KEY == 'true'
+        continue-on-error: true
+        id: review_app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.AI_REVIEW_APP_ID }}
+          private-key: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+
       - name: Get the script
         if: env.WANTED == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -109,7 +136,7 @@ jobs:
       - name: Review
         if: env.WANTED == 'true'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.review_app.outputs.token || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Only from that checkout: a PR could commit a file at the same path
           DESIGN_FILE: ${{ steps.design.outcome == 'success' && '.akenon-handbook/design.md' || '' }}

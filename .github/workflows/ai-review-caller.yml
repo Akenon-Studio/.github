@@ -15,3 +15,4 @@ jobs:
     uses: akenon-studio/.github/.github/workflows/ai-review.yml@main
     secrets:
       AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }}  # reads the design (handbook)
+      AI_REVIEW_APP_PRIVATE_KEY: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}  # posts as the review's app

@@ -812,5 +812,158 @@ class MainTest(unittest.TestCase):
         # an unclosed section is cut to the end, never read
         self.assertNotIn("argument", ai_review.without_local_review("x\n" + ai_review.LOCAL_REVIEW_START + "\nargument"))
 
+
+HIDDEN_DIFF = DIFF + """diff --git a/src/b.hidden.test.ts b/src/b.hidden.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/b.hidden.test.ts
+@@ -0,0 +1 @@
++expect(secretAnswer).toBe(42);
+diff --git a/src/c.hidden.test.ts b/src/c.hidden.test.ts
+--- a/src/c.hidden.test.ts
++++ b/src/c.hidden.test.ts
+@@ -1 +1 @@
+-delivered(1);
++delivered(2);
+diff --git a/pkg/@scope/d.test.ts b/pkg/@scope/d.test.ts
+new file mode 100644
+--- /dev/null
++++ b/pkg/@scope/d.test.ts
+@@ -0,0 +1 @@
++listedOnly();
+"""
+
+PERAS_BODY = """Closes #9
+
+## Intent
+`Weather`
+
+## Hidden test files
+- `pkg/\u2060@scope/d.test.ts`
+- ``a`b.ts``
+
+## Disputes
+`the builder says finding 1 is unreachable`
+
+## Risk
+`risk:low`
+"""
+
+
+class PerasPrTest(unittest.TestCase):
+    """The Peras app's PRs (design 6.4, 7.13 Stage 10; .github#178)."""
+
+    def test_only_the_peras_app_is_peras(self):
+        self.assertTrue(ai_review.by_peras({"user": {"login": "akenon-studio-peras[bot]", "type": "Bot"}}))
+        self.assertFalse(ai_review.by_peras({"user": {"login": "akenon-studio-peras[bot]", "type": "User"}}))
+        self.assertFalse(ai_review.by_peras({"user": {"login": "someone", "type": "User"}}))
+        self.assertFalse(ai_review.by_peras({}))
+
+    def test_the_fixed_sections_are_taken_out_and_the_listed_paths_read(self):
+        description, hidden = ai_review.peras_private(PERAS_BODY, "")
+        self.assertNotIn("Hidden test files", description)
+        self.assertNotIn("unreachable", description)
+        self.assertIn("## Intent", description)
+        self.assertIn("## Risk", description)  # the next section is kept
+        self.assertEqual(hidden, {"pkg/@scope/d.test.ts", "a`b.ts"})
+
+    def test_a_repeated_heading_hides_nothing(self):
+        body = "## Disputes\nfirst\n## Risk\nlow\n## Disputes\nsecond\n"
+        text, _ = ai_review.without_section(body, "## Disputes")
+        self.assertEqual(text, "## Risk\nlow\n")
+
+    def test_a_new_file_named_as_a_hidden_test_is_left_out_but_a_delivered_one_is_not(self):
+        self.assertEqual(ai_review.added_hidden_tests(HIDDEN_DIFF), {"src/b.hidden.test.ts"})
+        renamed = "diff --git a/x.py b/tests/test_hidden_x.py\nnew file mode 100644\n"
+        self.assertEqual(ai_review.added_hidden_tests(renamed), {"tests/test_hidden_x.py"})
+
+    def test_without_paths_drops_whole_files(self):
+        out = ai_review.without_paths(HIDDEN_DIFF, {"src/b.hidden.test.ts", "pkg/@scope/d.test.ts"})
+        self.assertNotIn("secretAnswer", out)
+        self.assertNotIn("listedOnly", out)
+        self.assertIn("delivered(2)", out)
+        self.assertIn("const c = 4;", out)
+        self.assertIsNone(ai_review.without_paths(None, {"x"}))
+        self.assertEqual(ai_review.without_paths(DIFF, set()), DIFF)
+
+
+class PerasMainTest(unittest.TestCase):
+    """main() on a Peras PR and a person's, with GitHub and Claude faked."""
+
+    def setUp(self):
+        import os, subprocess, tempfile
+        self.cwd, self.dir = os.getcwd(), tempfile.mkdtemp()
+        os.chdir(self.dir)
+        subprocess.run(["git", "init", "-q"], check=True)
+        self.saved = {k: getattr(ai_review, k) for k in
+                      ("github", "all_reviews", "ask_claude", "earlier_comments")}
+        self.env = {k: os.environ.get(k) for k in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "DESIGN_FILE")}
+        os.environ.update(GITHUB_TOKEN="t", GITHUB_REPOSITORY="akenon-studio/peras", PR_NUMBER="7")
+        os.environ.pop("DESIGN_FILE", None)
+        ai_review.all_reviews = lambda *a: []
+        ai_review.earlier_comments = lambda *a: set()
+
+    def tearDown(self):
+        import os, shutil
+        for k, v in self.saved.items():
+            setattr(ai_review, k, v)
+        for k, v in self.env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        os.chdir(self.cwd)
+        shutil.rmtree(self.dir)
+
+    def run_main(self, user):
+        posted, seen = [], {}
+
+        def github(path, token, method="GET", body=None, accept=""):
+            if method == "POST":
+                posted.append(body)
+                return {}
+            return HIDDEN_DIFF if accept.endswith("diff") else {
+                "title": "t", "body": PERAS_BODY, "head": {"sha": "abc"}, "user": user, "draft": True}
+
+        def answer(system, user_text):
+            seen["user"] = user_text
+            return {"summary": "Fine.", "comments": []}, None
+        ai_review.github, ai_review.ask_claude = github, answer
+        self.assertEqual(ai_review.main([]), 0)
+        return posted, seen.get("user", "")
+
+    def test_a_peras_pr_is_reviewed_without_its_hidden_tests_and_disputes(self):
+        posted, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
+        self.assertEqual(len(posted), 1)
+        for private in ("secretAnswer", "b.hidden.test.ts", "listedOnly", "d.test.ts", "unreachable",
+                        "Hidden test files"):
+            self.assertNotIn(private, user)
+        self.assertIn("const c = 4;", user)
+        self.assertIn("delivered(2)", user)  # a delivered regression test the builder changed
+
+    def test_a_persons_pr_is_reviewed_whole(self):
+        _, user = self.run_main({"login": "someone", "type": "User"})
+        for shown in ("secretAnswer", "listedOnly", "unreachable"):
+            self.assertIn(shown, user)
+
+    def test_a_reviewed_draft_marked_ready_with_its_diff_unchanged_gets_no_round(self):
+        # The ready_for_review run goes the same way as any: the fingerprint matches, nothing is posted
+        files = ai_review.split_diff(ai_review.without_paths(
+            HIDDEN_DIFF, ai_review.peras_private(PERAS_BODY, HIDDEN_DIFF)[1]))
+        fp = ai_review.fingerprint(files, "")
+        for login in ai_review.REVIEWERS:  # the app's review, or one from before it
+            ai_review.all_reviews = lambda *a, login=login: [{
+                "user": {"login": login}, "commit_id": "abc",
+                "body": f"**AI review (advisory), round 1**\n\n<!-- ai-review-diff: {fp} -->"}]
+            posted, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
+            self.assertEqual((posted, user), ([], ""), login)
+
+    def test_a_review_posted_by_anyone_else_counts_for_nothing(self):
+        files = ai_review.split_diff(DIFF)
+        reviews = [{"user": {"login": "someone"}, "commit_id": "abc",
+                    "body": f"<!-- ai-review-diff: {ai_review.fingerprint(files, '')} -->"}]
+        self.assertEqual(ai_review.own_reviews(reviews), [])
+
+
 if __name__ == "__main__":
     unittest.main()
