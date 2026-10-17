@@ -420,6 +420,164 @@ class EarlyCloseTest(unittest.TestCase):
         self.assertIn("Reopened", text)
 
 
+class ClosedParentTest(unittest.TestCase):
+    """An open sub-issue's own run reopens its closed parent (design 6.8, check 5; .github#217)."""
+
+    def child(self, state="OPEN", parent_state="CLOSED", author="member", private=True):
+        return {"state": state, "number": 163, "repository": {"nameWithOwner": "Akenon-Studio/peras"},
+                "parent": {"number": 140, "state": parent_state,
+                                           "author": {"__typename": "User", "login": author},
+                                           "repository": {"nameWithOwner": "Akenon-Studio/peras",
+                                                          "isPrivate": private}}}
+
+    def test_open_issue_under_a_closed_parent_names_it(self):
+        from issue_fields import parent_to_reopen
+        self.assertEqual(parent_to_reopen(self.child()), ("Akenon-Studio/peras", 140))
+
+    def test_nothing_to_do_otherwise(self):
+        from issue_fields import parent_to_reopen
+        self.assertIsNone(parent_to_reopen(self.child(parent_state="OPEN")))
+        self.assertIsNone(parent_to_reopen(self.child(state="CLOSED")))  # a closed child needs no open parent
+        self.assertIsNone(parent_to_reopen({"state": "OPEN", "parent": None}))
+
+    def test_a_parent_outside_the_managed_repos_is_not_named(self):
+        from issue_fields import parent_to_reopen
+        elsewhere = self.child()
+        elsewhere["parent"]["repository"]["nameWithOwner"] = "Akenon-Studio/not-a-managed-repo"
+        self.assertIsNone(parent_to_reopen(elsewhere))
+        elsewhere["parent"]["repository"]["nameWithOwner"] = "someone-else/peras"
+        self.assertIsNone(parent_to_reopen(elsewhere))
+
+    def test_the_parents_state_is_read(self):
+        self.assertIn("number title state", ancestors(2))
+        # whose it is, for the outsider rule, on the nearest parent only
+        self.assertEqual(ancestors(3).count("isPrivate"), 1)
+        self.assertEqual(ancestors(3).count("author {"), 1)
+        self.assertTrue(ancestors(3).startswith(
+            "number title state issueType { name } repository { nameWithOwner isPrivate } author"))
+
+    def test_an_outsiders_parent_in_a_public_repo_is_not_named(self):
+        import issue_fields
+        from unittest import mock
+        with mock.patch.object(issue_fields, "acts_for",
+                               lambda author, private: private or author.get("login") == "member"):
+            self.assertIsNone(issue_fields.parent_to_reopen(self.child(author="stranger", private=False)))
+            self.assertEqual(issue_fields.parent_to_reopen(self.child(private=False)),
+                             ("Akenon-Studio/peras", 140))
+
+    def run_reopen(self, issue, parent):
+        import issue_fields
+        from unittest import mock
+        calls, loaded = [], []
+        def load(repo, number):
+            loaded.append((repo, number))
+            return parent
+        with mock.patch.multiple(issue_fields, load_issue=load,
+                                 acts_for=lambda author, private: private or author.get("login") == "member",
+                                 gh=lambda path, *a, body=None: calls.append((path, a, body))):
+            return issue_fields.reopen_closed_parent(issue), calls, loaded
+
+    def test_reopens_the_parent_with_a_comment_naming_its_open_sub_issues(self):
+        import issue_fields
+        issue = self.child()
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": body(**TASK),
+                  "author": {"__typename": "User", "login": "member"},
+                  "repository": {"nameWithOwner": "Akenon-Studio/peras", "isPrivate": False},
+                  "subIssues": {"nodes": [sub(163, "OPEN", "Akenon-Studio/peras"), sub(150, "CLOSED")]}}
+        done, calls, loaded = self.run_reopen(issue, parent)
+        self.assertEqual(done, "Akenon-Studio/peras#140")
+        self.assertEqual(loaded, [("Akenon-Studio/peras", 140)])
+        self.assertEqual(calls[0], ("repos/Akenon-Studio/peras/issues/140", ("-X", "PATCH"), {"state": "open"}))
+        self.assertEqual(calls[1][0], "repos/Akenon-Studio/peras/issues/140/comments")
+        self.assertIn(issue_fields.REOPEN_MARKER, calls[1][2]["body"])
+        self.assertIn("Its sub-issue Akenon-Studio/peras#163 is open: it was added, or reopened, "
+                      "after this closed.", calls[1][2]["body"])
+        self.assertIn("Close or move these first: Akenon-Studio/peras#163.", calls[1][2]["body"])
+        self.assertNotIn("handbook#150", calls[1][2]["body"])
+        self.assertEqual(issue["parent"]["state"], "OPEN")
+
+    def test_a_child_past_the_first_50_sub_issues_still_counts(self):
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssuesSummary": {"total": 51, "completed": 50},
+                  "subIssues": {"nodes": [sub(n, "CLOSED") for n in range(50)]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertEqual(done, "Akenon-Studio/peras#140")
+        self.assertIn("Akenon-Studio/peras#163", calls[1][2]["body"])
+
+    def test_a_child_moved_away_from_a_large_parent_does_not_reopen_it(self):
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssuesSummary": {"total": 51, "completed": 51},
+                  "subIssues": {"nodes": [sub(n, "CLOSED") for n in range(50)]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertEqual((done, calls), (None, []))
+
+    def test_a_child_moved_away_since_does_not_reopen_its_old_parent(self):
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssuesSummary": {"total": 2, "completed": 2},
+                  "subIssues": {"nodes": [sub(1, "CLOSED"), sub(2, "CLOSED")]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertEqual((done, calls), (None, []))
+
+    def test_a_parent_found_open_on_reload_is_left_alone(self):
+        # e.g. two sub-issues' runs at once, or its sub-issue moved away since the first query
+        parent = {"state": "OPEN", "issueType": {"name": "Task"}, "body": "",
+                  "author": {"__typename": "User", "login": "member"},
+                  "repository": {"nameWithOwner": "Akenon-Studio/peras", "isPrivate": True},
+                  "subIssues": {"nodes": [sub(163, "OPEN")]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertIsNone(done)
+        self.assertEqual(calls, [])
+
+    def test_an_outsiders_parent_in_a_public_repo_is_left_alone(self):
+        # design 6.2: no outsider's issue is touched by a job holding the app's key
+        done, calls, loaded = self.run_reopen(self.child(author="stranger", private=False), None)
+        self.assertEqual((done, calls, loaded), (None, [], []))
+
+    def test_a_parent_it_cant_write_is_reported_not_raised(self):
+        import io
+        import issue_fields
+        from unittest import mock
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssues": {"nodes": [sub(163, "OPEN")]}}
+        def fail(*a, **k):
+            sys.exit("gh api repos/Akenon-Studio/peras/issues/140 failed:\nRepository was archived")
+        err = io.StringIO()
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=parent), gh=fail), \
+                mock.patch("sys.stderr", err):
+            self.assertIsNone(issue_fields.reopen_closed_parent(self.child()))
+        self.assertIn("Couldn't reopen Akenon-Studio/peras#140", err.getvalue())
+        self.assertIn("archived", err.getvalue())
+
+    def test_an_open_parent_is_not_even_loaded(self):
+        done, calls, loaded = self.run_reopen(self.child(parent_state="OPEN"), None)
+        self.assertEqual((done, calls, loaded), (None, [], []))
+
+    def test_sync_reopens_it_and_says_so(self):
+        import issue_fields
+        from unittest import mock
+        issue = dict(self.child(), title="x", issueType={"name": "Task"}, body=body(**TASK),
+                     labels={"nodes": []}, author={"__typename": "User", "login": "someone"},
+                     projectItems={"nodes": []})
+        order = []
+        reopen = mock.Mock(side_effect=lambda i: order.append("parent") or "Akenon-Studio/peras#140")
+        with mock.patch.multiple(issue_fields, load_issue=mock.Mock(return_value=issue),
+                                 reopen_if_early=mock.Mock(return_value=False),
+                                 reclose_if_done=mock.Mock(return_value=False),
+                                 reopen_closed_parent=reopen,
+                                 board_item=mock.Mock(return_value=("item", "Todo")),
+                                 set_field=mock.Mock(), sync_epic=mock.Mock(),
+                                 report=mock.Mock(side_effect=lambda *a: order.append("report")),
+                                 epic_of=mock.Mock(return_value=None),
+                                 all_problems=mock.Mock(return_value=[]),
+                                 cancel_to_assign=mock.Mock(return_value=None),
+                                 set_reason=mock.Mock(side_effect=lambda *a: order.append("reason"))):
+            result = issue_fields.sync("Akenon-Studio/peras", 163, FORMS,
+                                       {"id": "B", "fields": {"nodes": []}})
+        reopen.assert_called_once_with(issue)
+        self.assertEqual(order, ["report", "reason", "parent"])  # the issue's own run comes first
+        self.assertEqual(result["parent_reopened"], "Akenon-Studio/peras#140")
+
+
 class CommentTest(unittest.TestCase):
     def test_lists_each_problem(self):
         text = problems_text(["**Why** is required but empty.", "The issue has no parent."])

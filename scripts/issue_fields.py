@@ -17,7 +17,9 @@ Links between issues are checked too (design 6.8): every issue has a parent unle
 or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report), and an epic has none; an issue whose
 board Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
 flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
-and a closed issue with open sub-issues is reopened with a comment naming them.
+and a closed issue with open sub-issues is reopened with a comment naming them. Adding a
+sub-issue to a closed parent sends the parent no event, so an open issue's own run reopens its
+closed parent the same way (.github#217), and scripts/issue_sweep.py picks such an issue up.
 
 Who is assigned is checked too (design 6.8, "Every hand-off goes to an assigned human"): an issue a
 person opened must have its author assigned, and an issue whose board Status is Waiting for human
@@ -59,7 +61,7 @@ import yaml
 
 import reason
 from board import find_board_fields, graphql, spec
-from rules import (PERAS_RUNNERS, ROOT, bot_login, ensure_label, gh, org_people, peras_runners, source_labels,
+from rules import (ORG, PERAS_RUNNERS, ROOT, acts_for, bot_login, ensure_label, gh, managed_repos, org_people, peras_runners, source_labels,
                    status_page)
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
@@ -297,11 +299,13 @@ EPIC_DEPTH = 6  # parents followed up to an epic: epic > part > work leaves plen
 
 
 def ancestors(depth=EPIC_DEPTH):
-    """The GraphQL for an issue's parent chain, `depth` levels up."""
-    node = "number title issueType { name } repository { nameWithOwner }"
-    for _ in range(depth - 1):
-        node = f"number title issueType {{ name }} repository {{ nameWithOwner }} parent {{ {node} }}"
-    return node
+    """The GraphQL for an issue's parent chain, `depth` levels up. The nearest parent also has
+    its author and whether its repo is private, for parent_to_reopen()."""
+    level = "number title state issueType {{ name }} repository {{ nameWithOwner{} }}"
+    node = level.format("")
+    for i in range(depth - 1):
+        node = level.format("") + f" parent {{ {node} }}"
+    return node.replace(level.format(""), level.format(" isPrivate") + " author { __typename login }", 1)
 
 
 def epic_of(issue):
@@ -528,15 +532,65 @@ def closed_too_early(issue):
                           issue["subIssues"]["nodes"])
 
 
-def reopen_if_early(repo, number, issue):
-    """Reopen a closed issue that must stay open. True if it did."""
+def reopen_if_early(repo, number, issue, why=None):
+    """Reopen a closed issue that must stay open, with `why` (if given) first in the comment.
+    True if it did."""
     reasons = closed_too_early(issue)
     if not reasons:
         return False
+    reasons = ([why] if why else []) + reasons
     gh(f"repos/{repo}/issues/{number}", "-X", "PATCH", body={"state": "open"})
     gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": reopen_text(reasons)})
     issue["state"] = "OPEN"
     return True
+
+
+def parent_to_reopen(issue):
+    """'owner/repo', number of the issue's parent when the issue is open and its parent closed: a
+    sub-issue added to a closed parent sends the parent no event, so the sub-issue's own run checks
+    it (design 6.8, check 5; .github#217). None otherwise; for a parent outside the managed repos
+    (rulesets/repos.txt), which the automation doesn't keep; and for an outsider's parent in a
+    public repo, which is left alone (design 6.2) as the sweep leaves an outsider's issue."""
+    parent = issue.get("parent")
+    if issue.get("state") != "OPEN" or not parent or parent.get("state") != "CLOSED":
+        return None
+    owner, name = parent["repository"]["nameWithOwner"].split("/")
+    if owner.lower() != ORG.lower() or name not in managed_repos():
+        return None
+    if not acts_for(parent.get("author"), parent["repository"].get("isPrivate", False)):
+        return None
+    return parent["repository"]["nameWithOwner"], parent["number"]
+
+
+def reopen_closed_parent(issue):
+    """Reopen the closed parent parent_to_reopen() names, with reopen_if_early()'s comment naming
+    its open sub-issues. The parent's ref if it did, else None. A parent the app can't read or
+    write (an archived repo, say) is reported on stderr, not raised, so it never stops the sweep
+    that picks this issue on every run."""
+    found = parent_to_reopen(issue)
+    if not found:
+        return None
+    repo, number = found
+    me = {"number": issue["number"], "state": "OPEN",
+          "repository": {"nameWithOwner": issue["repository"]["nameWithOwner"]}}
+    ref = f"{me['repository']['nameWithOwner']}#{me['number']}"
+    try:
+        parent = load_issue(repo, number)
+        subs = parent["subIssues"]["nodes"]
+        summary = parent.get("subIssuesSummary") or {}
+        if (summary.get("total", 0) > len(subs)  # more than it read, and some still open
+                and summary.get("completed", 0) < summary.get("total", 0)
+                and not any(f"{s['repository']['nameWithOwner']}#{s['number']}" == ref for s in subs)):
+            subs.append(me)
+        why = f"Its sub-issue {ref} is open: it was added, or reopened, after this closed."
+        if not reopen_if_early(repo, number, parent, why):
+            return None
+    except SystemExit as e:  # gh() and graphql() exit on an error
+        print(f"Couldn't reopen {repo}#{number}, the closed parent of an open issue: {e}",
+              file=sys.stderr)
+        return None
+    issue["parent"]["state"] = "OPEN"
+    return f"{repo}#{number}"
 
 
 def reclose_due(issue):
@@ -780,10 +834,13 @@ def sync(repo, number, forms, board):
         gh(f"repos/{repo}/issues/{number}/assignees", "-X", "POST", body={"assignees": [assign]})
     set_reason(board, item_id, reason_on(board["id"], issue),
                want_reason(issue, bool(problems), values.get("Status", status)))
+    # Last, so a parent the app can't write to never stops the issue's own fields being set
+    parent_reopened = reopen_closed_parent(issue)
     want = epic_of(issue)
     return {"issue": f"{repo}#{number}", "type": issue_type, "set": values, "assigned": assign,
             "epic": want[1] if want else None,
-            "reopened": reopened, "reclosed": reclosed, "problems": problems}
+            "reopened": reopened, "reclosed": reclosed, "parent_reopened": parent_reopened,
+            "problems": problems}
 
 
 def main():
