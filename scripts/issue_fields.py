@@ -61,7 +61,7 @@ import yaml
 
 import reason
 from board import find_board_fields, graphql, spec
-from rules import (PERAS_RUNNERS, ROOT, acts_for, bot_login, ensure_label, gh, org_people, peras_runners, source_labels,
+from rules import (ORG, PERAS_RUNNERS, ROOT, acts_for, bot_login, ensure_label, gh, managed_repos, org_people, peras_runners, source_labels,
                    status_page)
 
 FORMS_DIR = ROOT / ".github" / "ISSUE_TEMPLATE"
@@ -522,11 +522,13 @@ def closed_too_early(issue):
                           issue["subIssues"]["nodes"])
 
 
-def reopen_if_early(repo, number, issue):
-    """Reopen a closed issue that must stay open. True if it did."""
+def reopen_if_early(repo, number, issue, why=None):
+    """Reopen a closed issue that must stay open, with `why` (if given) first in the comment.
+    True if it did."""
     reasons = closed_too_early(issue)
     if not reasons:
         return False
+    reasons = ([why] if why else []) + reasons
     gh(f"repos/{repo}/issues/{number}", "-X", "PATCH", body={"state": "open"})
     gh(f"repos/{repo}/issues/{number}/comments", "-X", "POST", body={"body": reopen_text(reasons)})
     issue["state"] = "OPEN"
@@ -536,10 +538,14 @@ def reopen_if_early(repo, number, issue):
 def parent_to_reopen(issue):
     """'owner/repo', number of the issue's parent when the issue is open and its parent closed: a
     sub-issue added to a closed parent sends the parent no event, so the sub-issue's own run checks
-    it (design 6.8, check 5; .github#217). None otherwise, and for an outsider's parent in a public
-    repo, which is left alone (design 6.2) as the sweep leaves an outsider's issue."""
+    it (design 6.8, check 5; .github#217). None otherwise; for a parent outside the managed repos
+    (rulesets/repos.txt), which the automation doesn't keep; and for an outsider's parent in a
+    public repo, which is left alone (design 6.2) as the sweep leaves an outsider's issue."""
     parent = issue.get("parent")
     if issue.get("state") != "OPEN" or not parent or parent.get("state") != "CLOSED":
+        return None
+    owner, name = parent["repository"]["nameWithOwner"].split("/")
+    if owner.lower() != ORG.lower() or name not in managed_repos():
         return None
     if not acts_for(parent.get("author"), parent["repository"].get("isPrivate", False)):
         return None
@@ -555,8 +561,16 @@ def reopen_closed_parent(issue):
     if not found:
         return None
     repo, number = found
+    me = {"number": issue["number"], "state": "OPEN",
+          "repository": {"nameWithOwner": issue["repository"]["nameWithOwner"]}}
+    ref = f"{me['repository']['nameWithOwner']}#{me['number']}"
     try:
-        if not reopen_if_early(repo, number, load_issue(repo, number)):
+        parent = load_issue(repo, number)
+        subs = parent["subIssues"]["nodes"]
+        if not any(f"{s['repository']['nameWithOwner']}#{s['number']}" == ref for s in subs):
+            subs.append(me)  # past the first 50 sub-issues the query reads
+        why = f"Its sub-issue {ref} is open: it was added, or reopened, after this closed."
+        if not reopen_if_early(repo, number, parent, why):
             return None
     except SystemExit as e:  # gh() and graphql() exit on an error
         print(f"Couldn't reopen {repo}#{number}, the closed parent of an open issue: {e}",

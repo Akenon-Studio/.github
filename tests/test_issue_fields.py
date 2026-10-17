@@ -424,7 +424,8 @@ class ClosedParentTest(unittest.TestCase):
     """An open sub-issue's own run reopens its closed parent (design 6.8, check 5; .github#217)."""
 
     def child(self, state="OPEN", parent_state="CLOSED", author="member", private=True):
-        return {"state": state, "parent": {"number": 140, "state": parent_state,
+        return {"state": state, "number": 163, "repository": {"nameWithOwner": "Akenon-Studio/peras"},
+                "parent": {"number": 140, "state": parent_state,
                                            "author": {"__typename": "User", "login": author},
                                            "repository": {"nameWithOwner": "Akenon-Studio/peras",
                                                           "isPrivate": private}}}
@@ -438,6 +439,14 @@ class ClosedParentTest(unittest.TestCase):
         self.assertIsNone(parent_to_reopen(self.child(parent_state="OPEN")))
         self.assertIsNone(parent_to_reopen(self.child(state="CLOSED")))  # a closed child needs no open parent
         self.assertIsNone(parent_to_reopen({"state": "OPEN", "parent": None}))
+
+    def test_a_parent_outside_the_managed_repos_is_not_named(self):
+        from issue_fields import parent_to_reopen
+        elsewhere = self.child()
+        elsewhere["parent"]["repository"]["nameWithOwner"] = "Akenon-Studio/not-a-managed-repo"
+        self.assertIsNone(parent_to_reopen(elsewhere))
+        elsewhere["parent"]["repository"]["nameWithOwner"] = "someone-else/peras"
+        self.assertIsNone(parent_to_reopen(elsewhere))
 
     def test_the_parents_state_is_read(self):
         self.assertIn("number title state", ancestors(2))
@@ -481,9 +490,18 @@ class ClosedParentTest(unittest.TestCase):
         self.assertEqual(calls[0], ("repos/Akenon-Studio/peras/issues/140", ("-X", "PATCH"), {"state": "open"}))
         self.assertEqual(calls[1][0], "repos/Akenon-Studio/peras/issues/140/comments")
         self.assertIn(issue_fields.REOPEN_MARKER, calls[1][2]["body"])
-        self.assertIn("Akenon-Studio/peras#163", calls[1][2]["body"])
+        self.assertIn("Its sub-issue Akenon-Studio/peras#163 is open: it was added, or reopened, "
+                      "after this closed.", calls[1][2]["body"])
+        self.assertIn("Close or move these first: Akenon-Studio/peras#163.", calls[1][2]["body"])
         self.assertNotIn("handbook#150", calls[1][2]["body"])
         self.assertEqual(issue["parent"]["state"], "OPEN")
+
+    def test_a_child_past_the_first_50_sub_issues_still_counts(self):
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssues": {"nodes": [sub(n, "CLOSED") for n in range(50)]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertEqual(done, "Akenon-Studio/peras#140")
+        self.assertIn("Akenon-Studio/peras#163", calls[1][2]["body"])
 
     def test_a_parent_found_open_on_reload_is_left_alone(self):
         # e.g. two sub-issues' runs at once, or its sub-issue moved away since the first query
