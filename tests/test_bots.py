@@ -8,7 +8,10 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 from pr_closes_issue import exempt  # noqa: E402
-from rules import RULES, bot_login, bot_sources  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import rules  # noqa: E402
+from rules import RULES, acts_for, bot_login, bot_sources  # noqa: E402
 
 SOURCES = {"renovate": {"labels": ["dependencies"], "no_issue": True},
            "akenon-studio-automation": {"labels": ["settings-drift"], "no_issue": False}}
@@ -42,6 +45,26 @@ class BotsFileTest(unittest.TestCase):
             self.assertTrue(source["labels"], login)
             self.assertLessEqual(set(source["labels"]), names, login)
 
+
+class PerasAppsTest(unittest.TestCase):
+    """Both Peras apps (design 7.6) carry the `peras` label, open work with an issue behind it, and
+    are acted for in a public repo (rules.acts_for, design 6.2)."""
+
+    def test_both_apps_are_sources_with_the_peras_label(self):
+        for login in ("akenon-studio-peras", "akenon-studio-peras-reader"):
+            self.assertEqual(bot_sources()[login], {"labels": ["peras"], "no_issue": False}, login)
+
+    def test_both_apps_are_acted_for_in_a_public_repo(self):
+        with mock.patch.object(rules, "org_people", return_value=set()):
+            for login in ("akenon-studio-peras", "akenon-studio-peras-reader"):
+                self.assertTrue(acts_for({"__typename": "Bot", "login": login}, private=False), login)
+                self.assertTrue(acts_for({"type": "Bot", "login": f"{login}[bot]"}, private=False), login)
+            # a person whose login looks like the app's is an outsider
+            self.assertFalse(acts_for({"__typename": "User", "login": "akenon-studio-peras-reader"}, private=False))
+            self.assertFalse(acts_for({"__typename": "Bot", "login": "peras-reader"}, private=False))
+
+    def test_a_reader_pr_still_closes_an_issue(self):
+        self.assertFalse(exempt("akenon-studio-peras-reader[bot]", "Bot", bot_sources()))
 
 if __name__ == "__main__":
     unittest.main()
