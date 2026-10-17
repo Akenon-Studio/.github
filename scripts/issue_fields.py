@@ -357,7 +357,8 @@ ISSUE_FIELDS = """id number title state body author { __typename login } issueTy
   projectItems(first: 20) { nodes { id project { id }
     fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     epic: fieldValueByName(name: "Epic") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-    reason: fieldValueByName(name: "Reason") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"""
+    reason: fieldValueByName(name: "Reason") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    peras: fieldValueByName(name: "Peras") { ... on ProjectV2ItemFieldTextValue { text } } } }"""
 ISSUE_FIELDS = ISSUE_FIELDS.replace("ANCESTORS", ancestors())
 
 
@@ -373,6 +374,15 @@ def status_on(board_id, issue):
     for item in issue["projectItems"]["nodes"]:
         if item["project"]["id"] == board_id:
             return (item["fieldValueByName"] or {}).get("name")
+    return None
+
+
+def peras_on(board_id, issue):
+    """The issue's Peras field on the board (rulesets/board.json: what Peras's cycle waits on), or
+    None if it isn't there or is empty."""
+    for item in issue["projectItems"]["nodes"]:
+        if item["project"]["id"] == board_id:
+            return (item.get("peras") or {}).get("text") or None
     return None
 
 

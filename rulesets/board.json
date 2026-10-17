@@ -235,7 +235,7 @@
     {
       "name": "Peras",
       "type": "TEXT",
-      "_comment": "Cycle state and link, intents only. Set by Peras, never by hand."
+      "_comment": "Cycle state and link, intents only. Set by Peras, never by hand. While a cycle waits on a person it starts `waiting` (e.g. `waiting: plan approval`, then the link), and comment_status.py keeps the item in Waiting for human whatever is commented until Peras clears it on moving on (design 6.6, 7.12); while it waits on a usage limit it starts `usage limit` (waits on no one, design 7.11). Peras clears it when the cycle moves on or ends."
     }
   ],
   "linked_repos": "managed",

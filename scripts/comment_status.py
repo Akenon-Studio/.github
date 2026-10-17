@@ -7,9 +7,13 @@ A comment with a line starting `Waiting on` (a progress comment saying the work 
 person, e.g. `Waiting on: @partner to choose the supplier`) sets the issue to Waiting for human and
 assigns anyone that line @-mentions. `Waiting on: nothing` (or none, no one) doesn't count. A later
 comment without such a line (the person's answer, or the next progress comment) takes an issue in
-Waiting for human back to In progress, or Todo if nobody is assigned. Comments on PRs, by bots, or on
-closed issues change nothing, nor do comments from outside the org or edits. A `Waiting on` line moves
-only Todo or In progress: In review, Blocked and Done stay. Runs as the org app.
+Waiting for human back to In progress, or Todo if nobody is assigned, except while the item's board
+Peras field says Peras's cycle waits on a person (a value starting `waiting`, rulesets/board.json):
+a paused or gated cycle stays in Waiting for human until Peras moves on and clears it (design 6.6,
+7.12). The Peras apps' comments (rulesets/bots.json sources labelled `peras`) count as a person's,
+so Peras's own waits and hand-overs reach whom they name. Comments on PRs, by other bots, or on
+closed issues change nothing, nor do comments from outside the org or edits. A `Waiting on` line
+moves only Todo or In progress: In review, Blocked and Done stay. Runs as the org app.
 """
 
 import json
@@ -17,8 +21,8 @@ import re
 import sys
 
 from board import find_board_fields
-from issue_fields import WAITING, board_item, load_issue, set_field, sync_reason
-from rules import gh, try_gh
+from issue_fields import WAITING, board_item, load_issue, peras_on, set_field, sync_reason
+from rules import bot_login, bot_sources, gh, try_gh
 
 WAITING_LINE = re.compile(r"^ {0,3}(?:[-*+][ \t]+)?[*_]*waiting on\b[*_]*(.*)$", re.I | re.M)  # 4 spaces: code
 NOT_WAITING = re.compile(r"^[\s:*_–-]*(nothing|none|no one|nobody|n/?a)\b|^[\s:*_–-]*$", re.I)
@@ -27,6 +31,7 @@ MENTION = re.compile(r"(?<![\w/@])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\b")
 QUOTED = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)|`[^`\n]*`|<!--.*?-->", re.S)
 PEOPLE = {"OWNER", "MEMBER", "COLLABORATOR"}  # whose comments count at once; others need write access
 FROM = {"Todo", "In progress", None}  # a Waiting on line keeps In review, Blocked and Done
+PERAS_WAITS = re.compile(r"^\s*waiting\b", re.I)  # the Peras field while a cycle waits on a person
 
 
 def waiting_on(body):
@@ -40,6 +45,13 @@ def waiting_on(body):
     return None
 
 
+def peras_app(comment):
+    """Whether the comment is from one of the Peras apps (rulesets/bots.json, label `peras`)."""
+    user = comment.get("user") or {}
+    source = bot_sources().get(bot_login(user.get("login"))) if user.get("type") == "Bot" else None
+    return bool(source) and "peras" in source.get("labels", [])
+
+
 def counts(repo, comment):
     """Whether the comment is from someone who works here: an org member or collaborator by its
     association, or (a private member's association can read CONTRIBUTOR) write access to the repo."""
@@ -50,12 +62,12 @@ def counts(repo, comment):
     return level.get("permission") in ("admin", "maintain", "write")
 
 
-def decide(body, status, assigned):
-    """(Status to set or None, logins to assign) for a new comment."""
+def decide(body, status, assigned, peras=None):
+    """(Status to set or None, logins to assign) for a new comment; `peras` is the item's Peras field."""
     line = waiting_on(body)
     if line is not None:
         return (WAITING if status in FROM else None), MENTION.findall(line)
-    if status == WAITING:
+    if status == WAITING and not PERAS_WAITS.match(peras or ""):
         return ("In progress" if assigned else "Todo"), []
     return None, []
 
@@ -64,17 +76,18 @@ def main(path):
     event = json.load(open(path))
     issue, comment = event["issue"], event["comment"]
     if (event.get("action") != "created" or "pull_request" in issue or issue.get("state") != "open"
-            or (comment.get("user") or {}).get("type") == "Bot"):
-        print("Nothing to change: not a person's new comment on an open issue")
+            or ((comment.get("user") or {}).get("type") == "Bot" and not peras_app(comment))):
+        print("Nothing to change: not a person's or Peras's new comment on an open issue")
         return 0
     repo, number = event["repository"]["full_name"], issue["number"]
-    if not counts(repo, comment):
+    if not peras_app(comment) and not counts(repo, comment):
         print(f"#{number}: the commenter can't write to {repo}, so the comment changes nothing")
         return 0
     board = find_board_fields("Akenon Studio")
     loaded = load_issue(repo, number)
     item, status = board_item(board, loaded)
-    status_to, people = decide(comment.get("body"), status, bool(loaded["assignedActors"]["nodes"]))
+    peras = peras_on(board["id"], loaded)
+    status_to, people = decide(comment.get("body"), status, bool(loaded["assignedActors"]["nodes"]), peras)
     if people:  # GitHub drops anyone who can't be assigned here
         gh(f"repos/{repo}/issues/{number}/assignees", "-X", "POST", body={"assignees": people})
         print(f"#{number}: assigned {', '.join(people)}")
@@ -83,7 +96,7 @@ def main(path):
         sync_reason(board, item, loaded, status_to)
         print(f"#{number}: {status} -> {status_to}")
     else:
-        print(f"#{number}: stays {status}")
+        print(f"#{number}: stays {status}" + (f" (Peras: {peras})" if peras else ""))
     return 0
 
 
