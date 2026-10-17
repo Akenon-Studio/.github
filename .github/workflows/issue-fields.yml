@@ -4,8 +4,9 @@
 # (design 6.6, 6.8; scripts/issue_fields.py). Changes no event reports here (board Status, links,
 # assignees, closing a parent early) are caught by the issue-sweep workflow. On a PR event it sets
 # the issues the PR closes to In review, and back when it closes unmerged or turns into a draft
-# (scripts/pr_status.py). On a new comment, a `Waiting on` line sets Waiting for human and a later
-# comment without one takes it back (scripts/comment_status.py). Each keeps the board's Reason field
+# (scripts/pr_status.py). On a new comment (a person's or a Peras app's), a `Waiting on` line sets
+# Waiting for human and a later comment without one takes it back, unless the board's Peras field
+# says the cycle waits on a person (scripts/comment_status.py). Each keeps the board's Reason field
 # (why the item waits on a person, scripts/reason.py) in step.
 # In a public repo it acts only for members and the org's bots (scripts/trusted_event.py, design 6.2).
 # Every repo (this one included, see issue-fields-caller.yml) calls it with:
