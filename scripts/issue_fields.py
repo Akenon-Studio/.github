@@ -567,8 +567,9 @@ def reopen_closed_parent(issue):
     try:
         parent = load_issue(repo, number)
         subs = parent["subIssues"]["nodes"]
-        if not any(f"{s['repository']['nameWithOwner']}#{s['number']}" == ref for s in subs):
-            subs.append(me)  # past the first 50 sub-issues the query reads
+        if ((parent.get("subIssuesSummary") or {}).get("total", 0) > len(subs)  # more than it read
+                and not any(f"{s['repository']['nameWithOwner']}#{s['number']}" == ref for s in subs)):
+            subs.append(me)
         why = f"Its sub-issue {ref} is open: it was added, or reopened, after this closed."
         if not reopen_if_early(repo, number, parent, why):
             return None

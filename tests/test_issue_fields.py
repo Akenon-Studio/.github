@@ -498,10 +498,18 @@ class ClosedParentTest(unittest.TestCase):
 
     def test_a_child_past_the_first_50_sub_issues_still_counts(self):
         parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssuesSummary": {"total": 51, "completed": 50},
                   "subIssues": {"nodes": [sub(n, "CLOSED") for n in range(50)]}}
         done, calls, _ = self.run_reopen(self.child(), parent)
         self.assertEqual(done, "Akenon-Studio/peras#140")
         self.assertIn("Akenon-Studio/peras#163", calls[1][2]["body"])
+
+    def test_a_child_moved_away_since_does_not_reopen_its_old_parent(self):
+        parent = {"state": "CLOSED", "issueType": {"name": "Task"}, "body": "",
+                  "subIssuesSummary": {"total": 2, "completed": 2},
+                  "subIssues": {"nodes": [sub(1, "CLOSED"), sub(2, "CLOSED")]}}
+        done, calls, _ = self.run_reopen(self.child(), parent)
+        self.assertEqual((done, calls), (None, []))
 
     def test_a_parent_found_open_on_reload_is_left_alone(self):
         # e.g. two sub-issues' runs at once, or its sub-issue moved away since the first query
