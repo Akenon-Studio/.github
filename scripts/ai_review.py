@@ -943,7 +943,9 @@ def main(argv):
         diff = without_paths(diff, hidden)
     files = split_diff(diff) if diff is not None else {}
     if diff is not None and not files:
-        print("Nothing to review: the PR changes only generated or lock files.")
+        print("Nothing to review: the PR changes only generated or lock files"
+              + (f", and hidden test files left out for a person ({', '.join(sorted(hidden))})."
+                 if hidden else "."))
         return 0
     try:
         claude_md = open("CLAUDE.md").read()

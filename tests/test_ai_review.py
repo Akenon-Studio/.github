@@ -961,6 +961,50 @@ class PerasMainTest(unittest.TestCase):
         self.assertIn("const c = 4;", user)
         self.assertIn("delivered(2)", user)  # a delivered regression test the builder changed
 
+    def write(self, content):
+        import os
+        for path in ("src/a.ts", "src/b.hidden.test.ts", "src/c.hidden.test.ts", "pkg/@scope/d.test.ts"):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(f"{content} {'HIDDENCONTENT' if 'a.ts' not in path and 'c.hidden' not in path else 'SHOWN'}\n")
+
+    def commit(self):
+        import subprocess
+        subprocess.run(["git", "add", "-A"], check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"], check=True)
+        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+    def test_hidden_files_on_disk_are_not_read_in_full(self):
+        self.write("one")
+        self.commit()
+        _, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
+        self.assertIn('<file path="src/a.ts">', user)
+        self.assertNotIn("HIDDENCONTENT", user)
+
+    def test_a_later_round_leaves_them_out_too(self):
+        self.write("one")
+        first = self.commit()
+        self.write("two")
+        self.commit()
+        ai_review.all_reviews = lambda *a: [{"user": {"login": ai_review.REVIEWER}, "commit_id": first,
+                                              "body": "**AI review (advisory), round 1**\n\n<!-- ai-review-diff: " + "a" * 40 + " -->"}]
+        saved = ai_review.earlier_review
+        ai_review.earlier_review = lambda *a: "earlier findings"
+        try:
+            _, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
+        finally:
+            ai_review.earlier_review = saved
+        self.assertIn("This is a later round", user)
+        self.assertIn("two SHOWN", user)
+        self.assertNotIn("HIDDENCONTENT", user)
+        self.assertNotIn("b.hidden.test.ts", user)
+
+    def test_the_peras_login_is_the_one_bots_json_lists(self):
+        import json
+        bots = json.loads((pathlib.Path(ai_review.__file__).resolve().parent.parent / "rulesets"
+                           / "bots.json").read_text())
+        self.assertIn(ai_review.PERAS_APP.removesuffix("[bot]"), bots["sources"])
+
     def test_a_later_round_doesnt_read_the_names_back(self):
         posted, _ = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
         saved = ai_review.graphql

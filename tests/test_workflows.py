@@ -97,6 +97,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
         # design 6.4 "Peras's PRs" (.github#178)
         wanted = REUSABLE["ai-review.yml"]["jobs"]["review"]["env"]["WANTED"]
         self.assertIn("(!github.event.pull_request.draft ||", wanted)
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        self.assertIn("akenon-studio-peras", bots["sources"])  # the login checked here is a real one
         self.assertIn("github.event.pull_request.user.login == 'akenon-studio-peras[bot]'", wanted)
         self.assertIn("github.event.pull_request.user.type == 'Bot'", wanted)
 
