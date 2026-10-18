@@ -661,13 +661,21 @@ DIFF_ARGS = ("diff", "--no-ext-diff", "--no-textconv", "--no-color", "-M")
 
 
 def pr_diff(pr):
-    """The PR's diff from the checkout. Raises if git can't make it (a commit missing): the job
-    then fails, rather than reviewing nothing."""
-    base, head = pr["base"]["sha"], pr["head"]["sha"]
-    out = git_out(*DIFF_ARGS, f"{base}...{head}", strip=False)
-    if out is None:
-        raise RuntimeError(f"git couldn't diff {base[:12]}...{head[:12]}: is the base branch's history fetched?")
-    return out
+    """The PR's diff from the checkout, against the base branch as the checkout has it
+    (`origin/<base>`, else the base commit the API names). A file that isn't UTF-8 is read with
+    replacement characters. Raises with git's own words if git can't make it: the job then fails,
+    rather than reviewing nothing."""
+    head = pr["head"]["sha"]
+    ref = (pr.get("base") or {}).get("ref")
+    base = f"origin/{ref}" if ref and git_out("rev-parse", "--verify", "--quiet", f"origin/{ref}") else pr["base"]["sha"]
+    try:
+        run = subprocess.run(["git", *DIFF_ARGS, f"{base}...{head}"], capture_output=True, text=True,
+                             errors="replace", timeout=300)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"git couldn't diff {base}...{head[:12]}: {e}") from e
+    if run.returncode != 0:
+        raise RuntimeError(f"git couldn't diff {base}...{head[:12]}: {run.stderr.strip()[:500]}")
+    return run.stdout
 
 
 def later_changes(commit, repo, paths, base=None):

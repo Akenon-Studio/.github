@@ -344,7 +344,7 @@ class PrDiffTest(unittest.TestCase):
     """The PR's diff from the checkout, as GitHub shows it (.github#228)."""
 
     def test_the_head_against_its_merge_base_with_no_driver_the_pr_names(self):
-        import os, subprocess, tempfile
+        import os, shutil, subprocess, tempfile
         cwd, d = os.getcwd(), tempfile.mkdtemp()
         os.chdir(d)
         try:
@@ -353,11 +353,13 @@ class PrDiffTest(unittest.TestCase):
             git("init", "-q", "-b", "main")
             open("a.ts", "w").write("const a = 1;\n")
             git("add", "."), git("commit", "-q", "-m", "base")
-            base = git("rev-parse", "HEAD")
             git("checkout", "-q", "-b", "pr")
             open("a.ts", "w").write("const a = 2;\n")
-            # a driver the PR's .gitattributes names: never run (no config defines it, and it's off)
+            open("latin.txt", "wb").write("caf\xe9\n".encode("latin-1"))  # not UTF-8
+            # a driver and a textconv the PR's .gitattributes names, defined here: never run
             open(".gitattributes", "w").write("*.ts diff=evil\n")
+            git("config", "diff.evil.command", "sh -c 'echo PWNED'")
+            git("config", "diff.evil.textconv", "sh -c 'echo PWNED'")
             git("add", "."), git("commit", "-q", "-m", "pr")
             head = git("rev-parse", "HEAD")
             git("checkout", "-q", "main")
@@ -365,15 +367,16 @@ class PrDiffTest(unittest.TestCase):
             git("add", "."), git("commit", "-q", "-m", "main")
             main = git("rev-parse", "HEAD")
             git("checkout", "-q", head)
-            diff = ai_review.pr_diff({"base": {"sha": main}, "head": {"sha": head}})
+            diff = ai_review.pr_diff({"base": {"sha": main, "ref": "main"}, "head": {"sha": head}})
             self.assertIn("-const a = 1;\n+const a = 2;", diff)
+            self.assertNotIn("PWNED", diff)
+            self.assertIn("caf\ufffd", diff)  # read with a replacement character, not a crash
             self.assertNotIn("b.ts", diff)  # main's own change since isn't the PR's
-            self.assertEqual(ai_review.DIFF_ARGS[:3], ("diff", "--no-ext-diff", "--no-textconv"))
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError, "git couldn't diff"):
                 ai_review.pr_diff({"base": {"sha": "0" * 40}, "head": {"sha": head}})
-            self.assertTrue(base)
         finally:
             os.chdir(cwd)
+            shutil.rmtree(d)
 
 
 class MainTest(unittest.TestCase):
