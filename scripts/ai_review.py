@@ -602,7 +602,7 @@ def fingerprint(files, claude_md=""):
     and the repo's CLAUDE.md. None if git can't tell."""
     try:
         out = subprocess.run(["git", "patch-id", "--verbatim"], input="".join(files.values()),
-                             capture_output=True, text=True, timeout=60).stdout.split()
+                             capture_output=True, text=True, errors="replace", timeout=60).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return None
     # nosemgrep: insecure-hash-algorithm-sha1 -- an identity fingerprint compared with our own earlier one, not security
@@ -637,8 +637,8 @@ def changes_since(commit, paths):
     """`git diff` of the PR's files from an earlier reviewed commit to the checkout; None when that
     commit isn't in the history (the branch was rewritten), so the round is a full review."""
     try:
-        run = subprocess.run(["git", "diff", commit, "HEAD", "--", *paths],
-                             capture_output=True, text=True, timeout=60)
+        run = subprocess.run(["git", *DIFF_ARGS, commit, "HEAD", "--", *paths],
+                             capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     return run.stdout if run.returncode == 0 else None
@@ -647,10 +647,35 @@ def changes_since(commit, paths):
 def git_out(*args, strip=True):
     """A git command's output, stripped unless told not to; None when it fails."""
     try:
-        run = subprocess.run(["git", *args], capture_output=True, text=True, timeout=60)
+        run = subprocess.run(["git", *args], capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     return (run.stdout.strip() if strip else run.stdout) if run.returncode == 0 else None
+
+
+# The diff as GitHub shows a PR's: its head against its merge base with the base branch. Read from
+# the checkout (the workflow fetches every branch's history), since the review app may read pull
+# requests but not contents, which GitHub's `.diff` needs. No external diff driver or textconv,
+# which the PR's .gitattributes could name.
+DIFF_ARGS = ("diff", "--no-ext-diff", "--no-textconv", "--no-color", "-M")
+
+
+def pr_diff(pr):
+    """The PR's diff from the checkout, against the base branch as the checkout has it
+    (`origin/<base>`, else the base commit the API names). A file that isn't UTF-8 is read with
+    replacement characters. Raises with git's own words if git can't make it: the job then fails,
+    rather than reviewing nothing."""
+    head = pr["head"]["sha"]
+    ref = (pr.get("base") or {}).get("ref")
+    base = f"origin/{ref}" if ref and git_out("rev-parse", "--verify", "--quiet", f"origin/{ref}") else pr["base"]["sha"]
+    try:
+        run = subprocess.run(["git", *DIFF_ARGS, f"{base}...{head}"], capture_output=True, text=True,
+                             errors="replace", timeout=300)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"git couldn't diff {base}...{head[:12]}: {e}") from e
+    if run.returncode != 0:
+        raise RuntimeError(f"git couldn't diff {base}...{head[:12]}: {run.stderr.strip()[:500]}")
+    return run.stdout
 
 
 def later_changes(commit, repo, paths, base=None):
@@ -692,14 +717,14 @@ def design_moved(commit, repo, paths, base=None):
         return "", None
     if before == now:
         return "", None
-    moved = git_out("diff", before, now, "--", DESIGN_PATH, strip=False)  # a hunk can end in a blank line
+    moved = git_out(*DIFF_ARGS, before, now, "--", DESIGN_PATH, strip=False)  # a hunk can end in a blank line
     if not moved:
         return "", None
     # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own.
     # A conflict elsewhere (exit 1, the conflicted paths after the tree) leaves the design's merge good
     try:
         run = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", commit, now],
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         run = None
     if not run or run.returncode not in (0, 1):  # git older than 2.38 has no --write-tree
@@ -774,7 +799,7 @@ def github(path, token, method="GET", body=None, accept="application/vnd.github+
     # nosemgrep: dynamic-urllib-use-detected -- always https://api.github.com/ plus a fixed path
     with urllib.request.urlopen(req, timeout=60) as res:
         raw = res.read().decode()
-    return raw if accept.endswith("diff") else (json.loads(raw) if raw else None)
+    return json.loads(raw) if raw else None
 
 
 def graphql(query, token, **variables):
@@ -875,11 +900,11 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     since, as CI's fingerprint skips such a push. `settled_path`:
     the earlier findings, their outcomes and the partners' answers (review-branch.py, design 6.4),
     as an earlier round."""
-    diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
+    diff = subprocess.run(["git", *DIFF_ARGS, f"{base}...HEAD"], capture_output=True, text=True, errors="replace", check=True).stdout
     files = split_diff(diff)
     text, _ = review_input(files)
     claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
-    title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+    title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True, errors="replace").stdout.strip()
     design = read_design(design_path, repo)
     if design == NO_DESIGN:
         raise SystemExit(f"can't read the design for {repo} from {design_path}")
@@ -936,19 +961,14 @@ def main(argv):
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
-    try:
-        diff = github(f"repos/{repo}/pulls/{number}", token, accept="application/vnd.github.diff")
-    except urllib.error.HTTPError as e:
-        if e.code != 406:
-            raise
-        diff = None  # GitHub refuses diffs over its size limits
+    diff = pr_diff(pr)
     description = without_local_review(pr.get("body") or "")
     hidden = set()
     if by_peras(pr):  # its hidden tests and the builder's disputes are a person's to read
         description, hidden = peras_private(description, diff)
         diff = without_paths(diff, hidden)
-    files = split_diff(diff) if diff is not None else {}
-    if diff is not None and not files:
+    files = split_diff(diff)
+    if not files:
         print("Nothing to review: the PR changes only generated or lock files"
               + (f", and hidden test files left out for a person ({', '.join(sorted(hidden))})."
                  if hidden else "."))
