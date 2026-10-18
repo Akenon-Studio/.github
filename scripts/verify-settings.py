@@ -9,6 +9,7 @@ and linked repos (rulesets/board.json), the files that list every repo and the f
 with write access, that each CODEOWNERS ends with its generated sensitive-areas block and every
 sensitive path exists (rulesets/sensitive-paths.json), a public repo's fork PR workflow approval,
 that every required check is marked with what it reads (rulesets/required-checks.json),
+each repo's environments (rulesets/environments.json: only main may use them, with their keys),
 that every repo's caller workflows listen to the same events as this repo's (plus pushes to `main`
 and `peras/**` and a `sha` dispatch for the shared checks in a repo Peras delivers to), and any repo in the org that is neither managed nor archived.
 """
@@ -21,7 +22,7 @@ import yaml
 from board import board_differences, find_board, spec
 import sensitive_paths
 from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
-                   codeowners_team_differences, org_role_differences,
+                   codeowners_team_differences, environment_problems, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
                    desired_org_rulesets, desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, reads_problems, repo_files, repo_rulesets, repo_settings, team_differences,
@@ -209,6 +210,10 @@ def main():
             print(f"note: can't read {repo}/{owners}; its sensitive-areas block not checked")
         problems += [f"{repo}: rulesets/sensitive-paths.json: {d}"
                      for d in sensitive_paths.path_problems(repo, files)]
+        found, notes = environment_problems(repo, files, try_gh)
+        problems += found
+        for note in notes:
+            print(f"note: {note}")
 
     problems += [f"rulesets/peras-repos.json: {r} is not in rulesets/repos.txt"
                  for r in peras_repos() if r not in managed]

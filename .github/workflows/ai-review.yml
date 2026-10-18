@@ -2,29 +2,47 @@
 # check). The code repos (platform, animations, peras, this one) and handbook, whose review reads
 # the whole design as documents (ai_review.py's DOCS_LOOK_FOR), call it with:
 #
-#   on: { pull_request: { types: [opened, synchronize, ready_for_review, reopened] } }
-#   permissions: { contents: read, pull-requests: write, id-token: write }
+#   on: { pull_request_target: { types: [opened, synchronize, ready_for_review, reopened] } }
+#   permissions: { contents: read, id-token: write }
 #   jobs: { ai-review: { uses: akenon-studio/.github/.github/workflows/ai-review.yml@main,
-#     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }} } } }
-#   (handbook passes no secrets: its review reads the design from its own checkout)
+#     secrets: { AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }},
+#                AI_REVIEW_APP_PRIVATE_KEY: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }} } } }
+#   (handbook passes no AKENON_APP_PRIVATE_KEY: its review reads the design from its own checkout)
+#
+# It posts as its own GitHub App, akenon-studio-ai-review (app ID in the org variable
+# AI_REVIEW_APP_ID; Pull requests write only), which nothing else can post as, so Peras knows the
+# review's threads by author (design 7.12, 6.4). Its key is in each repo's `ai-review` environment,
+# which only main can use, as the merge lane's is (design 6.2): the callers run on
+# pull_request_target, which runs main's workflow, never the PR's, so a PR can't change what runs
+# with the key; the AI_REVIEW_APP_PRIVATE_KEY the caller passes by name is filled from that
+# environment, which this job runs in. The PR's files are checked out and read as data only: nothing
+# of the PR runs (the script and its packages come from this repo's main and PyPI, git reads only
+# its own config). A fork's PR is skipped (below), so no outsider's PR ever runs with the key. A
+# sign-in that fails fails the job: the review is never posted under another name. A caller still on
+# pull_request gets no review, and the job fails saying so. A pull_request_target run's check is on
+# the PR's head commit (as the merge lane's are; checked 2026-10-18), so the merge lane still finds
+# it there. With the environment, the run's OIDC subject names it (`...:environment:ai-review`): the
+# Console rule's subject pattern is the whole org (`repo:Akenon-Studio@<org id>/*`), so it still
+# matches.
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
 # a token for the handbook repo only, contents read only. A handbook PR is checked against its own
-# design.md instead, from its checkout, and its caller passes no key, so a PR that deletes or
+# design.md instead, from its checkout, and its caller passes no design key, so a PR that deletes or
 # empties design.md is reviewed without a design.
 #
 # scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
-# (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request runs
-# of those five repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
+# (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request and
+# pull_request_target runs of the org's repos (its subject pattern; below) that run this workflow on
+# main (job_workflow_ref): in practice the five repos that call it, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
 # org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
 # job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
-# every caller, this repo's included, uses the main copy. The review is posted with the
-# workflow's own token (github-actions[bot]) as one review with event COMMENT. Skipped: drafts,
+# every caller, this repo's included, uses the main copy. The review is posted as the app, as one
+# review with event COMMENT. Skipped: drafts,
 # except the Peras app's (design 6.4 "Peras's PRs": Peras fixes what the review finds before asking
 # a person; another draft gets round one when marked ready, and a reviewed Peras draft marked ready
-# with its diff unchanged gets no new round, by ai_review.py's fingerprint), fork PRs (GitHub gives
-# them no OIDC token) and Renovate's dependency PRs.
+# with its diff unchanged gets no new round, by ai_review.py's fingerprint), fork PRs (never run
+# with the key) and Renovate's dependency PRs.
 name: ai-review
 
 on:
@@ -32,16 +50,20 @@ on:
     secrets:
       AKENON_APP_PRIVATE_KEY:
         required: false  # without it the review runs without the design, and says so
+      AI_REVIEW_APP_PRIVATE_KEY:
+        required: false  # from the caller's `ai-review` environment; without it the sign-in fails the job
 
 permissions:
   contents: read
-  pull-requests: write
-  id-token: write
+  id-token: write  # the Claude API sign-in; the review app's token posts the review
 
 jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 30  # round one, uncapped, with effort, can take ten minutes
+    # The key's environment, which only main can use; none for a caller still on pull_request, whose
+    # run then skips every step (a refs/pull ref can't use it, and the job would fail)
+    environment: ${{ github.event_name == 'pull_request_target' && 'ai-review' || '' }}
     concurrency:
       group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -50,7 +72,8 @@ jobs:
       HAS_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY != '' }}
       # A draft only from the Peras app (a person's login can't end in [bot])
       WANTED: >-
-        ${{ (!github.event.pull_request.draft ||
+        ${{ github.event_name == 'pull_request_target' &&
+            (!github.event.pull_request.draft ||
              (github.event.pull_request.user.login == 'akenon-studio-peras[bot]' &&
               github.event.pull_request.user.type == 'Bot')) &&
             github.event.pull_request.head.repo.full_name == github.repository &&
@@ -58,8 +81,15 @@ jobs:
             github.event.pull_request.user.login != 'akenon-studio-renovate[bot]' }}
     steps:
       - name: Nothing to review (draft, fork or dependency update)
-        if: env.WANTED != 'true'
+        if: env.WANTED != 'true' && github.event_name == 'pull_request_target'
         run: echo "Skipped, a draft (not the Peras app's), fork PR or Renovate update."
+
+      # Fails, so a PR left unreviewed shows red rather than passing quietly
+      - name: This caller still runs on pull_request
+        if: github.event_name != 'pull_request_target'
+        run: |
+          echo "::error::No review. Run ai-review-caller.yml on pull_request_target, so the review posts as its app with the key only main can use (ai-review.yml)"
+          exit 1
 
       - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'
@@ -96,6 +126,18 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           persist-credentials: false
 
+      # Fails the job if it fails: the review is posted as the app or not at all
+      - name: Log in as the review app, to post the review
+        if: env.WANTED == 'true'
+        id: review_app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.AI_REVIEW_APP_ID }}
+          private-key: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+
       - name: Get the script
         if: env.WANTED == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -115,7 +157,7 @@ jobs:
       - name: Review
         if: env.WANTED == 'true'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.review_app.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Only from that checkout: a PR could commit a file at the same path
           DESIGN_FILE: ${{ steps.design.outcome == 'success' && '.akenon-handbook/design.md' || '' }}

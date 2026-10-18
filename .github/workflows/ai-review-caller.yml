@@ -1,12 +1,13 @@
 name: ai-review-caller
 
 on:
-  pull_request:
+  # main's copy of this workflow, never the PR's: the review app's key is in the `ai-review`
+  # environment, which only main can use (ai-review.yml)
+  pull_request_target:
     types: [opened, synchronize, ready_for_review, reopened]
 
 permissions:
   contents: read
-  pull-requests: write
   id-token: write
 
 jobs:
@@ -15,3 +16,5 @@ jobs:
     uses: akenon-studio/.github/.github/workflows/ai-review.yml@main
     secrets:
       AKENON_APP_PRIVATE_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY }}  # reads the design (handbook)
+      # Passed by name: GitHub fills it from the ai-review environment the review's job runs in
+      AI_REVIEW_APP_PRIVATE_KEY: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}

@@ -44,6 +44,55 @@ def read_file(repo, path):
     return base64.b64decode(json.loads(res.stdout)["content"]).decode()
 
 
+def environment_differences(name, env, policies, secrets, want):
+    """What differs between a repo's environment `name` as GitHub has it (`env`, None when missing;
+    its deployment branch `policies`; its secret names; either None when it couldn't be read, and then
+    not compared) and rulesets/environments.json's `want`."""
+    if env is None:
+        return [f"environment '{name}' is missing"]
+    out = []
+    branch = env.get("deployment_branch_policy") or {}
+    if not branch.get("custom_branch_policies") or branch.get("protected_branches"):
+        out.append(f"environment '{name}' isn't limited to chosen branches (want {', '.join(want['branches'])})")
+    if policies is not None:
+        have = sorted(p.get("name") for p in policies if p.get("type", "branch") == "branch")
+        tags = [p.get("name") for p in policies if p.get("type", "branch") != "branch"]
+        if have != sorted(want["branches"]) or tags:
+            out.append(f"environment '{name}' deploys from {have + [f'tag {t}' for t in tags]}, want {sorted(want['branches'])}")
+    if secrets is not None:
+        out += [f"environment '{name}' has no secret {s}" for s in want["secrets"] if s not in set(secrets)]
+    return out
+
+
+def environment_problems(repo, files, read):
+    """([problem], [note]) for `repo`'s environments in rulesets/environments.json, those whose
+    `when` file its main has (`files`), read with `read` (try_gh: None when it can't). What can't be
+    read is a note, never drift."""
+    problems, notes = [], []
+    for name, want in load("environments.json")["environments"].items():
+        if want["when"] not in files:
+            continue
+        base = f"repos/{ORG}/{repo}/environments/{name}"
+        env = read(base)
+        if env is None and read(f"repos/{ORG}/{repo}/environments") is None:
+            notes.append(f"can't read {repo}'s environments; '{name}' not checked")
+            continue
+        # Each part on its own: what can't be read is a note, and the rest is still compared
+        policies = secrets = None
+        if env is not None:
+            read_policies, read_secrets = read(f"{base}/deployment-branch-policies"), read(f"{base}/secrets")
+            if read_policies is None:
+                notes.append(f"can't read {repo}'s '{name}' environment's branches; not checked")
+            else:
+                policies = read_policies.get("branch_policies") or []
+            if read_secrets is None:
+                notes.append(f"can't read {repo}'s '{name}' environment's secrets; not checked")
+            else:
+                secrets = [s["name"] for s in read_secrets.get("secrets") or []]
+        problems += [f"{repo}: {d}" for d in environment_differences(name, env, policies, secrets, want)]
+    return problems, notes
+
+
 def repo_files(repo):
     """Every file path on a repo's default branch, or None if this token can't read it."""
     res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],

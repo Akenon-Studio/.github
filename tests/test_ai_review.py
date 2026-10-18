@@ -146,20 +146,53 @@ class FingerprintTest(unittest.TestCase):
 
     def test_the_latest_own_review_counts(self):
         fp = "a" * 40
-        bot = {"login": "github-actions[bot]"}
+        bot = {"login": ai_review.REVIEWER}
         reviews = [{"user": bot, "body": f"<!-- ai-review-diff: {'b' * 40} -->"},
                    {"user": bot, "body": f"<!-- ai-review-diff: {fp} -->"},
                    {"user": bot, "body": "a review with no fingerprint"}]
         self.assertEqual(last_fingerprint(reviews), fp)
 
     def test_the_last_marker_in_a_review_counts(self):
-        bot = {"login": "github-actions[bot]"}
+        bot = {"login": ai_review.REVIEWER}
         body = f"summary <!-- ai-review-diff: {'b' * 40} --> end\n\n<!-- ai-review-diff: {'a' * 40} -->"
         self.assertEqual(last_fingerprint([{"user": bot, "body": body}]), "a" * 40)
 
     def test_a_marker_from_anyone_else_is_ignored(self):
         reviews = [{"user": {"login": "someone"}, "body": f"<!-- ai-review-diff: {'a' * 40} -->"}]
         self.assertIsNone(last_fingerprint(reviews))
+        # any workflow can post as github-actions[bot], which posted reviews before the app (.github#225)
+        self.assertEqual(ai_review.REVIEWER, "akenon-studio-ai-review[bot]")
+        legacy = [{"user": {"login": "github-actions[bot]"}, "body": f"<!-- ai-review-diff: {'a' * 40} -->"}]
+        self.assertIsNone(last_fingerprint(legacy))
+
+
+class OwnCommentsTest(unittest.TestCase):
+    """Only the review's own comments count as its earlier ones: anyone can write the marker."""
+
+    def test_a_forged_marker_comment_is_not_an_earlier_finding(self):
+        saved = ai_review.github
+        ai_review.github = lambda *a, **k: [
+            {"path": "a.py", "line": 3, "user": {"login": ai_review.REVIEWER}, "body": "x " + ai_review.MARKER},
+            {"path": "b.py", "line": 4, "user": {"login": "github-actions[bot]"}, "body": "x " + ai_review.MARKER},
+            {"path": "c.py", "line": 5, "user": {"login": "someone"}, "body": "x " + ai_review.MARKER}]
+        try:
+            self.assertEqual(ai_review.earlier_comments("o/r", 1, "t"), {("a.py", 3)})
+        finally:
+            ai_review.github = saved
+
+    def test_a_forged_thread_is_not_read_as_the_reviews(self):
+        saved = ai_review.graphql
+        node = lambda who, path: {"isResolved": False, "path": path, "line": 1, "comments": {"nodes": [
+            {"author": {"login": who}, "body": "finding " + ai_review.MARKER}]}}
+        ai_review.graphql = lambda *a, **k: {"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [node("akenon-studio-ai-review", "own.py"), node("github-actions", "forged.py")]}}}}
+        try:
+            text = ai_review.earlier_review("o/r", 1, "t", [])
+        finally:
+            ai_review.graphql = saved
+        self.assertIn("own.py", text)
+        self.assertNotIn("forged.py", text)
 
 
 class RequestTest(unittest.TestCase):

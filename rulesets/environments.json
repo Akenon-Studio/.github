@@ -1,0 +1,23 @@
+{
+  "_comment": "Environments whose key only main may use (design 6.2): each managed repo whose main has 'when' has it, with deployments only from the branches listed and the secrets named. scripts/verify-settings.py reports any difference; a person sets them up (an app's private key can't be written by the automation).",
+  "environments": {
+    "ai-review": {
+      "when": ".github/workflows/ai-review-caller.yml",
+      "branches": [
+        "main"
+      ],
+      "secrets": [
+        "AI_REVIEW_APP_PRIVATE_KEY"
+      ]
+    },
+    "merge-lane": {
+      "when": ".github/workflows/merge-lane-caller.yml",
+      "branches": [
+        "main"
+      ],
+      "secrets": [
+        "MERGE_LANE_APP_PRIVATE_KEY"
+      ]
+    }
+  }
+}

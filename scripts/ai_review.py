@@ -61,7 +61,10 @@ MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-opus-5-5")
 EFFORT = "high"
 MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
-REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
+# Who posts the reviews: the review's own GitHub App (ai-review.yml), which nothing else can post as
+# (design 7.12). Only its reviews count as this script's: anyone's workflow can post as
+# github-actions[bot], which posted them before the app (a PR reviewed then gets a full round again).
+REVIEWER = "akenon-studio-ai-review[bot]"
 # The Peras app's PRs (design 7.13 Stage 10): their template's fixed sections, by heading
 # (peras core/delivery/pr.ts SECTIONS), and the names only its test author gives a hidden test file
 # (peras core/builder/policy.ts)
@@ -740,7 +743,9 @@ def earlier_review(repo, number, token, reviews):
            for r in reviews]
     for t in threads:
         comments = t["comments"]["nodes"]
-        if not comments or MARKER not in (comments[0]["body"] or ""):
+        # only the review's own threads: anyone can write the marker (GraphQL drops [bot])
+        if (not comments or MARKER not in (comments[0]["body"] or "")
+                or (comments[0].get("author") or {}).get("login") != REVIEWER.removesuffix("[bot]")):
             continue
         lines = [f"Thread on {t['path']}:{t.get('line') or t.get('originalLine')}"
                  f" ({'resolved' if t['isResolved'] else 'open'}):"]
@@ -780,12 +785,13 @@ def graphql(query, token, **variables):
 
 
 def earlier_comments(repo, number, token):
-    """(path, line) of inline comments this script already posted on the PR (found by MARKER), so a
-    new push does not repeat them. Outdated comments have no line and match nothing."""
+    """(path, line) of inline comments this script already posted on the PR (found by MARKER and its
+    author), so a new push does not repeat them. Outdated comments have no line and match nothing."""
     found, page = set(), 1
     while True:
         batch = github(f"repos/{repo}/pulls/{number}/comments?per_page=100&page={page}", token) or []
-        found |= {(c["path"], c.get("line")) for c in batch if MARKER in (c.get("body") or "")}
+        found |= {(c["path"], c.get("line")) for c in batch if MARKER in (c.get("body") or "")
+                  and (c.get("user") or {}).get("login") == REVIEWER}  # anyone can write the marker
         if len(batch) < 100:
             return found
         page += 1

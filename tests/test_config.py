@@ -12,7 +12,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from rules import desired_labels, issue_type_differences, label_differences, load  # noqa: E402
+from rules import desired_labels, environment_differences, environment_problems, issue_type_differences, label_differences, load  # noqa: E402
 
 FORMS = [yaml.safe_load(p.read_text()) for p in sorted((ROOT / ".github" / "ISSUE_TEMPLATE").glob("*.yml"))
          if p.name != "config.yml"]
@@ -88,6 +88,56 @@ class IssueTypeDifferencesTest(unittest.TestCase):
     def test_unexpected_live_type(self):
         self.assertEqual(issue_type_differences([TYPE], [TYPE, dict(TYPE, name="Epic")]),
                          ["issue type 'Epic' is not in issue-types.json"])
+
+
+class EnvironmentsTest(unittest.TestCase):
+    """rulesets/environments.json against an environment as GitHub has it (design 6.2, .github#225)."""
+    WANT = {"when": "x", "branches": ["main"], "secrets": ["KEY"]}
+    GOOD = {"deployment_branch_policy": {"custom_branch_policies": True, "protected_branches": False}}
+
+    def test_main_only_with_its_key_passes(self):
+        self.assertEqual(environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}], ["KEY"], self.WANT), [])
+
+    def test_missing_loose_or_keyless_is_reported(self):
+        self.assertEqual(environment_differences("e", None, [], [], self.WANT), ["environment 'e' is missing"])
+        anyone = {"deployment_branch_policy": None}
+        self.assertIn("environment 'e' isn't limited to chosen branches (want main)",
+                      environment_differences("e", anyone, [], ["KEY"], self.WANT))
+        wider = environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}, {"name": "feat/*", "type": "branch"}], ["KEY"], self.WANT)
+        self.assertEqual(wider, ["environment 'e' deploys from ['feat/*', 'main'], want ['main']"])
+        tagged = environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}, {"name": "v*", "type": "tag"}], ["KEY"], self.WANT)
+        self.assertEqual(tagged, ["environment 'e' deploys from ['main', 'tag v*'], want ['main']"])
+        self.assertEqual(environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}], [], self.WANT),
+                         ["environment 'e' has no secret KEY"])
+
+    def test_what_cant_be_read_is_a_note_not_drift(self):
+        good = {"repos/akenon-studio/x/environments/ai-review": self.GOOD,
+                "repos/akenon-studio/x/environments/ai-review/deployment-branch-policies": {"branch_policies": [{"name": "main", "type": "branch"}]},
+                "repos/akenon-studio/x/environments/ai-review/secrets": {"secrets": [{"name": "AI_REVIEW_APP_PRIVATE_KEY"}]}}
+        files = {".github/workflows/ai-review-caller.yml"}
+        read = lambda answers: (lambda path: answers.get(path.replace("Akenon-Studio", "akenon-studio")))
+        self.assertEqual(environment_problems("x", files, read(good)), ([], []))
+        for hidden, part in (("deployment-branch-policies", "branches"), ("secrets", "secrets")):
+            partial = {k: v for k, v in good.items() if not k.endswith(hidden)}
+            problems, notes = environment_problems("x", files, read(partial))
+            self.assertEqual(problems, [])
+            self.assertEqual(notes, [f"can't read x's 'ai-review' environment's {part}; not checked"])
+        # secrets unreadable, the environment loosened: still reported
+        loose = {k: v for k, v in good.items() if not k.endswith("secrets")}
+        loose["repos/akenon-studio/x/environments/ai-review"] = {"deployment_branch_policy": None}
+        loose["repos/akenon-studio/x/environments/ai-review/deployment-branch-policies"] = {"branch_policies": [{"name": "*", "type": "branch"}]}
+        problems, _ = environment_problems("x", files, read(loose))
+        self.assertEqual(problems, ["x: environment 'ai-review' isn't limited to chosen branches (want main)",
+                                    "x: environment 'ai-review' deploys from ['*'], want ['main']"])
+        self.assertEqual(environment_problems("x", files, read({})), ([], ["can't read x's environments; 'ai-review' not checked"]))
+        listed = {"repos/akenon-studio/x/environments": {"environments": []}}
+        self.assertEqual(environment_problems("x", files, read(listed)), (["x: environment 'ai-review' is missing"], []))
+        self.assertEqual(environment_problems("x", set(), read({})), ([], []))  # no caller, no environment needed
+
+    def test_every_environment_is_main_only(self):
+        for name, want in load("environments.json")["environments"].items():
+            self.assertEqual(want["branches"], ["main"], name)
+            self.assertTrue((ROOT / want["when"]).exists(), name)  # this repo's caller names it
 
 
 if __name__ == "__main__":
