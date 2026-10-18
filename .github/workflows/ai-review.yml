@@ -22,7 +22,8 @@
 # pull_request gets no review, and the job fails saying so. A pull_request_target run's check is on
 # the PR's head commit (as the merge lane's are; checked 2026-10-18), so the merge lane still finds
 # it there. With the environment, the run's OIDC subject names it (`...:environment:ai-review`): the
-# Console rule matches on the event and job_workflow_ref, not the subject.
+# Console rule's subject pattern is the whole org (`repo:Akenon-Studio@<org id>/*`), so it still
+# matches.
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
 # a token for the handbook repo only, contents read only. A handbook PR is checked against its own
