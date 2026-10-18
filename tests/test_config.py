@@ -117,11 +117,18 @@ class EnvironmentsTest(unittest.TestCase):
         files = {".github/workflows/ai-review-caller.yml"}
         read = lambda answers: (lambda path: answers.get(path.replace("Akenon-Studio", "akenon-studio")))
         self.assertEqual(environment_problems("x", files, read(good)), ([], []))
-        for hidden in ("deployment-branch-policies", "secrets"):
+        for hidden, part in (("deployment-branch-policies", "branches"), ("secrets", "secrets")):
             partial = {k: v for k, v in good.items() if not k.endswith(hidden)}
             problems, notes = environment_problems("x", files, read(partial))
             self.assertEqual(problems, [])
-            self.assertEqual(notes, ["can't read x's 'ai-review' environment's branches or secrets; not checked"])
+            self.assertEqual(notes, [f"can't read x's 'ai-review' environment's {part}; not checked"])
+        # secrets unreadable, the environment loosened: still reported
+        loose = {k: v for k, v in good.items() if not k.endswith("secrets")}
+        loose["repos/akenon-studio/x/environments/ai-review"] = {"deployment_branch_policy": None}
+        loose["repos/akenon-studio/x/environments/ai-review/deployment-branch-policies"] = {"branch_policies": [{"name": "*", "type": "branch"}]}
+        problems, _ = environment_problems("x", files, read(loose))
+        self.assertEqual(problems, ["x: environment 'ai-review' isn't limited to chosen branches (want main)",
+                                    "x: environment 'ai-review' deploys from ['*'], want ['main']"])
         self.assertEqual(environment_problems("x", files, read({})), ([], ["can't read x's environments; 'ai-review' not checked"]))
         listed = {"repos/akenon-studio/x/environments": {"environments": []}}
         self.assertEqual(environment_problems("x", files, read(listed)), (["x: environment 'ai-review' is missing"], []))
