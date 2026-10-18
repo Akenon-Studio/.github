@@ -125,6 +125,22 @@ class RecordTest(unittest.TestCase):
         rec = pr_record("platform", 7, "u", data, lambda *a: "")
         self.assertEqual([t["outcome"] for t in rec["threads"]], [None])
 
+    def test_the_review_apps_reviews_count_and_github_actions_only_before_it(self):
+        # .github#225: any workflow can post as github-actions, so after the app took over its reviews
+        # and their threads aren't the review's
+        app = {"reviews": {"nodes": [review("a1", "2026-10-20T01:00:00Z", "c1", login="akenon-studio-ai-review")]},
+               "reviewThreads": {"nodes": [thread("a1", "**Major** · high confidence", "y = new_code_here()", ["Fixed"])]}}
+        app["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]["author"] = {"login": "akenon-studio-ai-review"}
+        rec = pr_record("platform", 7, "u", app, lambda *a: "")
+        self.assertEqual((rec["rounds"], [t["outcome"] for t in rec["threads"]]), (1, ["fixed"]))
+        forged = {"reviews": {"nodes": [review("f1", "2026-10-20T01:00:00Z", "c1")]},
+                  "reviewThreads": {"nodes": [thread("f1", "**Major** · high confidence", "y = new_code_here()", ["Fixed"])]}}
+        self.assertIsNone(pr_record("platform", 7, "u", forged, lambda *a: ""))
+        # a thread by github-actions counts only with a review that counts
+        mixed = {"reviews": {"nodes": [review("a1", "2026-10-20T01:00:00Z", "c1", login="akenon-studio-ai-review")]},
+                 "reviewThreads": {"nodes": [thread("f1", "**Major** · high confidence", "q = faked()", ["Fixed"])]}}
+        self.assertEqual(pr_record("platform", 7, "u", mixed, lambda *a: "")["threads"], [])
+
     def test_the_orgs_apps_replies_count(self):
         # design 6.2, 6.4: Peras answering as an app counts; an outsider and the reviewer don't
         data = self.data()

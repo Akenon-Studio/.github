@@ -64,7 +64,18 @@ from rules import ORG, acts_for, bot_login, bot_sources, managed_repos
 
 REPO = f"{ORG}/.github"
 LABEL = "ai-scorecard"
-REVIEWER = {"github-actions", "github-actions[bot]"}  # who posts the reviews (GraphQL drops [bot])
+# Who posts the reviews: the review's own app (GraphQL drops [bot]), and before it the workflow's
+# token, counted only for reviews submitted before the app took over, since any workflow can post as
+# it (design 7.12, ai-review.yml)
+REVIEW_APP = {"akenon-studio-ai-review", "akenon-studio-ai-review[bot]"}
+LEGACY_REVIEWER = {"github-actions", "github-actions[bot]"}
+APP_SINCE = "2026-10-19T00:00:00Z"
+REVIEWER = REVIEW_APP | LEGACY_REVIEWER  # a comment by either is the review's, never a reply
+
+
+def by_review(login, at):
+    """Whether a review by `login` submitted at `at` (ISO 8601, UTC) is the AI review's."""
+    return login in REVIEW_APP or (login in LEGACY_REVIEWER and (at or "~") < APP_SINCE)
 MARKER = "<!-- ai-review -->"
 USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
 SEVERITY = re.compile(r"\*\*(Critical|Major|Minor|Nit)\*\*")
@@ -351,7 +362,7 @@ def pr_record(repo, number, url, data, read=file_at):
     """One merged PR's review data: rounds, cost, threads and the local runs' findings. None if
     neither the AI review nor a local run left anything on it."""
     reviews = sorted((r for r in data["reviews"]["nodes"]
-                      if (r.get("author") or {}).get("login") in REVIEWER
+                      if by_review((r.get("author") or {}).get("login"), r.get("submittedAt"))
                       and (r.get("body") or "").startswith("**AI review (advisory)")),
                      key=lambda r: r["submittedAt"])
     ours = readable(data)
@@ -363,12 +374,15 @@ def pr_record(repo, number, url, data, read=file_at):
     round_of = {r["id"]: i + 1 for i, r in enumerate(rounds)}
     costs = [cost(u) for u in map(usage_of, (r["body"] for r in reviews)) if u]
     first_commit = rounds[0]["commit"]["oid"] if rounds else None
+    counted = {r["id"] for r in reviews}  # a legacy thread counts only with its counted review
     seen = {}  # path -> its text at round one's commit
     threads = []
     for t in data["reviewThreads"]["nodes"]:
         comments = t["comments"]["nodes"]
         if (not comments or MARKER not in (comments[0]["body"] or "")
-                or (comments[0].get("author") or {}).get("login") not in REVIEWER):
+                or (comments[0].get("author") or {}).get("login") not in REVIEWER
+                or ((comments[0].get("author") or {}).get("login") in LEGACY_REVIEWER
+                    and (comments[0].get("pullRequestReview") or {}).get("id") not in counted)):
             continue  # design 6.2: a thread anyone else opened, marker or not, isn't the review's
         first = comments[0]
         level = severity(first["body"])

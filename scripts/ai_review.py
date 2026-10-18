@@ -61,7 +61,10 @@ MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-opus-5-5")
 EFFORT = "high"
 MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
-REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
+# Who posts the reviews: the review's own GitHub App (ai-review.yml), which nothing else can post as
+# (design 7.12). Only its reviews count as this script's: anyone's workflow can post as
+# github-actions[bot], which posted them before the app (a PR reviewed then gets a full round again).
+REVIEWER = "akenon-studio-ai-review[bot]"
 # The Peras app's PRs (design 7.13 Stage 10): their template's fixed sections, by heading
 # (peras core/delivery/pr.ts SECTIONS), and the names only its test author gives a hidden test file
 # (peras core/builder/policy.ts)

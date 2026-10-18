@@ -103,6 +103,37 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertIn("github.event.pull_request.user.login == 'akenon-studio-peras[bot]'", wanted)
         self.assertIn("github.event.pull_request.user.type == 'Bot'", wanted)
 
+    def test_ai_review_posts_as_its_app_with_a_key_only_main_can_use(self):
+        # design 6.2, 7.12 (.github#225): pull_request_target runs main's workflow, the key is in the
+        # main-only `ai-review` environment, and a failed sign-in fails the job
+        job = REUSABLE["ai-review.yml"]["jobs"]["review"]
+        self.assertEqual(job["environment"], "${{ github.event_name == 'pull_request_target' && 'ai-review' || '' }}")
+        self.assertTrue(job["env"]["WANTED"].startswith("${{ github.event_name == 'pull_request_target' &&"))
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", job["env"]["WANTED"])
+        steps = job["steps"]
+        app = next(s for s in steps if s.get("id") == "review_app")
+        self.assertNotIn("continue-on-error", app)
+        self.assertEqual(app["with"]["permission-pull-requests"], "write")
+        self.assertEqual(app["with"]["repositories"], "${{ github.event.repository.name }}")
+        self.assertEqual(app["with"]["private-key"], "${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}")
+        review = next(s for s in steps if s.get("name") == "Review")
+        self.assertEqual(review["env"]["GITHUB_TOKEN"], "${{ steps.review_app.outputs.token }}")
+        self.assertNotIn("github.token", str(steps))
+        self.assertNotIn("pull-requests", REUSABLE["ai-review.yml"]["permissions"])
+        # nothing of the PR's runs: its checkout keeps no credentials, and the script is main's
+        checkout = next(s for s in steps if s.get("with", {}).get("ref") == "${{ github.event.pull_request.head.sha }}")
+        self.assertEqual(checkout["with"]["persist-credentials"], False)
+        caller = load("ai-review-caller.yml")
+        self.assertEqual(list(caller["on"]), ["pull_request_target"])
+        self.assertNotIn("pull-requests", caller["permissions"])
+        self.assertEqual(caller["jobs"]["ai-review"]["secrets"]["AI_REVIEW_APP_PRIVATE_KEY"],
+                         "${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}")
+
+    def test_the_review_app_is_one_of_the_orgs_apps(self):
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        self.assertIn("akenon-studio-ai-review", bots["org_apps"])
+
     def test_every_renovate_has_the_same_status_pages(self):
         # the issue-fields condition, the failures report and status_page() each read one copy
         import json
