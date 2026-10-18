@@ -602,7 +602,7 @@ def fingerprint(files, claude_md=""):
     and the repo's CLAUDE.md. None if git can't tell."""
     try:
         out = subprocess.run(["git", "patch-id", "--verbatim"], input="".join(files.values()),
-                             capture_output=True, text=True, timeout=60).stdout.split()
+                             capture_output=True, text=True, errors="replace", timeout=60).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return None
     # nosemgrep: insecure-hash-algorithm-sha1 -- an identity fingerprint compared with our own earlier one, not security
@@ -637,8 +637,8 @@ def changes_since(commit, paths):
     """`git diff` of the PR's files from an earlier reviewed commit to the checkout; None when that
     commit isn't in the history (the branch was rewritten), so the round is a full review."""
     try:
-        run = subprocess.run(["git", "diff", commit, "HEAD", "--", *paths],
-                             capture_output=True, text=True, timeout=60)
+        run = subprocess.run(["git", *DIFF_ARGS, commit, "HEAD", "--", *paths],
+                             capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     return run.stdout if run.returncode == 0 else None
@@ -647,7 +647,7 @@ def changes_since(commit, paths):
 def git_out(*args, strip=True):
     """A git command's output, stripped unless told not to; None when it fails."""
     try:
-        run = subprocess.run(["git", *args], capture_output=True, text=True, timeout=60)
+        run = subprocess.run(["git", *args], capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     return (run.stdout.strip() if strip else run.stdout) if run.returncode == 0 else None
@@ -717,14 +717,14 @@ def design_moved(commit, repo, paths, base=None):
         return "", None
     if before == now:
         return "", None
-    moved = git_out("diff", before, now, "--", DESIGN_PATH, strip=False)  # a hunk can end in a blank line
+    moved = git_out(*DIFF_ARGS, before, now, "--", DESIGN_PATH, strip=False)  # a hunk can end in a blank line
     if not moved:
         return "", None
     # the reviewed commit with main's changes since brought in; what HEAD adds to it is the PR's own.
     # A conflict elsewhere (exit 1, the conflicted paths after the tree) leaves the design's merge good
     try:
         run = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", commit, now],
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         run = None
     if not run or run.returncode not in (0, 1):  # git older than 2.38 has no --write-tree
@@ -799,7 +799,7 @@ def github(path, token, method="GET", body=None, accept="application/vnd.github+
     # nosemgrep: dynamic-urllib-use-detected -- always https://api.github.com/ plus a fixed path
     with urllib.request.urlopen(req, timeout=60) as res:
         raw = res.read().decode()
-    return raw if accept.endswith("diff") else (json.loads(raw) if raw else None)
+    return json.loads(raw) if raw else None
 
 
 def graphql(query, token, **variables):
@@ -900,11 +900,11 @@ def prompt_main(repo, base, design_path, settled_path=None, since=None):
     since, as CI's fingerprint skips such a push. `settled_path`:
     the earlier findings, their outcomes and the partners' answers (review-branch.py, design 6.4),
     as an earlier round."""
-    diff = subprocess.run(["git", "diff", f"{base}...HEAD"], capture_output=True, text=True, check=True).stdout
+    diff = subprocess.run(["git", *DIFF_ARGS, f"{base}...HEAD"], capture_output=True, text=True, errors="replace", check=True).stdout
     files = split_diff(diff)
     text, _ = review_input(files)
     claude_md = open("CLAUDE.md").read() if os.path.exists("CLAUDE.md") else ""
-    title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+    title = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True, errors="replace").stdout.strip()
     design = read_design(design_path, repo)
     if design == NO_DESIGN:
         raise SystemExit(f"can't read the design for {repo} from {design_path}")
@@ -967,8 +967,8 @@ def main(argv):
     if by_peras(pr):  # its hidden tests and the builder's disputes are a person's to read
         description, hidden = peras_private(description, diff)
         diff = without_paths(diff, hidden)
-    files = split_diff(diff) if diff is not None else {}
-    if diff is not None and not files:
+    files = split_diff(diff)
+    if not files:
         print("Nothing to review: the PR changes only generated or lock files"
               + (f", and hidden test files left out for a person ({', '.join(sorted(hidden))})."
                  if hidden else "."))

@@ -420,6 +420,37 @@ class MainTest(unittest.TestCase):
         os.chdir(self.cwd)
         shutil.rmtree(self.dir)
 
+    def test_main_makes_the_diff_with_git_never_from_github(self):
+        # .github#228: the review app can't read GitHub's .diff of a PR (no Contents access)
+        import subprocess
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                        check=True, capture_output=True, text=True).stdout.strip()
+        open("a.ts", "w").write("const a = 1;\n")
+        git("add", "."), git("commit", "-q", "-m", "base")
+        base = git("rev-parse", "HEAD")
+        open("a.ts", "w").write("const a = 2;\n")
+        git("add", "."), git("commit", "-q", "-m", "pr")
+        head = git("rev-parse", "HEAD")
+        ai_review.pr_diff = self.saved["pr_diff"]
+
+        def github(path, token, method="GET", body=None, accept=""):
+            if accept.endswith("diff"):
+                raise AssertionError("asked GitHub for the PR's diff")
+            if method == "POST":
+                self.posted.append(body)
+                return {}
+            return {"title": "t", "body": "", "head": {"sha": head}, "base": {"sha": base, "ref": "main"}}
+        ai_review.github = github
+        seen = {}
+
+        def answer(system, user):
+            seen["user"] = user
+            return {"summary": "Fine.", "comments": []}, None
+        ai_review.ask_claude = answer
+        self.assertEqual(ai_review.main([]), 0)
+        self.assertIn("+const a = 2;", seen["user"])
+        self.assertEqual(len(self.posted), 1)
+
     def test_a_cut_off_review_records_no_fingerprint_and_fails(self):
         # .github#87: the diff must be reviewed again by a re-run or the next push
         def cut_off(system, user):
