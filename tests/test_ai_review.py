@@ -372,6 +372,10 @@ class PrDiffTest(unittest.TestCase):
             self.assertNotIn("PWNED", diff)
             self.assertIn("caf\ufffd", diff)  # read with a replacement character, not a crash
             self.assertNotIn("b.ts", diff)  # main's own change since isn't the PR's
+            # the checkout's origin/<base> is preferred to the API's base commit, which may be newer
+            git("update-ref", "refs/remotes/origin/main", main)
+            via_ref = ai_review.pr_diff({"base": {"sha": "0" * 40, "ref": "main"}, "head": {"sha": head}})
+            self.assertEqual(via_ref, diff)
             with self.assertRaisesRegex(RuntimeError, "git couldn't diff"):
                 ai_review.pr_diff({"base": {"sha": "0" * 40}, "head": {"sha": head}})
         finally:
