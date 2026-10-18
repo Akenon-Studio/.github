@@ -33,7 +33,8 @@
 # scripts/ai_review.py calls the Claude API (not Claude Code, which the plan's API credits don't
 # cover). No API key: it swaps the run's GitHub OIDC token for a short-lived Anthropic token
 # (workload identity federation). The Console rule `akenon-pr-review` accepts only pull_request and
-# pull_request_target runs of those five repos, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
+# pull_request_target runs of the org's repos (its subject pattern; below) that run this workflow on
+# main (job_workflow_ref): in practice the five repos that call it, scoped to the GitHub CI workspace (US$100 monthly limit); its IDs are the
 # org variables ANTHROPIC_*, which are identifiers, not secrets. The rule also requires the token's
 # job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
 # every caller, this repo's included, uses the main copy. The review is posted as the app, as one
