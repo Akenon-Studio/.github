@@ -21,7 +21,10 @@
 # job_workflow_ref to be this file on main, so a PR that edits its own workflow can't get a token;
 # every caller, this repo's included, uses the main copy. The review is posted with the
 # workflow's own token (github-actions[bot]) as one review with event COMMENT. Skipped: drafts,
-# fork PRs (GitHub gives them no OIDC token) and Renovate's dependency PRs.
+# except the Peras app's (design 6.4 "Peras's PRs": Peras fixes what the review finds before asking
+# a person; another draft gets round one when marked ready, and a reviewed Peras draft marked ready
+# with its diff unchanged gets no new round, by ai_review.py's fingerprint), fork PRs (GitHub gives
+# them no OIDC token) and Renovate's dependency PRs.
 name: ai-review
 
 on:
@@ -45,15 +48,18 @@ jobs:
     # The skips are on the steps, not the job: a skipped job reports "skipped" (tests/test_workflows.py).
     env:
       HAS_KEY: ${{ secrets.AKENON_APP_PRIVATE_KEY != '' }}
+      # A draft only from the Peras app (a person's login can't end in [bot])
       WANTED: >-
-        ${{ !github.event.pull_request.draft &&
+        ${{ (!github.event.pull_request.draft ||
+             (github.event.pull_request.user.login == 'akenon-studio-peras[bot]' &&
+              github.event.pull_request.user.type == 'Bot')) &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             github.event.pull_request.user.login != 'renovate[bot]' &&
             github.event.pull_request.user.login != 'akenon-studio-renovate[bot]' }}
     steps:
       - name: Nothing to review (draft, fork or dependency update)
         if: env.WANTED != 'true'
-        run: echo "Skipped, a draft, fork PR or Renovate update."
+        run: echo "Skipped, a draft (not the Peras app's), fork PR or Renovate update."
 
       - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'

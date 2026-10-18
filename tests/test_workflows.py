@@ -93,6 +93,16 @@ class ReusableWorkflowsTest(unittest.TestCase):
         for login in (l for l, s in bots["sources"].items() if s.get("renovate")):
             self.assertIn(f"github.event.pull_request.user.login != '{login}[bot]'", wanted)
 
+    def test_ai_review_takes_only_the_peras_apps_drafts(self):
+        # design 6.4 "Peras's PRs" (.github#178)
+        wanted = REUSABLE["ai-review.yml"]["jobs"]["review"]["env"]["WANTED"]
+        self.assertIn("(!github.event.pull_request.draft ||", wanted)
+        import json
+        bots = json.loads((WORKFLOWS.parent.parent / "rulesets" / "bots.json").read_text())
+        self.assertIn("akenon-studio-peras", bots["sources"])  # the login checked here is a real one
+        self.assertIn("github.event.pull_request.user.login == 'akenon-studio-peras[bot]'", wanted)
+        self.assertIn("github.event.pull_request.user.type == 'Bot'", wanted)
+
     def test_every_renovate_has_the_same_status_pages(self):
         # the issue-fields condition, the failures report and status_page() each read one copy
         import json

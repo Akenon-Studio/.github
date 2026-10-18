@@ -37,9 +37,16 @@ PROMPT_SINCE.)
 A PR's description may hold a local-review section, between LOCAL_REVIEW_START and LOCAL_REVIEW_END,
 with the local runs' findings and the author's outcomes and reasons (review-branch.py writes it,
 design 6.4). The review never reads it, so no review reads the author's reasons first.
+
+On the Peras app's PRs only (design 6.4 "Peras's PRs", 7.13 Stage 10; .github#178), whose drafts
+the workflow reviews too, the review leaves out the hidden test files and the builder's disputes:
+the files its template lists under PERAS_HIDDEN, and any file the PR adds that is named as a hidden
+test, are taken out of the diff, the later rounds' changes and the files read in full; the
+PERAS_HIDDEN and PERAS_DISPUTES sections are taken out of the description. A person reviews them.
 """
 
 import base64
+import codecs
 import hashlib
 import json
 import os
@@ -55,6 +62,13 @@ EFFORT = "high"
 MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
 REVIEWER = "github-actions[bot]"  # who posts the reviews (the workflow's own token)
+# The Peras app's PRs (design 7.13 Stage 10): their template's fixed sections, by heading
+# (peras core/delivery/pr.ts SECTIONS), and the names only its test author gives a hidden test file
+# (peras core/builder/policy.ts)
+PERAS_APP = "akenon-studio-peras[bot]"
+PERAS_HIDDEN, PERAS_DISPUTES = "## Hidden test files", "## Disputes"
+HIDDEN_TEST_NAME = re.compile(r"^[^/]+\.hidden\.(?:test|spec)\.[A-Za-z0-9]+$|^test_hidden_[A-Za-z0-9_]+\.py$")
+WORD_JOINER = "\u2060"  # Peras defuses @ and # in what it posts with it (design 7.12)
 DIFF_MARKER = re.compile(r"<!-- ai-review-diff: ([0-9a-f]{40}) -->")  # in each review's body
 # The tokens a review used, in its body, for the monthly scorecard's cost per PR (scripts/ai_scorecard.py)
 USAGE_MARKER = re.compile(r"<!-- ai-review-usage: (\{[^<>]*\}) -->")
@@ -243,6 +257,136 @@ class CutOff(Exception):
     usage = None
 
 
+def by_peras(pr):
+    """True for a PR the Peras app opened (a bot's login can't be taken by a person)."""
+    user = pr.get("user") or {}
+    return user.get("login") == PERAS_APP and user.get("type") == "Bot"
+
+
+def without_section(text, heading):
+    """(the text without the section under `heading`, up to the next `## ` heading outside a code
+    fence, the section's lines). Every copy of the heading is taken out, so a second one can't hide
+    anything, and a `## ` line inside a fenced block in the section doesn't end it."""
+    kept, section, inside, fenced = [], [], False, False
+    for line in (text or "").splitlines(keepends=True):
+        if line.rstrip() == heading:
+            inside, fenced = True, False
+            continue
+        if inside and line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif inside and not fenced and line.startswith("## "):
+            inside = False
+        (section if inside else kept).append(line)
+    return "".join(kept), section
+
+
+def listed_paths(lines):
+    """The paths a Peras template section lists, one `- `path`` item a line (its inline code span,
+    with Peras's defusing undone)."""
+    out = set()
+    for line in lines:
+        item = line.strip()
+        if not item.startswith("- "):
+            continue
+        item = item[2:].strip()
+        fence = len(item) - len(item.lstrip("`"))
+        if fence and item.endswith("`" * fence):
+            item = item[fence:len(item) - fence].strip()
+        item = item.replace(WORD_JOINER, "")
+        if item:
+            out.add(item)
+    return out
+
+
+def peras_private(description, diff):
+    """(the description without the Hidden test files and Disputes sections, the paths to leave
+    out: those listed under Hidden test files, and any the diff adds named as a hidden test)."""
+    description, hidden = without_section(description, PERAS_HIDDEN)
+    description, _ = without_section(description, PERAS_DISPUTES)
+    return description, listed_paths(hidden) | added_hidden_tests(diff)
+
+
+def unquote(path):
+    """A path as git prints it, without the C-style quoting it uses for unusual characters."""
+    if len(path) > 1 and path[0] == path[-1] == '"':
+        try:
+            return codecs.escape_decode(path[1:-1].encode())[0].decode("utf-8", "replace")
+        except ValueError:
+            return path[1:-1]
+    return path
+
+
+# The header lines of a file's diff that name its old or new path
+PATH_LINE = re.compile(r"^(?:(?:---|\+\+\+) |(?:rename|copy) (?:from|to) )(.+)$")
+
+
+def diff_sections(diff):
+    """[(paths, text, added)] per file of a unified diff: every path its header names (the
+    `diff --git` line, read both ways since a path may hold " b/", and the `---`, `+++`, rename and
+    copy lines, unquoted), and whether it adds the file. Hunk lines are content, never paths."""
+    out = []
+    for line in (diff or "").splitlines(keepends=True):
+        if line.startswith("diff --git ") or not out:
+            out.append({"paths": set(), "lines": [], "added": False, "header": True})
+        section = out[-1]
+        section["lines"].append(line)
+        text = line.rstrip("\n")
+        if line.startswith("@@"):
+            section["header"] = False
+        if not section["header"]:
+            continue
+        if line.startswith("diff --git "):
+            head = text[len("diff --git "):]
+            quoted = re.findall(r'"(?:[^"\\]|\\.)*"', head)
+            names = [unquote(q) for q in quoted] if head.startswith('"') else [
+                head.split(" b/", 1)[0], "b/" + head.split(" b/", 1)[-1], head.rsplit(" b/", 1)[0],
+                "b/" + head.rsplit(" b/", 1)[-1]]
+            section["paths"].update(n[2:] if n[:2] in ("a/", "b/") else n for n in names)
+        elif line.startswith("new file mode"):
+            section["added"] = True
+        else:
+            m = PATH_LINE.match(text)
+            if m:
+                raw = m.group(1)
+                # git ends an unquoted ---/+++ path holding a space with a tab
+                name = unquote(raw) if raw.startswith('"') else raw.rstrip("\t")
+                if text.startswith(("---", "+++")):
+                    if name == "/dev/null":
+                        continue
+                    name = name[2:] if name[:2] in ("a/", "b/") else name
+                section["paths"].add(name)
+    return [(s["paths"], "".join(s["lines"]), s["added"]) for s in out]
+
+
+def added_hidden_tests(diff):
+    """Paths the diff adds that are named as a hidden test; one already in the repo (a delivered
+    regression test, which a builder may change) is reviewed as any file."""
+    return {p for paths, _, added in diff_sections(diff) if added
+            for p in paths if HIDDEN_TEST_NAME.match(p.rsplit("/", 1)[-1])}
+
+
+def without_paths(diff, paths):
+    """A unified diff without the files at `paths` (by any path its diff names)."""
+    if not paths or diff is None:
+        return diff
+    return "".join(text for names, text, _ in diff_sections(diff) if not names & set(paths))
+
+
+HIDDEN_NOTE = ("This PR's hidden test files (design 7.13 Stage 10) are left out of what you read: a "
+               "person reviews them. Don't report a change as untested for want of tests you can't "
+               "see; a test the PR shows you is reviewed as usual.")
+
+
+HIDDEN_SUMMARY = "Left out for a person, as the Peras app's hidden test files:"
+
+
+def hidden_summary(paths):
+    """The line the posted review ends with on a Peras PR, naming what it left out for a person.
+    earlier_review() takes it out again, so no later round reads the names."""
+    names = ", ".join(f"`{p.replace('`', chr(39)).replace(chr(10), ' ')}`" for p in sorted(paths))
+    return f"\n\n{HIDDEN_SUMMARY} {names}."
+
+
 def split_diff(diff):
     """{path: text} per file of a unified diff, without skipped paths."""
     files, path, lines = {}, None, []
@@ -373,7 +517,7 @@ def tagged(tag, text):
 
 
 def request(claude_md, design, title, description, files, diff_text, later=None, omitted=(),
-            history="", generated=(), repo="", design_changes=""):
+            history="", generated=(), repo="", design_changes="", hidden=False):
     """(system, user) for the Messages API. The system holds what is the same for every round and
     PR of a repo (instructions, CLAUDE.md, design), so it is cached; `later` is (earlier findings
     and replies, changes since the last review) for a later round, which says so in the user
@@ -392,6 +536,8 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
             (tagged("files_omitted", "\n".join(omitted)) + "\n\n" if omitted else "") +
             (tagged("generated_files", "\n".join(generated)) + "\n\n" if generated else "") +
             (tagged("diff", diff_text) if diff_text else ""))
+    if hidden:
+        user += "\n\n" + tagged("hidden_tests_left_out", HIDDEN_NOTE)
     if later:
         user += "\n\n" + tagged("earlier_review", later[0]) + "\n\n" + tagged("changes_since", later[1])
         if design_changes:
@@ -590,7 +736,8 @@ def earlier_review(repo, number, token, reviews):
         if not page["pageInfo"]["hasNextPage"]:
             break
         after = page["pageInfo"]["endCursor"]
-    out = [strip_markers(r["body"]).strip() for r in reviews]
+    out = [re.sub(rf"(?m)^{re.escape(HIDDEN_SUMMARY)}.*$", "", strip_markers(r["body"])).strip()
+           for r in reviews]
     for t in threads:
         comments = t["comments"]["nodes"]
         if not comments or MARKER not in (comments[0]["body"] or ""):
@@ -789,9 +936,16 @@ def main(argv):
         if e.code != 406:
             raise
         diff = None  # GitHub refuses diffs over its size limits
+    description = without_local_review(pr.get("body") or "")
+    hidden = set()
+    if by_peras(pr):  # its hidden tests and the builder's disputes are a person's to read
+        description, hidden = peras_private(description, diff)
+        diff = without_paths(diff, hidden)
     files = split_diff(diff) if diff is not None else {}
     if diff is not None and not files:
-        print("Nothing to review: the PR changes only generated or lock files.")
+        print("Nothing to review: the PR changes only generated or lock files"
+              + (f", and hidden test files left out for a person ({', '.join(sorted(hidden))})."
+                 if hidden else "."))
         return 0
     try:
         claude_md = open("CLAUDE.md").read()
@@ -828,14 +982,15 @@ def main(argv):
             later, shown, paths = (history, since), "", later_paths(split_diff(since), files, moved)
         else:
             later, shown, paths = None, text, list(files)
-        description = without_local_review(pr.get("body") or "")[:MAX_DESCRIPTION_CHARS]
+        description = description[:MAX_DESCRIPTION_CHARS]
         generated = generated_paths(diff)  # the whole PR's, every round
         used = (len(design) + len(claude_md) + len(shown) + len(history) + len(since or "") + len(moved) + len(description)
                 + sum(len(g) + 1 for g in generated))
         whole, omitted = full_files(review_paths(paths, repo.split("/")[1]), budget=MAX_INPUT_CHARS - used,
                                     keep=set(split_diff(since)) if since is not None else ())
         system, user = request(claude_md, design, pr["title"], description, whole, shown, later,
-                               omitted, history, generated, repo.split("/")[1], design_changes=moved)
+                               omitted, history, generated, repo.split("/")[1], design_changes=moved,
+                               hidden=bool(hidden))
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:
@@ -850,6 +1005,8 @@ def main(argv):
                            round_no=len(done) + 1)
     # The model's text can be steered by the diff: it must not carry a marker that skips a later
     # push or forges the cost. Ours go last, so they are the ones read.
+    if hidden:
+        review["body"] += hidden_summary(hidden)
     markers = usage_marker(usage) + (f"\n\n<!-- ai-review-diff: {fp} -->" if fp else "")
     review["body"] = strip_markers(review["body"])
     post = {**review, "body": review["body"] + markers, "commit_id": pr["head"]["sha"]}
