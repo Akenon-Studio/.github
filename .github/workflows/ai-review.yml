@@ -104,7 +104,7 @@ jobs:
         if: env.WANTED == 'true' && env.HAS_KEY == 'true'
         continue-on-error: true
         id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
@@ -130,7 +130,7 @@ jobs:
       - name: Log in as the review app, to post the review
         if: env.WANTED == 'true'
         id: review_app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           app-id: ${{ vars.AI_REVIEW_APP_ID }}
           private-key: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}
@@ -152,7 +152,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         if: env.WANTED == 'true'
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Review
         if: env.WANTED == 'true'
