@@ -340,6 +340,42 @@ class CutOffTest(unittest.TestCase):
             parse("end_turn", ["not json"])
 
 
+class PrDiffTest(unittest.TestCase):
+    """The PR's diff from the checkout, as GitHub shows it (.github#228)."""
+
+    def test_the_head_against_its_merge_base_with_no_driver_the_pr_names(self):
+        import os, subprocess, tempfile
+        cwd, d = os.getcwd(), tempfile.mkdtemp()
+        os.chdir(d)
+        try:
+            git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                            check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q", "-b", "main")
+            open("a.ts", "w").write("const a = 1;\n")
+            git("add", "."), git("commit", "-q", "-m", "base")
+            base = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "pr")
+            open("a.ts", "w").write("const a = 2;\n")
+            # a driver the PR's .gitattributes names: never run (no config defines it, and it's off)
+            open(".gitattributes", "w").write("*.ts diff=evil\n")
+            git("add", "."), git("commit", "-q", "-m", "pr")
+            head = git("rev-parse", "HEAD")
+            git("checkout", "-q", "main")
+            open("b.ts", "w").write("main moved on\n")
+            git("add", "."), git("commit", "-q", "-m", "main")
+            main = git("rev-parse", "HEAD")
+            git("checkout", "-q", head)
+            diff = ai_review.pr_diff({"base": {"sha": main}, "head": {"sha": head}})
+            self.assertIn("-const a = 1;\n+const a = 2;", diff)
+            self.assertNotIn("b.ts", diff)  # main's own change since isn't the PR's
+            self.assertEqual(ai_review.DIFF_ARGS[:3], ("diff", "--no-ext-diff", "--no-textconv"))
+            with self.assertRaises(RuntimeError):
+                ai_review.pr_diff({"base": {"sha": "0" * 40}, "head": {"sha": head}})
+            self.assertTrue(base)
+        finally:
+            os.chdir(cwd)
+
+
 class MainTest(unittest.TestCase):
     """main() with GitHub and Claude faked, in a temporary git repo."""
 
@@ -349,7 +385,9 @@ class MainTest(unittest.TestCase):
         os.chdir(self.dir)
         subprocess.run(["git", "init", "-q"], check=True)
         self.posted, self.saved = [], {k: getattr(ai_review, k) for k in
-                                       ("github", "all_reviews", "ask_claude", "earlier_comments")}
+                                       ("github", "all_reviews", "ask_claude", "earlier_comments", "pr_diff")}
+        # the diff as the faked GitHub gives it (pr_diff itself reads git: PrDiffTest)
+        ai_review.pr_diff = lambda pr: ai_review.github("pr", "t", accept="application/vnd.github.diff")
         self.env = {k: os.environ.get(k) for k in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "DESIGN_FILE")}
         os.environ.update(GITHUB_TOKEN="t", GITHUB_REPOSITORY="akenon-studio/platform", PR_NUMBER="7")
         os.environ.pop("DESIGN_FILE", None)
@@ -946,7 +984,9 @@ class PerasMainTest(unittest.TestCase):
         os.chdir(self.dir)
         subprocess.run(["git", "init", "-q"], check=True)
         self.saved = {k: getattr(ai_review, k) for k in
-                      ("github", "all_reviews", "ask_claude", "earlier_comments")}
+                      ("github", "all_reviews", "ask_claude", "earlier_comments", "pr_diff")}
+        # the diff as the faked GitHub gives it (pr_diff itself reads git: PrDiffTest)
+        ai_review.pr_diff = lambda pr: ai_review.github("pr", "t", accept="application/vnd.github.diff")
         self.env = {k: os.environ.get(k) for k in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "DESIGN_FILE")}
         os.environ.update(GITHUB_TOKEN="t", GITHUB_REPOSITORY="akenon-studio/peras", PR_NUMBER="7")
         os.environ.pop("DESIGN_FILE", None)

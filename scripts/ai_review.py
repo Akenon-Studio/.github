@@ -653,6 +653,23 @@ def git_out(*args, strip=True):
     return (run.stdout.strip() if strip else run.stdout) if run.returncode == 0 else None
 
 
+# The diff as GitHub shows a PR's: its head against its merge base with the base branch. Read from
+# the checkout (the workflow fetches every branch's history), since the review app may read pull
+# requests but not contents, which GitHub's `.diff` needs. No external diff driver or textconv,
+# which the PR's .gitattributes could name.
+DIFF_ARGS = ("diff", "--no-ext-diff", "--no-textconv", "--no-color", "-M")
+
+
+def pr_diff(pr):
+    """The PR's diff from the checkout. Raises if git can't make it (a commit missing): the job
+    then fails, rather than reviewing nothing."""
+    base, head = pr["base"]["sha"], pr["head"]["sha"]
+    out = git_out(*DIFF_ARGS, f"{base}...{head}", strip=False)
+    if out is None:
+        raise RuntimeError(f"git couldn't diff {base[:12]}...{head[:12]}: is the base branch's history fetched?")
+    return out
+
+
 def later_changes(commit, repo, paths, base=None):
     """(changes since, design moved, size) for a later round from an earlier reviewed commit: the
     PR's files' diff since it (changes_since; None for a full round), in the design's own repo the
@@ -936,12 +953,7 @@ def main(argv):
     token, repo, number = (os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"],
                            os.environ["PR_NUMBER"])
     pr = github(f"repos/{repo}/pulls/{number}", token)
-    try:
-        diff = github(f"repos/{repo}/pulls/{number}", token, accept="application/vnd.github.diff")
-    except urllib.error.HTTPError as e:
-        if e.code != 406:
-            raise
-        diff = None  # GitHub refuses diffs over its size limits
+    diff = pr_diff(pr)
     description = without_local_review(pr.get("body") or "")
     hidden = set()
     if by_peras(pr):  # its hidden tests and the builder's disputes are a person's to read
