@@ -19,7 +19,10 @@
 # of the PR runs (the script and its packages come from this repo's main and PyPI, git reads only
 # its own config). A fork's PR is skipped (below), so no outsider's PR ever runs with the key. A
 # sign-in that fails fails the job: the review is never posted under another name. A caller still on
-# pull_request gets no review, and a step says so.
+# pull_request gets no review, and the job fails saying so. A pull_request_target run's check is on
+# the PR's head commit (as the merge lane's are; checked 2026-10-18), so the merge lane still finds
+# it there. With the environment, the run's OIDC subject names it (`...:environment:ai-review`): the
+# Console rule matches on the event and job_workflow_ref, not the subject.
 #
 # The org app's key reads the design (handbook/design.md, private) that the review checks against:
 # a token for the handbook repo only, contents read only. A handbook PR is checked against its own
@@ -79,9 +82,12 @@ jobs:
         if: env.WANTED != 'true' && github.event_name == 'pull_request_target'
         run: echo "Skipped, a draft (not the Peras app's), fork PR or Renovate update."
 
+      # Fails, so a PR left unreviewed shows red rather than passing quietly
       - name: This caller still runs on pull_request
         if: github.event_name != 'pull_request_target'
-        run: echo "::warning::No review. Run ai-review-caller.yml on pull_request_target, so the review posts as its app with the key only main can use (ai-review.yml)"
+        run: |
+          echo "::error::No review. Run ai-review-caller.yml on pull_request_target, so the review posts as its app with the key only main can use (ai-review.yml)"
+          exit 1
 
       - name: Get the PR's head with its history (its files in full, the changes since the last review)
         if: env.WANTED == 'true'

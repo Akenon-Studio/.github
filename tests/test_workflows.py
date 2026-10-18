@@ -119,6 +119,8 @@ class ReusableWorkflowsTest(unittest.TestCase):
         review = next(s for s in steps if s.get("name") == "Review")
         self.assertEqual(review["env"]["GITHUB_TOKEN"], "${{ steps.review_app.outputs.token }}")
         self.assertNotIn("github.token", str(steps))
+        legacy = next(s for s in steps if s.get("name") == "This caller still runs on pull_request")
+        self.assertIn("exit 1", legacy["run"])  # a PR left unreviewed shows red
         self.assertNotIn("pull-requests", REUSABLE["ai-review.yml"]["permissions"])
         # nothing of the PR's runs: its checkout keeps no credentials, and the script is main's
         checkout = next(s for s in steps if s.get("with", {}).get("ref") == "${{ github.event.pull_request.head.sha }}")

@@ -44,6 +44,23 @@ def read_file(repo, path):
     return base64.b64decode(json.loads(res.stdout)["content"]).decode()
 
 
+def environment_differences(name, env, policies, secrets, want):
+    """What differs between a repo's environment `name` as GitHub has it (`env`, None when missing;
+    its deployment branch `policies`; its secret names) and rulesets/environments.json's `want`."""
+    if env is None:
+        return [f"environment '{name}' is missing"]
+    out = []
+    branch = env.get("deployment_branch_policy") or {}
+    if not branch.get("custom_branch_policies") or branch.get("protected_branches"):
+        out.append(f"environment '{name}' isn't limited to chosen branches (want {', '.join(want['branches'])})")
+    have = sorted(p.get("name") for p in policies or [] if p.get("type", "branch") == "branch")
+    tags = [p.get("name") for p in policies or [] if p.get("type", "branch") != "branch"]
+    if have != sorted(want["branches"]) or tags:
+        out.append(f"environment '{name}' deploys from {have + [f'tag {t}' for t in tags]}, want {sorted(want['branches'])}")
+    out += [f"environment '{name}' has no secret {s}" for s in want["secrets"] if s not in set(secrets)]
+    return out
+
+
 def repo_files(repo):
     """Every file path on a repo's default branch, or None if this token can't read it."""
     res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],

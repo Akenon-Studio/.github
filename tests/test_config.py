@@ -12,7 +12,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from rules import desired_labels, issue_type_differences, label_differences, load  # noqa: E402
+from rules import desired_labels, environment_differences, issue_type_differences, label_differences, load  # noqa: E402
 
 FORMS = [yaml.safe_load(p.read_text()) for p in sorted((ROOT / ".github" / "ISSUE_TEMPLATE").glob("*.yml"))
          if p.name != "config.yml"]
@@ -88,6 +88,32 @@ class IssueTypeDifferencesTest(unittest.TestCase):
     def test_unexpected_live_type(self):
         self.assertEqual(issue_type_differences([TYPE], [TYPE, dict(TYPE, name="Epic")]),
                          ["issue type 'Epic' is not in issue-types.json"])
+
+
+class EnvironmentsTest(unittest.TestCase):
+    """rulesets/environments.json against an environment as GitHub has it (design 6.2, .github#225)."""
+    WANT = {"when": "x", "branches": ["main"], "secrets": ["KEY"]}
+    GOOD = {"deployment_branch_policy": {"custom_branch_policies": True, "protected_branches": False}}
+
+    def test_main_only_with_its_key_passes(self):
+        self.assertEqual(environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}], ["KEY"], self.WANT), [])
+
+    def test_missing_loose_or_keyless_is_reported(self):
+        self.assertEqual(environment_differences("e", None, [], [], self.WANT), ["environment 'e' is missing"])
+        anyone = {"deployment_branch_policy": None}
+        self.assertIn("environment 'e' isn't limited to chosen branches (want main)",
+                      environment_differences("e", anyone, [], ["KEY"], self.WANT))
+        wider = environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}, {"name": "feat/*", "type": "branch"}], ["KEY"], self.WANT)
+        self.assertEqual(wider, ["environment 'e' deploys from ['feat/*', 'main'], want ['main']"])
+        tagged = environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}, {"name": "v*", "type": "tag"}], ["KEY"], self.WANT)
+        self.assertEqual(tagged, ["environment 'e' deploys from ['main', 'tag v*'], want ['main']"])
+        self.assertEqual(environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}], [], self.WANT),
+                         ["environment 'e' has no secret KEY"])
+
+    def test_every_environment_is_main_only(self):
+        for name, want in load("environments.json")["environments"].items():
+            self.assertEqual(want["branches"], ["main"], name)
+            self.assertTrue((ROOT / want["when"]).exists(), name)  # this repo's caller names it
 
 
 if __name__ == "__main__":

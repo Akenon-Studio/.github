@@ -743,7 +743,9 @@ def earlier_review(repo, number, token, reviews):
            for r in reviews]
     for t in threads:
         comments = t["comments"]["nodes"]
-        if not comments or MARKER not in (comments[0]["body"] or ""):
+        # only the review's own threads: anyone can write the marker (GraphQL drops [bot])
+        if (not comments or MARKER not in (comments[0]["body"] or "")
+                or (comments[0].get("author") or {}).get("login") != REVIEWER.removesuffix("[bot]")):
             continue
         lines = [f"Thread on {t['path']}:{t.get('line') or t.get('originalLine')}"
                  f" ({'resolved' if t['isResolved'] else 'open'}):"]
@@ -783,12 +785,13 @@ def graphql(query, token, **variables):
 
 
 def earlier_comments(repo, number, token):
-    """(path, line) of inline comments this script already posted on the PR (found by MARKER), so a
-    new push does not repeat them. Outdated comments have no line and match nothing."""
+    """(path, line) of inline comments this script already posted on the PR (found by MARKER and its
+    author), so a new push does not repeat them. Outdated comments have no line and match nothing."""
     found, page = set(), 1
     while True:
         batch = github(f"repos/{repo}/pulls/{number}/comments?per_page=100&page={page}", token) or []
-        found |= {(c["path"], c.get("line")) for c in batch if MARKER in (c.get("body") or "")}
+        found |= {(c["path"], c.get("line")) for c in batch if MARKER in (c.get("body") or "")
+                  and (c.get("user") or {}).get("login") == REVIEWER}  # anyone can write the marker
         if len(batch) < 100:
             return found
         page += 1
