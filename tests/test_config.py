@@ -12,7 +12,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from rules import desired_labels, environment_differences, issue_type_differences, label_differences, load  # noqa: E402
+from rules import desired_labels, environment_differences, environment_problems, issue_type_differences, label_differences, load  # noqa: E402
 
 FORMS = [yaml.safe_load(p.read_text()) for p in sorted((ROOT / ".github" / "ISSUE_TEMPLATE").glob("*.yml"))
          if p.name != "config.yml"]
@@ -109,6 +109,23 @@ class EnvironmentsTest(unittest.TestCase):
         self.assertEqual(tagged, ["environment 'e' deploys from ['main', 'tag v*'], want ['main']"])
         self.assertEqual(environment_differences("e", self.GOOD, [{"name": "main", "type": "branch"}], [], self.WANT),
                          ["environment 'e' has no secret KEY"])
+
+    def test_what_cant_be_read_is_a_note_not_drift(self):
+        good = {"repos/akenon-studio/x/environments/ai-review": self.GOOD,
+                "repos/akenon-studio/x/environments/ai-review/deployment-branch-policies": {"branch_policies": [{"name": "main", "type": "branch"}]},
+                "repos/akenon-studio/x/environments/ai-review/secrets": {"secrets": [{"name": "AI_REVIEW_APP_PRIVATE_KEY"}]}}
+        files = {".github/workflows/ai-review-caller.yml"}
+        read = lambda answers: (lambda path: answers.get(path.replace("Akenon-Studio", "akenon-studio")))
+        self.assertEqual(environment_problems("x", files, read(good)), ([], []))
+        for hidden in ("deployment-branch-policies", "secrets"):
+            partial = {k: v for k, v in good.items() if not k.endswith(hidden)}
+            problems, notes = environment_problems("x", files, read(partial))
+            self.assertEqual(problems, [])
+            self.assertEqual(notes, ["can't read x's 'ai-review' environment's branches or secrets; not checked"])
+        self.assertEqual(environment_problems("x", files, read({})), ([], ["can't read x's environments; 'ai-review' not checked"]))
+        listed = {"repos/akenon-studio/x/environments": {"environments": []}}
+        self.assertEqual(environment_problems("x", files, read(listed)), (["x: environment 'ai-review' is missing"], []))
+        self.assertEqual(environment_problems("x", set(), read({})), ([], []))  # no caller, no environment needed
 
     def test_every_environment_is_main_only(self):
         for name, want in load("environments.json")["environments"].items():

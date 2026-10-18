@@ -22,7 +22,7 @@ import yaml
 from board import board_differences, find_board, spec
 import sensitive_paths
 from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
-                   codeowners_team_differences, environment_differences, org_role_differences,
+                   codeowners_team_differences, environment_problems, org_role_differences,
                    org_roles, team_org_roles, desired_labels,
                    desired_org_rulesets, desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, reads_problems, repo_files, repo_rulesets, repo_settings, team_differences,
@@ -210,17 +210,10 @@ def main():
             print(f"note: can't read {repo}/{owners}; its sensitive-areas block not checked")
         problems += [f"{repo}: rulesets/sensitive-paths.json: {d}"
                      for d in sensitive_paths.path_problems(repo, files)]
-        for name, want in load("environments.json")["environments"].items():
-            if want["when"] not in files:
-                continue
-            base = f"repos/{ORG}/{repo}/environments/{name}"
-            env = try_gh(base)
-            if env is None and try_gh(f"repos/{ORG}/{repo}/environments") is None:
-                print(f"note: can't read {repo}'s environments; '{name}' not checked")
-                continue
-            policies = (try_gh(f"{base}/deployment-branch-policies") or {}).get("branch_policies") or []
-            secrets = [s["name"] for s in (try_gh(f"{base}/secrets") or {}).get("secrets") or []]
-            problems += [f"{repo}: {d}" for d in environment_differences(name, env, policies, secrets, want)]
+        found, notes = environment_problems(repo, files, try_gh)
+        problems += found
+        for note in notes:
+            print(f"note: {note}")
 
     problems += [f"rulesets/peras-repos.json: {r} is not in rulesets/repos.txt"
                  for r in peras_repos() if r not in managed]

@@ -61,6 +61,29 @@ def environment_differences(name, env, policies, secrets, want):
     return out
 
 
+def environment_problems(repo, files, read):
+    """([problem], [note]) for `repo`'s environments in rulesets/environments.json, those whose
+    `when` file its main has (`files`), read with `read` (try_gh: None when it can't). What can't be
+    read is a note, never drift."""
+    problems, notes = [], []
+    for name, want in load("environments.json")["environments"].items():
+        if want["when"] not in files:
+            continue
+        base = f"repos/{ORG}/{repo}/environments/{name}"
+        env = read(base)
+        if env is None and read(f"repos/{ORG}/{repo}/environments") is None:
+            notes.append(f"can't read {repo}'s environments; '{name}' not checked")
+            continue
+        policies = read(f"{base}/deployment-branch-policies") if env is not None else {}
+        secrets = read(f"{base}/secrets") if env is not None else {}
+        if policies is None or secrets is None:
+            notes.append(f"can't read {repo}'s '{name}' environment's branches or secrets; not checked")
+            continue
+        problems += [f"{repo}: {d}" for d in environment_differences(
+            name, env, policies.get("branch_policies") or [], [s["name"] for s in secrets.get("secrets") or []], want)]
+    return problems, notes
+
+
 def repo_files(repo):
     """Every file path on a repo's default branch, or None if this token can't read it."""
     res = subprocess.run([os.environ.get("GH", "gh"), "api", f"repos/{ORG}/{repo}/git/trees/HEAD?recursive=1"],
