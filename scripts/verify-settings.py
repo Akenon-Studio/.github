@@ -23,7 +23,7 @@ from board import board_differences, find_board, spec
 import sensitive_paths
 from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
                    codeowners_team_differences, environment_problems, org_role_differences,
-                   org_roles, team_org_roles, desired_labels,
+                   org_roles, team_org_roles, desired_labels, peras_repos,
                    desired_org_rulesets, desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, reads_problems, repo_files, repo_rulesets, repo_settings, team_differences,
                    team_repo_permission, try_gh)
@@ -81,10 +81,6 @@ def triggers(text):
         details |= {f"{event}: input {name} {input_spec(i)}" for name, i in inputs.items()}
         found |= details or {str(event)}
     return found
-
-
-def peras_repos():
-    return load("peras-repos.json")["repos"]
 
 
 def expected_triggers(path, repo, peras=None):

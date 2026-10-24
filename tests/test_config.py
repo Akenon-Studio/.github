@@ -55,6 +55,39 @@ class FormsMatchConfigTest(unittest.TestCase):
                         self.assertIn(name, names, view["name"])
 
 
+class PerasControlLabelsTest(unittest.TestCase):
+    """.github#231: a person drives a Peras cycle with these labels (design 7.12, 7.13), so every
+    repo in rulesets/peras-repos.json has them, listed once under 'peras-repos' in labels.json."""
+
+    CONTROL = {"peras:ready", "peras:cancel", "peras:pause", "peras:resume", "risk:low", "risk:medium",
+               "risk:high", "spec:approved", "spec:answered", "spec:rework", "plan:approved",
+               "verdict:proceed", "verdict:rework", "escalation:grant", "escalation:deny",
+               "escalation:answer"}
+
+    def test_every_peras_repo_has_the_control_labels(self):
+        for repo in load("peras-repos.json")["repos"]:
+            self.assertLessEqual(self.CONTROL, {l["name"] for l in desired_labels(repo)}, repo)
+
+    def test_a_repo_peras_doesnt_deliver_to_has_none(self):
+        for repo in ("handbook", ".github", ".github-private"):
+            self.assertFalse(self.CONTROL & {l["name"] for l in desired_labels(repo)}, repo)
+
+    def test_they_are_listed_once(self):
+        labels = load("labels.json")
+        self.assertEqual({l["name"] for l in labels["peras-repos"]}, self.CONTROL)
+        for key, group in labels.items():
+            if isinstance(group, list) and key != "peras-repos":
+                self.assertFalse(self.CONTROL & {l["name"] for l in group}, key)
+
+    def test_a_repo_gets_each_label_once(self):
+        for repo in load("peras-repos.json")["repos"]:
+            names = [l["name"] for l in desired_labels(repo)]
+            self.assertEqual(len(names), len(set(names)), repo)
+
+    def test_the_group_key_is_no_repo(self):
+        self.assertNotIn("peras-repos", (ROOT / "rulesets" / "repos.txt").read_text().split())
+
+
 LABEL = {"name": "task", "color": "ededed", "description": "Task form"}
 
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "Labels every managed repo has ('all'), plus a repo's own. The issue forms add their label; the automation adds needs-fields, settings-drift, claude-md-drift, ai-scorecard and automation-failures; a person adds confirmed (design 6.1). apply-rules.py creates or updates them, verify-settings.py checks name, colour and description. Labels not listed (GitHub's defaults) are left alone.",
+  "_comment": "Labels every managed repo has ('all'), Peras's control labels on every repo in peras-repos.json ('peras-repos', design 7.12, 7.13), plus a repo's own. The issue forms add their label; the automation adds needs-fields, settings-drift, claude-md-drift, ai-scorecard and automation-failures; a person adds confirmed (design 6.1). apply-rules.py creates or updates them, verify-settings.py checks name, colour and description. Labels not listed (GitHub's defaults) are left alone.",
   "all": [
     {"name": "epic", "color": "0e8a16", "description": "Epic form"},
     {"name": "task", "color": "ededed", "description": "Task form"},
@@ -16,6 +16,24 @@
     {"name": "peras", "color": "5319e7", "description": "Source label: opened by Peras (design 6.8)"},
     {"name": "release", "color": "5319e7", "description": "Source label: release-please's Release PR, from the Akenon Studio Release app (design 6.3)"},
     {"name": "ready-to-merge", "color": "0e8a16", "description": "Approved and green: the merge lane merges it in turn (design 6.2)"}
+  ],
+  "peras-repos": [
+    {"name": "peras:ready", "color": "aaaaaa", "description": "Peras control: a person hands the intent to Peras to start a cycle (design 7.13 Stage 0)"},
+    {"name": "peras:cancel", "color": "b60205", "description": "Peras control: cancel the open cycle (design 7.12)"},
+    {"name": "peras:pause", "color": "fbca04", "description": "Peras control: pause the open cycle (design 7.12)"},
+    {"name": "peras:resume", "color": "0e8a16", "description": "Peras control: resume a paused cycle (design 7.12)"},
+    {"name": "risk:low", "color": "c2e0c6", "description": "Peras control: a person confirms the intent's risk as low (design 7.13 Stage 0)"},
+    {"name": "risk:medium", "color": "fbca04", "description": "Peras control: a person confirms the intent's risk as medium (design 7.13 Stage 0)"},
+    {"name": "risk:high", "color": "d93f0b", "description": "Peras control: a person confirms the intent's risk as high (design 7.13 Stage 0)"},
+    {"name": "spec:approved", "color": "0e8a16", "description": "Peras control: a person approves the Spec (design 7.13 Stage 2)"},
+    {"name": "spec:answered", "color": "c5def5", "description": "Peras control: the clarifier's questions are answered (design 7.13 Stage 2)"},
+    {"name": "spec:rework", "color": "fbca04", "description": "Peras control: the Spec needs another round (design 7.13 Stage 2)"},
+    {"name": "plan:approved", "color": "0e8a16", "description": "Peras control: a person approves the plan (design 7.13)"},
+    {"name": "verdict:proceed", "color": "0e8a16", "description": "Peras control: the verdict gate goes on (design 7.13 Stage 8)"},
+    {"name": "verdict:rework", "color": "fbca04", "description": "Peras control: the verdict gate sends it back (design 7.13 Stage 8)"},
+    {"name": "escalation:grant", "color": "0e8a16", "description": "Peras control: an escalation is granted (design 7.12)"},
+    {"name": "escalation:deny", "color": "b60205", "description": "Peras control: an escalation is denied (design 7.12)"},
+    {"name": "escalation:answer", "color": "c5def5", "description": "Peras control: an escalation is answered (design 7.12)"}
   ],
   ".github-private": [
     {"name": "automation-failures", "color": "b60205", "description": "The automation failures report: what failed with no one told (design 6.8)"},
