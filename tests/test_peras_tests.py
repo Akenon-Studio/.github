@@ -37,7 +37,8 @@ class PerasTestsArePrivateTest(unittest.TestCase):
     """peras is private and .github public: the output goes only to .github-private (design 6.2)."""
 
     def setUp(self):
-        self.steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["run"]["steps"]
+        self.workflow = yaml.safe_load(WORKFLOW.read_text())
+        self.steps = self.workflow["jobs"]["run"]["steps"]
 
     def test_the_issue_goes_to_github_private(self):
         self.assertEqual(REPO, "akenon-studio/.github-private")
@@ -57,6 +58,8 @@ class PerasTestsArePrivateTest(unittest.TestCase):
         # The tests' step, whole: their output and code only to files, and green either way
         step = next(s for s in self.steps if "unittest" in s.get("run", ""))
         self.assertEqual(set(step), {"name", "env", "run"})  # no tracing shell, no continue-on-error
+        self.assertNotIn("defaults", self.workflow)  # nor one for every step
+        self.assertNotIn("defaults", self.workflow["jobs"]["run"])
         self.assertEqual(set(step["env"]), {"PERAS_DOT_GITHUB"})
         tests = step["run"]
         self.assertEqual([l for l in tests.splitlines() if l.strip() and not l.strip().startswith("#")], [
