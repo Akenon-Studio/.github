@@ -54,6 +54,13 @@ class PerasTestsArePrivateTest(unittest.TestCase):
             # GitHub prints a step's command with its expressions filled in, and its env: the
             # tests' exit code would show whether they failed
             self.assertNotIn("steps.tests", run + str(step.get("env", "")))
+        # The tests' step, whole: their output and code only to files, and green either way
+        tests = next(s["run"] for s in self.steps if "unittest" in s.get("run", ""))
+        self.assertEqual([l for l in tests.splitlines() if l.strip() and not l.strip().startswith("#")], [
+            "set +e",
+            "(cd peras && python3 -m unittest discover -s core/workspace/tests) > tests.txt 2>&1",
+            'echo "$?" > tests.code',
+            'echo "Ran; the result is in .github-private"'])
         report = next(s["run"] for s in self.steps if "peras_tests.py" in s.get("run", ""))
         self.assertTrue(report.startswith("python3 scripts/quiet_run.py "))
 
