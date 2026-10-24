@@ -55,7 +55,10 @@ class PerasTestsArePrivateTest(unittest.TestCase):
             # tests' exit code would show whether they failed
             self.assertNotIn("steps.tests", run + str(step.get("env", "")))
         # The tests' step, whole: their output and code only to files, and green either way
-        tests = next(s["run"] for s in self.steps if "unittest" in s.get("run", ""))
+        step = next(s for s in self.steps if "unittest" in s.get("run", ""))
+        self.assertEqual(set(step), {"name", "env", "run"})  # no tracing shell, no continue-on-error
+        self.assertEqual(set(step["env"]), {"PERAS_DOT_GITHUB"})
+        tests = step["run"]
         self.assertEqual([l for l in tests.splitlines() if l.strip() and not l.strip().startswith("#")], [
             "set +e",
             "(cd peras && python3 -m unittest discover -s core/workspace/tests) > tests.txt 2>&1",
