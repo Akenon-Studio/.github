@@ -5,9 +5,11 @@ peras's tests (core/workspace/tests) use this repo's scripts (issue_fields.py, b
 so a change here can break them. A PR here can't read the private peras repo (the key that can is
 limited to main), so the peras-tests workflow runs them right after every change lands on main, and
 this script keeps one open `peras-tests-broken` Task issue while they fail, assigned to the
-automation owners, and closes it when they pass again (scripts/one_issue.py).
+automation owners, and closes it when they pass again (scripts/one_issue.py). The issue quotes the
+tests' output, which can show private peras code, so it goes in .github-private (members only),
+never this public repo; the workflow's public log shows none of it (design 6.2).
 
-Usage: scripts/peras_tests.py --report <test output file> <exit code>
+Usage: scripts/peras_tests.py --report <test output file> <file holding the tests' exit code>
 """
 
 import sys
@@ -15,14 +17,14 @@ import sys
 from one_issue import keep
 from rules import ORG
 
-REPO = f"{ORG}/.github"
+REPO = f"{ORG}/.github-private"  # members-only: it quotes private peras output (design 6.2)
 LABEL = "peras-tests-broken"
 TITLE = "A change to .github's main broke peras's agent-hook tests"
 TAIL_LINES = 40
 
 
 def body(output):
-    tail = "\n".join(output.rstrip().splitlines()[-TAIL_LINES:]) or "(no output; see the run log)"
+    tail = "\n".join(output.rstrip().splitlines()[-TAIL_LINES:]) or "(no output)"
     return f"""### What
 
 peras's agent-hook tests (`core/workspace/tests`) fail against `.github`'s current main. The last
@@ -62,7 +64,8 @@ design 6.8"""
 def main():
     if sys.argv[1:2] != ["--report"] or len(sys.argv) != 4:
         sys.exit(__doc__)
-    output, code = open(sys.argv[2]).read(), int(sys.argv[3])
+    # The code comes in a file: an expression in the workflow's command would print it (design 6.2)
+    output, code = open(sys.argv[2]).read(), int(open(sys.argv[3]).read())
     print(keep(REPO, LABEL, TITLE, body(output) if code != 0 else None,
                passed="peras's tests pass against main again. Closing."))
 

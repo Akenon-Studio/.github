@@ -4,8 +4,15 @@
 # repo needs the read-only settings app, whose key lives only in the `settings-check` environment,
 # which main alone may use; PR code could otherwise print it.
 #
+# peras is private and this repo public, so its output stays out of this log: the issue, with the
+# output's tail, goes in .github-private (members only), and this log and the run's result show only
+# whether each step ran, never whether a test failed; a crash shows only its error's type (scripts/
+# quiet_run.py; design 6.2, as settings-check.yml does). The tests' exit code reaches the report
+# step in a file, since GitHub prints a step's command with its expressions filled in.
+#
 # Reads peras as the "Akenon Studio Settings" app (Contents: read); files the issue as the automation
-# app, like claude-md-check.
+# app (org AKENON_APP_ID / AKENON_APP_PRIVATE_KEY), its token limited to .github-private, so the
+# issue-fields workflow puts it on the board, assigned to the automation owners.
 name: peras-tests
 
 on:
@@ -52,16 +59,23 @@ jobs:
           path: peras
           persist-credentials: false
 
+      - name: Install PyYAML (peras's tests need it)
+        # By hash, wheels only (the runner's Python 3.12 or 3.13): a later step holds the automation key
+        run: |
+          pip install --quiet --require-hashes --only-binary :all: -r /dev/stdin <<'REQ'
+          pyyaml==6.0.2 --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476 --hash=sha256:70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5
+          REQ
+
       - name: Run peras's agent-hook tests against this main
-        id: tests
         env:
           PERAS_DOT_GITHUB: ${{ github.workspace }}/dot-github
         run: |
-          pip install --quiet pyyaml
           set +e
           (cd peras && python3 -m unittest discover -s core/workspace/tests) > tests.txt 2>&1
-          echo "code=$?" >> "$GITHUB_OUTPUT"
-          cat tests.txt
+          # Not the output, nor whether they passed: this log is public and peras private (design 6.2).
+          # The code goes to the report step in a file; this step stays green either way.
+          echo "$?" > tests.code
+          echo "Ran; the result is in .github-private"
 
       - name: Log in as the automation app
         id: automation
@@ -70,10 +84,10 @@ jobs:
           app-id: ${{ vars.AKENON_APP_ID }}
           private-key: ${{ secrets.AKENON_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: .github
+          repositories: .github-private
 
       - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
         working-directory: dot-github
-        run: python3 scripts/peras_tests.py --report ../tests.txt "${{ steps.tests.outputs.code }}"
+        run: python3 scripts/quiet_run.py python3 scripts/peras_tests.py --report ../tests.txt ../tests.code
