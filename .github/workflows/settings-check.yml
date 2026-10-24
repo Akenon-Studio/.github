@@ -2,9 +2,9 @@
 # open `settings-drift` Task issue listing any difference; closes it once everything matches
 # (design 6.2). Then keeps one `dependencies` issue listing Dependabot alerts open over 3 days with
 # no Renovate PR (scripts/stale_alerts.py, design 6.4); the settings app reads the alerts. Last, keeps
-# one `automation-failures` issue listing what failed with no one told: scheduled runs, Renovate's
-# problems from its dashboards (whose run-again box it ticks), PRs the merge lane took out and left,
-# secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
+# one `automation-failures` issue listing what failed with no one told: scheduled runs and
+# peras-tests' runs on main, Renovate's problems from its dashboards (whose run-again box it ticks),
+# PRs the merge lane took out and left, secret-scanning alerts (scripts/automation_failures.py, design 6.8). The settings app needs
 # Actions: read, Secret scanning alerts: read and Contents: read for those; without them the issue
 # says so. All three reports go in .github-private (members only), never this public repo, since
 # each lists weaknesses, and this public log shows only a verdict or an error's type (scripts/
