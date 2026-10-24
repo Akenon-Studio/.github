@@ -6,7 +6,7 @@ private .github-private repo, members only: it names open secret alerts and priv
 errors, which the public .github repo must not. It lists:
 
 - **Workflow runs that failed**: each active scheduled workflow's latest finished scheduled run,
-  in every managed repo (GitHub emails one person at most), and the latest finished run on main of
+  in every managed repo (GitHub emails one person at most), and the latest finished run on main (a push's or a manual one) of
   `.github`'s report jobs that run after a change to main instead (AFTER_MAIN; GitHub emails the
   pusher, usually an app). Their logs say only whether each step ran (design 6.2), so a failed
   run of one is a crash.
@@ -129,7 +129,7 @@ def collect(path, now=None):
                 continue
             queries = {"scheduled": "event=schedule"}
             if w.get("path") in AFTER_MAIN.get(repo, ()):
-                queries["main's"] = "event=push&branch=main"
+                queries["main's"] = "branch=main"  # a push, or a manual run once the cause is fixed
             for kind, query in queries.items():
                 runs = try_gh(f"repos/{ORG}/{repo}/actions/workflows/{w['id']}/runs"
                               f"?{query}&status=completed&per_page=1")

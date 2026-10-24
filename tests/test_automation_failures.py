@@ -46,7 +46,7 @@ def issue(title, body="", login="renovate[bot]"):
             "user": {"login": login, "type": "Bot"}}
 
 
-class ScheduledRunsTest(unittest.TestCase):
+class FailedRunsTest(unittest.TestCase):
     def test_a_failed_latest_finished_run(self):
         for bad in ("failure", "timed_out", "startup_failure"):
             self.assertEqual(failed_run(run(bad), NOW)["conclusion"], bad)
@@ -215,7 +215,7 @@ class CollectTest(unittest.TestCase):
                      "state": "active", "html_url": "u", "updated_at": "t"}]}
             if "/runs?" in path:
                 asked.append(path)
-                failed = "/workflows/1/" in path and "event=push" in path
+                failed = "/workflows/1/" in path and "branch=main" in path
                 return {"workflow_runs": [{**run("failure" if failed else "success"),
                                            "name": "peras-tests"}]}
             return []
@@ -226,9 +226,9 @@ class CollectTest(unittest.TestCase):
             state = json.load(open(f.name))
         self.assertEqual([(r["repo"], r["workflow"]) for r in state["runs"]],
                          [(".github", "peras-tests")])
-        push = [p for p in asked if "event=push" in p]
+        push = [p for p in asked if "branch=main" in p]
         self.assertEqual(len(push), 1)  # peras-tests in .github only: not CI, not other repos
-        self.assertIn("/workflows/1/runs?event=push&branch=main&status=completed&per_page=1",
+        self.assertIn("/workflows/1/runs?branch=main&status=completed&per_page=1",
                       push[0])
 
     def test_after_main_jobs_exist_and_run_on_a_push_to_main(self):

@@ -112,7 +112,7 @@ jobs:
         run: python3 scripts/quiet_run.py python3 scripts/stale_alerts.py report alerts.json
 
       # Last, and whatever happened above, so a failure there can't hide these (design 6.8).
-      - name: List failed scheduled runs and secret-scanning alerts
+      - name: List failed runs and secret-scanning alerts
         id: failures
         if: ${{ !cancelled() }}
         env:
