@@ -66,9 +66,10 @@ jobs:
           # Only the verdict: this log is public, and the drift lines say what is weak (design 6.2);
           # the details go in the drift issue in .github-private, and a crash shows only its type.
           python3 scripts/quiet_run.py --verdict verify.txt "$?"
-          # The verdict's code goes to the next step privately; this step (and the drift report,
-          # which exits 0 on drift) stays green either way, so the run's colour shows nothing.
-          echo "code=$?" >> "$GITHUB_OUTPUT"
+          # The verdict's code goes to the drift report in a file, not a step output: GitHub prints a
+          # step's command with its expressions filled in. This step (and the drift report, which
+          # exits 0 on drift) stays green either way, so the run's colour shows nothing.
+          echo "$?" > verify.code
 
       - name: Log in as the automation app
         id: automation
@@ -82,7 +83,7 @@ jobs:
       - name: Open, update or close the drift issue
         env:
           GH_TOKEN: ${{ steps.automation.outputs.token }}
-        run: python3 scripts/quiet_run.py python3 scripts/report_drift.py verify.txt "${{ steps.verify.outputs.code }}"
+        run: python3 scripts/quiet_run.py python3 scripts/report_drift.py verify.txt verify.code
 
       # After the drift report, so a failure here can't hide drift.
       - name: List open Dependabot alerts

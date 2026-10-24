@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn a verify-settings.py run into one open Task issue in .github-private (design 6.2, 6.8).
 
-Usage: scripts/report_drift.py <verify output file> <verify exit code>
+Usage: scripts/report_drift.py <verify output file> <file holding the verify exit code>
 Exit code 1 (drift): open the `settings-drift` issue, or update it if the problems changed.
 Exit code 0: close any open one with a comment. Anything else: fail, since the check itself broke.
 The issue body is a filled-in Task form, so the issue-fields automation puts it on the board. It is
@@ -70,7 +70,8 @@ def main():
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     output = open(sys.argv[1]).read()
-    code = int(sys.argv[2])
+    # The code comes in a file: an expression in the workflow's command would print it (design 6.2)
+    code = int(open(sys.argv[2]).read())
     if code not in (0, 1):
         sys.exit(f"verify-settings.py itself failed (exit {code}); the public log shows only its "
                  "error type: run scripts/verify-settings.py as an org owner to see it")
