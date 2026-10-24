@@ -37,11 +37,11 @@
   ],
   ".github-private": [
     {"name": "automation-failures", "color": "b60205", "description": "The automation failures report: what failed with no one told (design 6.8)"},
+    {"name": "peras-tests-broken", "color": "b60205", "description": "A change to .github's main broke peras's agent-hook tests"},
     {"name": "settings-drift", "color": "b60205", "description": "Live settings differ from rulesets/"}
   ],
   ".github": [
     {"name": "claude-md-drift", "color": "b60205", "description": "A CLAUDE.md names a design section that no longer exists"},
-    {"name": "peras-tests-broken", "color": "b60205", "description": "A change to .github's main broke peras's agent-hook tests"},
     {"name": "ai-scorecard", "color": "1d76db", "description": "The monthly AI review scorecard (design 6.4)"}
   ]
 }

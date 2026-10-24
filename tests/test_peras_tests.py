@@ -9,8 +9,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from issue_fields import check as form_check, load_forms  # noqa: E402
 from one_issue import new_issue  # noqa: E402
-from peras_tests import LABEL, TAIL_LINES, TITLE, body  # noqa: E402
+from peras_tests import LABEL, REPO, TAIL_LINES, TITLE, body  # noqa: E402
 from rules import desired_labels  # noqa: E402
+
+import yaml  # noqa: E402
+
+WORKFLOW = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "peras-tests.yml"
 
 
 class PerasTestsReportTest(unittest.TestCase):
@@ -25,8 +29,33 @@ class PerasTestsReportTest(unittest.TestCase):
         self.assertEqual(text.count("line "), TAIL_LINES - 1)
 
     def test_issue_carries_its_source_label(self):
-        self.assertIn(LABEL, {l["name"] for l in desired_labels(".github")})
+        self.assertIn(LABEL, {l["name"] for l in desired_labels(".github-private")})
         self.assertEqual(new_issue(TITLE, LABEL, body("x"))["labels"], [LABEL])
+
+
+class PerasTestsArePrivateTest(unittest.TestCase):
+    """peras is private and .github public: the output goes only to .github-private (design 6.2)."""
+
+    def setUp(self):
+        self.steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["run"]["steps"]
+
+    def test_the_issue_goes_to_github_private(self):
+        self.assertEqual(REPO, "akenon-studio/.github-private")
+        self.assertNotIn(LABEL, {l["name"] for l in desired_labels(".github")})
+
+    def test_the_automation_token_reads_only_github_private(self):
+        logins = [s["with"] for s in self.steps if "AKENON_APP_ID" in str(s.get("with"))]
+        self.assertEqual([w.get("repositories") for w in logins], [".github-private"])
+
+    def test_the_public_log_shows_no_test_output_or_result(self):
+        for step in self.steps:
+            run = step.get("run", "")
+            self.assertNotIn("cat ", run)
+            # GitHub prints a step's command with its expressions filled in, and its env: the
+            # tests' exit code would show whether they failed
+            self.assertNotIn("steps.tests", run + str(step.get("env", "")))
+        report = next(s["run"] for s in self.steps if "peras_tests.py" in s.get("run", ""))
+        self.assertTrue(report.startswith("python3 scripts/quiet_run.py "))
 
 
 if __name__ == "__main__":
