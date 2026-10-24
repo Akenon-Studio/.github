@@ -45,6 +45,7 @@ Every repo carries small caller workflows, copied from this repo: `pr-title-call
 `akenon-studio/.github/.github/workflows/<name>.yml@main`, and the triggers stay the same as here:
 the PR checks also run on `assigned` and `unassigned`). A repo Peras delivers to
 (`rulesets/peras-repos.json`) adds to its callers of the shared checks (`pr-title`, `security-scan`)
-pushes to `main` and `peras/**` and a `sha` dispatch, as `pr-title.yml` says.
+pushes to `main` and `peras/**` and a `sha` dispatch, as `pr-title.yml` says, and gets Peras's
+control labels (`peras-repos` in `rulesets/labels.json`, design 7.12).
 `scripts/verify-settings.py` reports a copy whose triggers differ. The issue automation logs in as
 the org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.

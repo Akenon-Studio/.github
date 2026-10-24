@@ -238,10 +238,17 @@ def differences(want, have, path=""):
     return diffs
 
 
+def peras_repos():
+    """The repos Peras delivers to (rulesets/peras-repos.json, design 7.13)."""
+    return load("peras-repos.json")["repos"]
+
+
 def desired_labels(repo):
-    """The labels a repo should have (rulesets/labels.json): every repo's, then its own."""
+    """The labels a repo should have (rulesets/labels.json): every repo's, Peras's control labels
+    in a repo Peras delivers to (design 7.12), then its own."""
     labels = load("labels.json")
-    return labels["all"] + labels.get(repo, [])
+    peras = labels["peras-repos"] if repo in peras_repos() else []
+    return labels["all"] + peras + labels.get(repo, [])
 
 
 def ensure_label(full_repo, name):

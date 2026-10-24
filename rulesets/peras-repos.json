@@ -1,4 +1,4 @@
 {
-  "_comment": "The repos Peras delivers to (design 7.13). Their callers of the shared checks (pr-title-caller.yml, security-scan-caller.yml) also run on pushes to main and peras/** and by a 'sha' dispatch (design 6.3, 7.13 Stage 10; README 'New repos'); verify-settings.py reports a copy whose triggers differ, and a repo here that rulesets/repos.txt doesn't manage.",
+  "_comment": "The repos Peras delivers to (design 7.13). Their callers of the shared checks (pr-title-caller.yml, security-scan-caller.yml) also run on pushes to main and peras/** and by a 'sha' dispatch (design 6.3, 7.13 Stage 10; README 'New repos'); each also gets Peras's control labels (labels.json 'peras-repos', design 7.12); verify-settings.py reports a copy whose triggers differ, and a repo here that rulesets/repos.txt doesn't manage.",
   "repos": ["peras", "platform", "animations"]
 }
