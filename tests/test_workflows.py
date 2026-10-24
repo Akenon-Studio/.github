@@ -286,5 +286,24 @@ class PrAuthorTest(unittest.TestCase):
         self.assertIn("pr-author", checks[".github"])
 
 
+class SettingsCheckLogTest(unittest.TestCase):
+    """The settings check's public log says only whether each step ran, never what it found
+    (design 6.2)."""
+
+    def setUp(self):
+        self.steps = load("settings-check.yml")["jobs"]["check"]["steps"]
+
+    def test_no_printed_command_carries_the_verify_code(self):
+        # GitHub prints a step's command with its expressions filled in, and its env
+        for step in self.steps:
+            self.assertNotIn("steps.verify", step.get("run", "") + str(step.get("env", "")), step.get("name"))
+        verify = next(s for s in self.steps if s.get("id") == "verify")
+        self.assertIn('echo "$?" > verify.code', verify["run"])
+        self.assertNotIn("GITHUB_OUTPUT", verify["run"])
+        report = next(s for s in self.steps if "report_drift.py" in s.get("run", ""))
+        self.assertEqual(report["run"],
+                         "python3 scripts/quiet_run.py python3 scripts/report_drift.py verify.txt verify.code")
+
+
 if __name__ == "__main__":
     unittest.main()
