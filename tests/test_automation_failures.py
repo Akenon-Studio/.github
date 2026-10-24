@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 import automation_failures  # noqa: E402
-from automation_failures import (body, failed_schedule, lane_idle, renovate_pages,  # noqa: E402
+from automation_failures import (body, failed_run, lane_idle, renovate_pages,  # noqa: E402
                                  renovate_problems, repository_problems, run_again, sections)
 from issue_fields import check, load_forms  # noqa: E402
 from rules import status_page  # noqa: E402
@@ -46,15 +46,15 @@ def issue(title, body="", login="renovate[bot]"):
             "user": {"login": login, "type": "Bot"}}
 
 
-class ScheduledRunsTest(unittest.TestCase):
+class FailedRunsTest(unittest.TestCase):
     def test_a_failed_latest_finished_run(self):
         for bad in ("failure", "timed_out", "startup_failure"):
-            self.assertEqual(failed_schedule(run(bad), NOW)["conclusion"], bad)
+            self.assertEqual(failed_run(run(bad), NOW)["conclusion"], bad)
         for fine in ("success", "cancelled", "skipped"):
-            self.assertIsNone(failed_schedule(run(fine), NOW))
-        self.assertIsNone(failed_schedule(None, NOW))  # never ran
+            self.assertIsNone(failed_run(run(fine), NOW))
+        self.assertIsNone(failed_run(None, NOW))  # never ran
         old = {**run("failure"), "created_at": "2026-08-01T00:00:00Z"}  # its cron is long gone
-        self.assertIsNone(failed_schedule(old, NOW))
+        self.assertIsNone(failed_run(old, NOW))
 
 
 class RenovateTest(unittest.TestCase):
@@ -161,7 +161,7 @@ class BodyTest(unittest.TestCase):
     def test_body_is_a_valid_task_form_listing_only_whats_there(self):
         text = body(sections(self.STATE, ["platform: WARN: x"], []))
         self.assertEqual(check("Task", text, load_forms()), [])
-        self.assertIn("**Scheduled runs that failed**", text)
+        self.assertIn("**Runs that failed**", text)
         self.assertIn("**Couldn't check**", text)
         self.assertNotIn("merge lane", text.split("### Why")[0])
         # each section starts its own paragraph, so its heading doesn't join the list above (#145)
@@ -200,6 +200,44 @@ class CollectTest(unittest.TestCase):
         self.assertIn("whether Renovate is set up in c", state["unread"][0])
         self.assertEqual(sorted(r["conclusion"] for r in state["runs"] if r["repo"] == "a"),
                          ["disabled by GitHub for inactivity", "failure"])
+
+    def test_report_jobs_after_main_are_read_too(self):
+        """A failed peras-tests run on main is listed: it runs on a push, not a schedule (#235)."""
+        asked = []
+
+        def try_gh(*args):
+            path = args[-1]
+            if path.endswith("/actions/workflows?per_page=100"):
+                return {"workflows": [
+                    {"id": 1, "name": "peras-tests", "path": ".github/workflows/peras-tests.yml",
+                     "state": "active", "html_url": "u", "updated_at": "t"},
+                    {"id": 2, "name": "tests", "path": ".github/workflows/tests.yml",
+                     "state": "active", "html_url": "u", "updated_at": "t"}]}
+            if "/runs?" in path:
+                asked.append(path)
+                failed = "/workflows/1/" in path and "branch=main" in path
+                return {"workflow_runs": [{**run("failure" if failed else "success"),
+                                           "name": "peras-tests"}]}
+            return []
+        with mock.patch.multiple(automation_failures, managed_repos=lambda: [".github", "peras"],
+                                 renovate_set_up=lambda r: True, try_gh=try_gh), \
+                tempfile.NamedTemporaryFile(suffix=".json") as f, mock.patch("sys.stdout"):
+            automation_failures.collect(f.name, NOW)
+            state = json.load(open(f.name))
+        self.assertEqual([(r["repo"], r["workflow"]) for r in state["runs"]],
+                         [(".github", "peras-tests")])
+        push = [p for p in asked if "branch=main" in p]
+        self.assertEqual(len(push), 1)  # peras-tests in .github only: not CI, not other repos
+        self.assertIn("/workflows/1/runs?branch=main&status=completed&per_page=1",
+                      push[0])
+
+    def test_after_main_jobs_exist_and_run_on_a_push_to_main(self):
+        import yaml
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for path in automation_failures.AFTER_MAIN[".github"]:
+            on = yaml.safe_load((root / path).read_text())[True]  # YAML reads `on:` as True
+            self.assertIn("main", on["push"]["branches"], path)
+            self.assertNotIn("schedule", on, path)
 
     def test_where_renovate_config_can_be(self):
         from automation_failures import renovate_set_up

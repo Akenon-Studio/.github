@@ -13,6 +13,8 @@
 # Reads peras as the "Akenon Studio Settings" app (Contents: read); files the issue as the automation
 # app (org AKENON_APP_ID / AKENON_APP_PRIVATE_KEY), its token limited to .github-private, so the
 # issue-fields workflow puts it on the board, assigned to the automation owners.
+# A failed run of this workflow (a crash) is listed in the daily automation-failures report
+# (scripts/automation_failures.py, AFTER_MAIN; design 6.8): GitHub would email only the pusher.
 name: peras-tests
 
 on:

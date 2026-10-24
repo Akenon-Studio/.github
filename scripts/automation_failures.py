@@ -5,8 +5,11 @@ opened, updated or closed like the settings-drift report (scripts/one_issue.py).
 private .github-private repo, members only: it names open secret alerts and private repos' Renovate
 errors, which the public .github repo must not. It lists:
 
-- **Scheduled workflow runs** whose latest finished run failed, for every active workflow in every
-  managed repo: GitHub emails one person at most.
+- **Workflow runs that failed**: each active scheduled workflow's latest finished scheduled run,
+  in every managed repo (GitHub emails one person at most), and the latest finished run on main (a push's or a manual one) of
+  `.github`'s report jobs that run after a change to main instead (AFTER_MAIN; GitHub emails the
+  pusher, usually an app). Their logs say only whether each step ran (design 6.2), so a failed
+  run of one is a crash.
 - **Renovate problems**: each repo's dashboard issue (its "Repository problems" section), any
   config-error issue Renovate opened, a repo with no dashboard or no Renovate config, and a repo
   with dashboards from both Renovates. Mend's Renovate shows these only on Mend's site and has no
@@ -45,6 +48,8 @@ LABEL = "automation-failures"
 TITLE = "Automation failures"
 FAILED = {"failure", "timed_out", "startup_failure"}
 RECENT = datetime.timedelta(days=40)  # a monthly workflow's last run is in range; a cron removed long ago isn't
+# .github's report jobs that run on a push to main, not on a schedule (design 6.2, 6.8; #235)
+AFTER_MAIN = {".github": {".github/workflows/peras-tests.yml"}}
 LANE_MARKER = "<!-- merge-lane -->"
 LANE_IDLE_DAYS = 2
 MEND = "renovate[bot]"  # Mend's Renovate; the others in bots.json run in our own workflows
@@ -66,10 +71,11 @@ def renovate_pages():
 
 # --- collect, as the settings app ---------------------------------------------------------------
 
-def failed_schedule(run, now):
-    """The workflow's latest finished scheduled run as a report line's data, if it failed in the
-    last RECENT days, else None. Asked for per workflow, finished runs only, so a run going now
-    (this one) or a frequent workflow's many runs can't hide another's failure."""
+def failed_run(run, now):
+    """The workflow's latest finished run (scheduled, or on main for AFTER_MAIN) as a report
+    line's data, if it failed in the last RECENT days, else None. Asked for per workflow, finished
+    runs only, so a run going now (this one) or a frequent workflow's many runs can't hide another's
+    failure."""
     if not run or run.get("conclusion") not in FAILED or now - when(run["created_at"]) > RECENT:
         return None
     return {"workflow": run["name"], "conclusion": run["conclusion"], "url": run["html_url"],
@@ -112,7 +118,7 @@ def collect(path, now=None):
             state["no_config"].append(repo)
         workflows = try_gh(f"repos/{ORG}/{repo}/actions/workflows?per_page=100")
         if workflows is None:
-            state["unread"].append(f"scheduled runs in {repo} (the settings app needs Actions: read)")
+            state["unread"].append(f"workflow runs in {repo} (the settings app needs Actions: read)")
             continue
         for w in workflows["workflows"]:
             if w["state"] == "disabled_inactivity":  # GitHub stops schedules after 60 quiet days
@@ -121,14 +127,18 @@ def collect(path, now=None):
                                       "at": w["updated_at"]})
             if w["state"] != "active":
                 continue
-            runs = try_gh(f"repos/{ORG}/{repo}/actions/workflows/{w['id']}/runs"
-                          "?event=schedule&status=completed&per_page=1")
-            if runs is None:
-                state["unread"].append(f"scheduled runs of {w['name']} in {repo}")
-                continue
-            found = failed_schedule((runs["workflow_runs"] or [None])[0], now)
-            if found:
-                state["runs"].append({"repo": repo, **found})
+            queries = {"scheduled": "event=schedule"}
+            if w.get("path") in AFTER_MAIN.get(repo, ()):
+                queries["main's"] = "branch=main"  # a push, or a manual run once the cause is fixed
+            for kind, query in queries.items():
+                runs = try_gh(f"repos/{ORG}/{repo}/actions/workflows/{w['id']}/runs"
+                              f"?{query}&status=completed&per_page=1")
+                if runs is None:
+                    state["unread"].append(f"{kind} runs of {w['name']} in {repo}")
+                    continue
+                found = failed_run((runs["workflow_runs"] or [None])[0], now)
+                if found:
+                    state["runs"].append({"repo": repo, **found})
     alerts = try_gh("--paginate", "--slurp", f"orgs/{ORG}/secret-scanning/alerts?state=open&hide_secret=true&per_page=100")
     if alerts is None:
         state["unread"].append("secret-scanning alerts (the settings app needs Secret scanning "
@@ -140,7 +150,7 @@ def collect(path, now=None):
     with open(path, "w") as f:
         json.dump(state, f, indent=2)
     # No secret-alert count: this log is in the public .github repo
-    print(f"{len(state['runs'])} failed schedule(s), {len(state['unread'])} unread")
+    print(f"{len(state['runs'])} failed run(s), {len(state['unread'])} unread")
 
 
 # --- report, as the automation app ---------------------------------------------------------------
@@ -280,7 +290,7 @@ _No response_"""
 
 def sections(state, renovate, lane):
     return {
-        "Scheduled runs that failed": [f"{r['repo']}: {r['workflow']} ({r['conclusion']}, "
+        "Runs that failed": [f"{r['repo']}: {r['workflow']} ({r['conclusion']}, "
                                        f"[run]({r['url']}), {r['at'][:10]})" for r in state["runs"]],
         "Renovate": renovate,
         "PRs the merge lane took out, untouched since": [
