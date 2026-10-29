@@ -41,7 +41,8 @@ What it reports (design 6.4):
   A marked reply whose `Decision:` line names its own login's mandate (design 7.12, MANDATE) is that
   partner's; on a PR that login opened, the session's own work, its outcome is mandated: listed and
   counted apart, not in the shares, until a later, unmarked reply of the partner's own states the same
-  outcome and severity (whichever the session gave), so the reviewed author never grades its own reviewer (.github#240). CI's threads
+  outcome and severity (whichever the session gave; restating the outcome the session's re-grade came
+  with agrees to that re-grade), so the reviewed author never grades its own reviewer (.github#240). CI's threads
   only: a local row doesn't say who settled it yet (peras#544).
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
