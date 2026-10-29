@@ -31,6 +31,8 @@
     {"name": "plan:approved", "color": "0e8a16", "description": "Peras control: a person approves the plan (design 7.13)"},
     {"name": "verdict:proceed", "color": "0e8a16", "description": "Peras control: the verdict gate goes on (design 7.13 Stage 8)"},
     {"name": "verdict:rework", "color": "fbca04", "description": "Peras control: the verdict gate sends it back (design 7.13 Stage 8)"},
+    {"name": "look:approved", "color": "0e8a16", "description": "Peras control: the visual-review gate approves the look (design 7.13 Stage 7)"},
+    {"name": "look:rework", "color": "fbca04", "description": "Peras control: the visual-review gate sends it back (design 7.13 Stage 7)"},
     {"name": "escalation:grant", "color": "0e8a16", "description": "Peras control: an escalation is granted (design 7.12)"},
     {"name": "escalation:deny", "color": "b60205", "description": "Peras control: an escalation is denied (design 7.12)"},
     {"name": "escalation:answer", "color": "c5def5", "description": "Peras control: an escalation is answered (design 7.12)"}
