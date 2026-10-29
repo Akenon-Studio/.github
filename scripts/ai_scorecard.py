@@ -40,8 +40,9 @@ What it reports (design 6.4):
   PR, findings Peras fixed with no person's re-grade (ungraded, design 6.4) are listed, not counted.
   A marked reply whose `Decision:` line names its own login's mandate (design 7.12, MANDATE) is that
   partner's; on a PR that login opened, the session's own work, its outcome is mandated: listed and
-  counted apart, not in the shares, until a reply of the partner's own states the same outcome or
-  severity, so the reviewed author never grades its own reviewer (.github#240).
+  counted apart, not in the shares, until a later, unmarked reply of the partner's own states the same
+  outcome or severity, so the reviewed author never grades its own reviewer (.github#240). CI's threads
+  only: a local row doesn't say who settled it yet (peras#544).
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
   the fix's parent commit, with that review's findings and outcomes in the files concerned. A fix
@@ -303,8 +304,8 @@ def thread_outcome(replies, peras_pr, claimed, author=None):
     gives one; an agent's other outcome is a dispute unless a person stated the same. On a Peras PR,
     a finding Peras fixed is ungraded until a person's reply gives its severity after re-grading.
     A marked reply given under its login's mandate (7.12) is that partner's; on a PR that login
-    opened (`author`, the session's own work) it is mandated: counted apart until a reply of the
-    partner's own states the same outcome, or the same severity after re-grading."""
+    opened (`author`, the session's own work) it is mandated: counted apart until a later, unmarked
+    reply of the partner's own states the same outcome, or the same severity after re-grading."""
     def person(c):
         return not is_agent(c) or mandate_of(c) is not None
 
@@ -315,9 +316,11 @@ def thread_outcome(replies, peras_pr, claimed, author=None):
 
     def result(name, graded, disputed, ungraded, by=()):
         # by: the replies standing for a person whose word made the outcome count
-        apart = any(own(c) for c in by) and not any(
-            not is_agent(x) and (outcome([x["body"]]) == name or (graded and regraded(x["body"]) == graded))
-            for x in replies)
+        mine = [i for i, x in enumerate(replies) if any(x is c for c in by) and own(x)]
+        apart = bool(mine) and not any(
+            not is_agent(x) and bot_login((x.get("author") or {}).get("login")) == bot_login(author)
+            and (outcome([x["body"]]) == name or (graded and regraded(x["body"]) == graded))
+            for x in replies[mine[-1] + 1:])
         return {"outcome": name, "regraded": graded, "disputed": disputed, "ungraded": ungraded,
                 "mandated": apart}
 

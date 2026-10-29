@@ -334,6 +334,14 @@ class ThreadOutcomeTest(unittest.TestCase):
         confirmed = thread_outcome([mandated, reply("Not an issue, agreed.")], False, "major", author="RuvinduH")
         self.assertEqual((confirmed["outcome"], confirmed["regraded"], confirmed["mandated"]),
                          ("not an issue", "minor", False))
+        # only a later reply of the partner's own confirms it: not another member's, nor an earlier one
+        self.assertTrue(thread_outcome([mandated, reply("Not an issue, agreed.", "someone-else")], False, "major",
+                                       author="RuvinduH")["mandated"])
+        earlier = reply("Moved to #5 (minor, downgraded)")
+        self.assertTrue(thread_outcome([earlier, mandated], False, "major", author="RuvinduH")["mandated"])
+        # the partner's later other outcome decides as theirs
+        got = thread_outcome([mandated, reply("Fixed in abc")], False, "major", author="RuvinduH")
+        self.assertEqual((got["outcome"], got["mandated"]), ("fixed", False))
         # a mandated re-grade settling an agent's fix on its own work is apart too
         fix = reply("Fixed in abc (minor, downgraded).\n\n<!-- agent -->")
         settle = reply("Re-graded minor.\n\nDecision: the agent's recommendation, taken under "
@@ -343,6 +351,18 @@ class ThreadOutcomeTest(unittest.TestCase):
         # a plain agent's fix with no re-grade needs no one's word: not apart
         self.assertFalse(thread_outcome([reply("Fixed in abc.\n\n<!-- agent -->")], False, "major",
                                         author="RuvinduH")["mandated"])
+
+    def test_the_record_passes_the_prs_author(self):
+        mandated = ("Not an issue (minor, downgraded): unreachable.\n\nDecision: the agent's recommendation, "
+                    "taken under @RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")
+        data = {"reviews": {"nodes": [review("r1", "2026-10-20T00:00:00Z", "c1", login="akenon-studio-ai-review")]},
+                "reviewThreads": {"nodes": [thread("r1", "**Major** · high confidence", "x = y", [mandated])]},
+                "body": "", "author": {"__typename": "User", "login": "RuvinduH"}}
+        data["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]["author"]["login"] = "akenon-studio-ai-review"
+        rec = pr_record("platform", 9, "u", data, lambda *a: "")
+        self.assertTrue(rec["threads"][0]["mandated"])
+        data["author"] = {"__typename": "Bot", "login": "akenon-studio-peras"}
+        self.assertFalse(pr_record("platform", 9, "u", data, lambda *a: "")["threads"][0]["mandated"])
 
     def test_mandated_findings_are_reported_apart(self):
         mandated = {"round": 1, "severity": "major", "outcome": "not an issue",
