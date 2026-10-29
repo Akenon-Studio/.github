@@ -353,6 +353,11 @@ class ThreadOutcomeTest(unittest.TestCase):
         # a plain agent's fix with no re-grade needs no one's word: not apart
         self.assertFalse(thread_outcome([reply("Fixed in abc.\n\n<!-- agent -->")], False, "major",
                                         author="RuvinduH")["mandated"])
+        # a mandated re-grade that states no outcome settled nothing: no outcome, not apart
+        got = thread_outcome([reply("Re-graded minor.\n\nDecision: the agent's recommendation, taken under "
+                                    "@RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")], False, "major",
+                             author="RuvinduH")
+        self.assertEqual((got["outcome"], got["mandated"]), (None, False))
 
     def test_the_record_passes_the_prs_author(self):
         mandated = ("Not an issue (minor, downgraded): unreachable.\n\nDecision: the agent's recommendation, "
