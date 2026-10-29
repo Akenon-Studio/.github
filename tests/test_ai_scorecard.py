@@ -339,9 +339,11 @@ class ThreadOutcomeTest(unittest.TestCase):
                                        author="RuvinduH")["mandated"])
         earlier = reply("Moved to #5 (minor, downgraded)")
         self.assertTrue(thread_outcome([earlier, mandated], False, "major", author="RuvinduH")["mandated"])
-        # the partner's later other outcome decides as theirs
+        # the partner's later other outcome decides as theirs, but the session's re-grade still needs theirs
         got = thread_outcome([mandated, reply("Fixed in abc")], False, "major", author="RuvinduH")
-        self.assertEqual((got["outcome"], got["mandated"]), ("fixed", False))
+        self.assertEqual((got["outcome"], got["regraded"], got["mandated"]), ("fixed", "minor", True))
+        got = thread_outcome([mandated, reply("Fixed in abc (minor, downgraded)")], False, "major", author="RuvinduH")
+        self.assertEqual((got["outcome"], got["regraded"], got["mandated"]), ("fixed", "minor", False))
         # a mandated re-grade settling an agent's fix on its own work is apart too
         fix = reply("Fixed in abc (minor, downgraded).\n\n<!-- agent -->")
         settle = reply("Re-graded minor.\n\nDecision: the agent's recommendation, taken under "

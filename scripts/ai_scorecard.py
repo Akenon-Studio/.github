@@ -41,7 +41,7 @@ What it reports (design 6.4):
   A marked reply whose `Decision:` line names its own login's mandate (design 7.12, MANDATE) is that
   partner's; on a PR that login opened, the session's own work, its outcome is mandated: listed and
   counted apart, not in the shares, until a later, unmarked reply of the partner's own states the same
-  outcome or severity, so the reviewed author never grades its own reviewer (.github#240). CI's threads
+  outcome and severity (whichever the session gave), so the reviewed author never grades its own reviewer (.github#240). CI's threads
   only: a local row doesn't say who settled it yet (peras#544).
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
@@ -305,7 +305,8 @@ def thread_outcome(replies, peras_pr, claimed, author=None):
     a finding Peras fixed is ungraded until a person's reply gives its severity after re-grading.
     A marked reply given under its login's mandate (7.12) is that partner's; on a PR that login
     opened (`author`, the session's own work) it is mandated: counted apart until a later, unmarked
-    reply of the partner's own states the same outcome, or the same severity after re-grading."""
+    reply of the partner's own states the same outcome, and the same severity after re-grading when
+    the session gave that too (or the outcome the session's re-grade came with, which agrees to it)."""
     def person(c):
         return not is_agent(c) or mandate_of(c) is not None
 
@@ -314,13 +315,22 @@ def thread_outcome(replies, peras_pr, claimed, author=None):
     person_grade = graders[0][1] if graders else None
     stated = [(c, o) for c in replies for o in [outcome([c["body"]])] if o]
 
-    def result(name, graded, disputed, ungraded, by=()):
-        # by: the replies standing for a person whose word made the outcome count
+    def confirmed(by, says):
+        # whether no reply in `by` is the session's own under its mandate, or a later, unmarked reply
+        # of the partner's own says the same
         mine = [i for i, x in enumerate(replies) if any(x is c for c in by) and own(x)]
-        apart = bool(mine) and not any(
-            not is_agent(x) and bot_login((x.get("author") or {}).get("login")) == bot_login(author)
-            and (outcome([x["body"]]) == name or (graded and regraded(x["body"]) == graded))
+        return not mine or any(
+            not is_agent(x) and bot_login((x.get("author") or {}).get("login")) == bot_login(author) and says(x)
             for x in replies[mine[-1] + 1:])
+
+    def result(name, graded, disputed, ungraded, by=(), grader=()):
+        # by: the replies standing for a person whose word made the outcome count; grader: the one
+        # whose severity after re-grading counts. Each of them the session's own needs confirming.
+        # stating the outcome the grading reply stated, with no severity of its own, agrees to its re-grade
+        same = outcome([grader[0]["body"]]) if grader else None
+        apart = not (confirmed(by, lambda x: outcome([x["body"]]) == name)
+                     and confirmed(grader if graded == person_grade else (), lambda x: regraded(x["body"]) == graded
+                                   or (same and outcome([x["body"]]) == same and not regraded(x["body"]))))
         return {"outcome": name, "regraded": graded, "disputed": disputed, "ungraded": ungraded,
                 "mandated": apart}
 
@@ -335,15 +345,15 @@ def thread_outcome(replies, peras_pr, claimed, author=None):
         agreed = regraded(before[-1][0]["body"]) if before and before[-1][1] == name else None
         graded = person_grade or agreed
         return result(name, graded, False, bool(peras_fixed and name == "fixed" and not person_grade),
-                      [c, *grader])
+                      [c], grader)
     agent_grade = regraded(c["body"])
     if name != "fixed":
         settlers = [x for x, o in stated if o == name and person(x)]
-        return result(name, person_grade or agent_grade, not settlers, False, settlers[-1:] + grader)
+        return result(name, person_grade or agent_grade, not settlers, False, settlers[-1:], grader)
     if peras_fixed and bot_login((c.get("author") or {}).get("login")) == PERAS:
-        return result("fixed", person_grade, False, person_grade is None, grader)
+        return result("fixed", person_grade, False, person_grade is None, (), grader)
     return result("fixed", person_grade or agent_grade,
-                  person_grade is None and agent_grade not in (None, claimed), False, grader)
+                  person_grade is None and agent_grade not in (None, claimed), False, (), grader)
 
 
 def cells(row):
