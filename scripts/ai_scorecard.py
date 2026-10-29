@@ -38,6 +38,12 @@ What it reports (design 6.4):
   outcome decides. Disputed and outcome-less findings aren't counted in the shares, and since the
   issue is public (design 6.2) they are only counted, never named: they are still open. On a Peras
   PR, findings Peras fixed with no person's re-grade (ungraded, design 6.4) are listed, not counted.
+  A marked reply whose `Decision:` line names its own login's mandate (design 7.12, MANDATE) is that
+  partner's; on a PR that login opened, the session's own work, its outcome is mandated: listed and
+  counted apart, not in the shares, until a later, unmarked reply of the partner's own states the same
+  outcome and severity (whichever the session gave; restating the outcome the session's re-grade came
+  with agrees to that re-grade), so the reviewed author never grades its own reviewer (.github#240). CI's threads
+  only: a local row doesn't say who settled it yet (peras#544).
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
   the fix's parent commit, with that review's findings and outcomes in the files concerned. A fix
@@ -93,6 +99,8 @@ STATED = re.compile(r"[*_ ]*(?:fixed|not an issue|moved to)\b[^(\n]*\(\s*\**\s*(
                     r"\s*(?:,\s*(?:kept|downgraded|raised)\s*)?\**\s*\)", re.I)
 LINK_TARGET = re.compile(r"\]\([^)\n]*\)")
 CODE = re.compile(r"`[^`\n]*`")
+# A mandated lead session's `Decision:` line (design 7.12): "taken under @RuvinduH's mandate over Phase 2"
+MANDATE = re.compile(r"^[*_ ]*Decision:.*?@([A-Za-z0-9-]+)\W{0,2}s mandate\b", re.I | re.M)
 AGENT = "<!-- agent -->"  # what an agent posts under its person's login carries (design 6.4)
 PERAS = "akenon-studio-peras"  # the Peras app (rulesets/bots.json); its PRs and replies are an agent's
 PERAS_READER = "akenon-studio-peras-reader"  # Peras's second app (design 7.6): its replies are an agent's too
@@ -276,38 +284,77 @@ def regraded(text):
     return found.group(1).lower() if found else None
 
 
-def thread_outcome(replies, peras_pr, claimed):
+def mandate_of(comment):
+    """The login whose mandate a marked reply says it was given under (design 7.12): its `Decision:`
+    line names `@<login>`'s mandate, and it is that login's own reply, since a mandate covers only that
+    partner's own gates; else None. Peras's apps hold no mandate."""
+    login = bot_login((comment.get("author") or {}).get("login")) or ""
+    body = comment.get("body") or ""
+    if AGENT not in body or login in (PERAS, PERAS_READER) or not login:
+        return None
+    found = MANDATE.search(own_words(body))
+    return login if found and found.group(1).lower() == login.lower() else None
+
+
+def thread_outcome(replies, peras_pr, claimed, author=None):
     """A CI thread's counted outcome from the org's replies (design 6.4): {outcome, regraded,
-    disputed, ungraded}. The latest reply that states an outcome decides, so a change of mind
-    counts. A person's is their own call, with the severity a person's reply gives (or, stating the
-    outcome an agent stated before, which agrees to its re-grade, the agent's). An agent's Fixed
+    disputed, ungraded, mandated}. The latest reply that states an outcome decides, so a change of
+    mind counts. A person's is their own call, with the severity a person's reply gives (or, stating
+    the outcome an agent stated before, which agrees to its re-grade, the agent's). An agent's Fixed
     counts (the next round checks it), but its own re-grade is a dispute until a person's reply
     gives one; an agent's other outcome is a dispute unless a person stated the same. On a Peras PR,
-    a finding Peras fixed is ungraded until a person's reply gives its severity after re-grading."""
-    person_grade = next((g for g in (regraded(c["body"]) for c in reversed(replies) if not is_agent(c)) if g),
-                        None)
+    a finding Peras fixed is ungraded until a person's reply gives its severity after re-grading.
+    A marked reply given under its login's mandate (7.12) is that partner's; on a PR that login
+    opened (`author`, the session's own work) it is mandated: counted apart until a later, unmarked
+    reply of the partner's own states the same outcome, and the same severity after re-grading when
+    the session gave that too (or the outcome the session's re-grade came with, which agrees to it)."""
+    def person(c):
+        return not is_agent(c) or mandate_of(c) is not None
+
+    own = lambda c: bool(author) and (mandate_of(c) or "").lower() == bot_login(author).lower()
+    graders = [(c, g) for c in reversed(replies) if person(c) for g in [regraded(c["body"])] if g]
+    person_grade = graders[0][1] if graders else None
     stated = [(c, o) for c in replies for o in [outcome([c["body"]])] if o]
+
+    def confirmed(by, says):
+        # whether no reply in `by` is the session's own under its mandate, or a later, unmarked reply
+        # of the partner's own says the same
+        mine = [i for i, x in enumerate(replies) if any(x is c for c in by) and own(x)]
+        return not mine or any(
+            not is_agent(x) and bot_login((x.get("author") or {}).get("login")) == bot_login(author) and says(x)
+            for x in replies[mine[-1] + 1:])
+
+    def result(name, graded, disputed, ungraded, by=(), grader=()):
+        # by: the replies standing for a person whose word made the outcome count; grader: the one
+        # whose severity after re-grading counts. Each of them the session's own needs confirming.
+        # stating the outcome the grading reply stated, with no severity of its own, agrees to its re-grade
+        same = outcome([grader[0]["body"]]) if grader else None
+        apart = not (confirmed(by, lambda x: outcome([x["body"]]) == name)
+                     and confirmed(grader if graded == person_grade else (), lambda x: regraded(x["body"]) == graded
+                                   or (same and outcome([x["body"]]) == same and not regraded(x["body"]))))
+        return {"outcome": name, "regraded": graded, "disputed": disputed, "ungraded": ungraded,
+                "mandated": apart}
+
+    grader = [graders[0][0]] if graders else []
     if not stated:
-        return {"outcome": None, "regraded": person_grade, "disputed": False, "ungraded": False}
+        return result(None, person_grade, False, False)
     c, name = stated[-1]
     peras_fixed = peras_pr and any(o == "fixed" and bot_login((x.get("author") or {}).get("login")) == PERAS
                                    for x, o in stated)
-    if not is_agent(c):
-        before = [(x, o) for x, o in stated[:-1] if is_agent(x)]
+    if person(c):
+        before = [(x, o) for x, o in stated[:-1] if is_agent(x) and not person(x)]
         agreed = regraded(before[-1][0]["body"]) if before and before[-1][1] == name else None
         graded = person_grade or agreed
-        return {"outcome": name, "regraded": graded, "disputed": False,
-                "ungraded": bool(peras_fixed and name == "fixed" and not person_grade)}
+        return result(name, graded, False, bool(peras_fixed and name == "fixed" and not person_grade),
+                      [c], grader)
     agent_grade = regraded(c["body"])
     if name != "fixed":
-        settled = any(o == name for x, o in stated if not is_agent(x))
-        return {"outcome": name, "regraded": person_grade or agent_grade, "disputed": not settled,
-                "ungraded": False}
+        settlers = [x for x, o in stated if o == name and person(x)]
+        return result(name, person_grade or agent_grade, not settlers, False, settlers[-1:], grader)
     if peras_fixed and bot_login((c.get("author") or {}).get("login")) == PERAS:
-        return {"outcome": "fixed", "regraded": person_grade, "disputed": False,
-                "ungraded": person_grade is None}
-    return {"outcome": "fixed", "regraded": person_grade or agent_grade, "ungraded": False,
-            "disputed": person_grade is None and agent_grade not in (None, claimed)}
+        return result("fixed", person_grade, False, person_grade is None, (), grader)
+    return result("fixed", person_grade or agent_grade,
+                  person_grade is None and agent_grade not in (None, claimed), False, (), grader)
 
 
 def cells(row):
@@ -366,7 +413,8 @@ def pr_record(repo, number, url, data, read=file_at):
                       and (r.get("body") or "").startswith("**AI review (advisory)")),
                      key=lambda r: r["submittedAt"])
     ours = readable(data)
-    peras_pr = bot_login((data.get("author") or {}).get("login")) == PERAS
+    author = (data.get("author") or {}).get("login")
+    peras_pr = bot_login(author) == PERAS
     local = local_findings(data.get("body"), peras_pr) if ours else []
     if not reviews and not (ours and LOCAL_START in (data.get("body") or "")):
         return None
@@ -399,7 +447,7 @@ def pr_record(repo, number, url, data, read=file_at):
         replies = [c for c in comments[1:]
                    if (c.get("author") or {}).get("login") not in REVIEWER
                    and acts_for(c.get("author"), private=False)]
-        threads.append(dict(thread_outcome(replies, peras_pr, level), url=first["url"], severity=level,
+        threads.append(dict(thread_outcome(replies, peras_pr, level, author), url=first["url"], severity=level,
                             round=round_no, late=late, resolved=t["isResolved"], path=t.get("path")))
     return {"repo": repo, "number": number, "url": url, "rounds": len(rounds), "ci": bool(reviews),
             "cost": sum(costs) if costs and None not in costs else None, "threads": threads,
@@ -636,16 +684,18 @@ def grade(f):
 
 def shares(prs):
     """{(review, round): counts}: findings; the counted ones' severity after re-grading and outcome;
-    and the disputed, ungraded and outcome-less ones, which aren't counted (design 6.4)."""
+    and the disputed, mandated, ungraded and outcome-less ones, which aren't counted (design 6.4)."""
     table = {}
     for f in findings_of(prs):
         row = table.setdefault((f["kind"], f["round"]), dict.fromkeys(
-            ("findings", "counted", *GRADES, *SHARE_OUTCOMES, "disputed", "no outcome", "ungraded"), 0))
+            ("findings", "counted", *GRADES, *SHARE_OUTCOMES, "disputed", "mandated", "no outcome", "ungraded"), 0))
         row["findings"] += 1
         if f.get("ungraded"):
             row["ungraded"] += 1
         elif f.get("disputed"):
             row["disputed"] += 1
+        elif f.get("mandated"):
+            row["mandated"] += 1
         elif not f.get("outcome"):
             row["no outcome"] += 1
         else:
@@ -670,7 +720,7 @@ def score(prs, escaped=()):
         "late": [t for t in threads if t["late"]],
         "serious": len(serious),
         "false_alarms": [t for t in serious if t["outcome"] == "not an issue"
-                         and not t.get("disputed") and not t.get("ungraded")],
+                         and not t.get("disputed") and not t.get("ungraded") and not t.get("mandated")],
         "unreadable": [t for t in threads if t["resolved"] and not t["outcome"]],
         "rounds_mean": sum(rounds) / len(rounds) if rounds else 0,
         "rounds_max": max(rounds, default=0),
@@ -686,6 +736,7 @@ def score(prs, escaped=()):
         "shares": shares(prs),
         "disputed": [f for f in findings if f.get("disputed") and not f.get("ungraded")],
         "ungraded": [f for f in findings if f.get("ungraded")],
+        "mandated": [f for f in findings if f.get("mandated") and not f.get("disputed") and not f.get("ungraded")],
         "escapes": list(escaped),
         "fixes": len({e["fix"] for e in escaped}),
     }
@@ -697,10 +748,10 @@ def share(n, of):
 
 def shares_table(table):
     head = ("| Review | Round | Findings | Counted | Kept | Downgraded | Raised | Unstated | Fixed | Issue | Future "
-            "| Moved | Not an issue | Disputed | No outcome | Ungraded |\n|" + "---|" * 16)
+            "| Moved | Not an issue | Disputed | Mandated | No outcome | Ungraded |\n|" + "---|" * 17)
     rows = [f"| {kind} | {n} | {r['findings']} | {r['counted']} | "
             + " | ".join(share(r[k], r["counted"]) for k in (*GRADES, *SHARE_OUTCOMES))
-            + f" | {r['disputed']} | {r['no outcome']} | {r['ungraded']} |" for (kind, n), r in table.items()]
+            + f" | {r['disputed']} | {r['mandated']} | {r['no outcome']} | {r['ungraded']} |" for (kind, n), r in table.items()]
     return "\n".join([head, *rows]) if rows else "No critical or major findings."
 
 
@@ -756,7 +807,7 @@ The AI review scorecard for {month} (design 6.4), from {s['prs']} merged PR(s) a
 Each outcome's share by round, of the critical and major findings counted: those with an outcome,
 an agent's re-grade only once settled. The severity after re-grading (kept, downgraded, raised, or
 unstated: a CI reply that names none) and the outcome are counted apart. Local review's outcomes come from the PR's local-review section, CI's
-from the thread replies; disputed, ungraded and outcome-less findings aren't counted in the shares.
+from the thread replies; disputed, mandated, ungraded and outcome-less findings aren't counted in the shares.
 This issue is public (design 6.2), so findings still open (disputed, or with no outcome) are only
 counted here; each PR's threads and local-review section name them.
 
@@ -777,6 +828,10 @@ counted only, since each is still open (this issue is public, design 6.2).
 
 Ungraded (Peras fixed them; no person's re-grade yet):
 {links(s['ungraded'], lambda f: f"{f['pr']}, {f['kind']} round {f['round']}, {f['severity']}")}
+
+Mandated (a partner's lead session settled them under its mandate, on its own work, design 7.12;
+counted once the partner's own reply confirms them):
+{links(s['mandated'], lambda f: f"{f['pr']}, {f['kind']} round {f['round']}, {f['severity']}")}
 
 Escapes:
 {escape_lines(s['escapes'])}

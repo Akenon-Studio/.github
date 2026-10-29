@@ -310,6 +310,81 @@ class ThreadOutcomeTest(unittest.TestCase):
         self.assertTrue(thread_outcome([peras, reply("Fixed, thanks")], True, "major")["ungraded"])
         self.assertFalse(thread_outcome([peras, reply("Fixed, re-graded major")], True, "major")["ungraded"])
 
+    def test_a_mandated_reply_on_others_work_is_the_partners(self):
+        # design 6.4, 7.12: a marked reply whose Decision line names its login's mandate is that
+        # partner's outcome; on a PR they didn't open, it counts as theirs
+        mandated = reply("Not an issue (minor, downgraded): unreachable.\n\nDecision: the agent's "
+                         "recommendation, taken under @RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")
+        got = thread_outcome([mandated], True, "major", author="akenon-studio-peras")
+        self.assertEqual((got["outcome"], got["regraded"], got["disputed"], got["mandated"]),
+                         ("not an issue", "minor", False, False))
+        # another login's mandate, or no Decision line, is an agent's dispute as before
+        other = reply(mandated["body"], "someone-else")
+        self.assertTrue(thread_outcome([other], True, "major", author="akenon-studio-peras")["disputed"])
+        bare = reply("Not an issue: unreachable.\n\n<!-- agent -->")
+        self.assertTrue(thread_outcome([bare], True, "major", author="akenon-studio-peras")["disputed"])
+
+    def test_a_mandated_reply_on_its_own_work_is_counted_apart(self):
+        # design 6.4: the session would grade its own reviewer, so it is left out of the shares
+        # until a partner's own reply confirms it
+        mandated = reply("Not an issue (minor, downgraded): unreachable.\n\nDecision: the agent's "
+                         "recommendation, taken under @RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")
+        got = thread_outcome([mandated], False, "major", author="RuvinduH")
+        self.assertEqual((got["outcome"], got["disputed"], got["mandated"]), ("not an issue", False, True))
+        confirmed = thread_outcome([mandated, reply("Not an issue, agreed.")], False, "major", author="RuvinduH")
+        self.assertEqual((confirmed["outcome"], confirmed["regraded"], confirmed["mandated"]),
+                         ("not an issue", "minor", False))
+        # only a later reply of the partner's own confirms it: not another member's, nor an earlier one
+        self.assertTrue(thread_outcome([mandated, reply("Not an issue, agreed.", "someone-else")], False, "major",
+                                       author="RuvinduH")["mandated"])
+        earlier = reply("Moved to #5 (minor, downgraded)")
+        self.assertTrue(thread_outcome([earlier, mandated], False, "major", author="RuvinduH")["mandated"])
+        # the partner's later other outcome decides as theirs, but the session's re-grade still needs theirs
+        got = thread_outcome([mandated, reply("Fixed in abc")], False, "major", author="RuvinduH")
+        self.assertEqual((got["outcome"], got["regraded"], got["mandated"]), ("fixed", "minor", True))
+        got = thread_outcome([mandated, reply("Fixed in abc (minor, downgraded)")], False, "major", author="RuvinduH")
+        self.assertEqual((got["outcome"], got["regraded"], got["mandated"]), ("fixed", "minor", False))
+        # a mandated re-grade settling an agent's fix on its own work is apart too
+        fix = reply("Fixed in abc (minor, downgraded).\n\n<!-- agent -->")
+        settle = reply("Re-graded minor.\n\nDecision: the agent's recommendation, taken under "
+                       "@RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")
+        got = thread_outcome([fix, settle], False, "major", author="RuvinduH")
+        self.assertEqual((got["outcome"], got["disputed"], got["mandated"]), ("fixed", False, True))
+        # a plain agent's fix with no re-grade needs no one's word: not apart
+        self.assertFalse(thread_outcome([reply("Fixed in abc.\n\n<!-- agent -->")], False, "major",
+                                        author="RuvinduH")["mandated"])
+        # a mandated re-grade that states no outcome settled nothing: no outcome, not apart
+        got = thread_outcome([reply("Re-graded minor.\n\nDecision: the agent's recommendation, taken under "
+                                    "@RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")], False, "major",
+                             author="RuvinduH")
+        self.assertEqual((got["outcome"], got["mandated"]), (None, False))
+
+    def test_the_record_passes_the_prs_author(self):
+        mandated = ("Not an issue (minor, downgraded): unreachable.\n\nDecision: the agent's recommendation, "
+                    "taken under @RuvinduH's mandate over Phase 2.\n\n<!-- agent -->")
+        data = {"reviews": {"nodes": [review("r1", "2026-10-20T00:00:00Z", "c1", login="akenon-studio-ai-review")]},
+                "reviewThreads": {"nodes": [thread("r1", "**Major** · high confidence", "x = y", [mandated])]},
+                "body": "", "author": {"__typename": "User", "login": "RuvinduH"}}
+        data["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]["author"]["login"] = "akenon-studio-ai-review"
+        rec = pr_record("platform", 9, "u", data, lambda *a: "")
+        self.assertTrue(rec["threads"][0]["mandated"])
+        data["author"] = {"__typename": "Bot", "login": "akenon-studio-peras"}
+        self.assertFalse(pr_record("platform", 9, "u", data, lambda *a: "")["threads"][0]["mandated"])
+
+    def test_mandated_findings_are_reported_apart(self):
+        mandated = {"round": 1, "severity": "major", "outcome": "not an issue",
+                    "regraded": "minor", "disputed": False, "ungraded": False, "mandated": True,
+                    "url": "u/m", "late": False, "resolved": True}
+        rec = {"repo": "platform", "number": 9, "url": "u9", "rounds": 1, "cost": None,
+               "threads": [mandated], "local": []}
+        s = score([rec])
+        row = s["shares"][("CI", 1)]
+        self.assertEqual((row["counted"], row["mandated"], row["not an issue"]), (0, 1, 0))
+        self.assertEqual(s["false_alarms"], [])
+        text = body("2026-10", s)
+        self.assertIn("| Mandated |", text)
+        self.assertIn("- [platform#9, CI round 1, major](u/m)", text.split("own work")[-1])
+
     def test_the_severity_the_reviewer_asks_for_in_brackets(self):
         # the reply ai_review.py asks for (.github#201): outcome, then the severity after re-grading
         self.assertEqual(regraded("**Fixed (major, kept)** in abc"), "major")
