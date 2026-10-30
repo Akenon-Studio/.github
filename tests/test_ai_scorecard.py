@@ -264,6 +264,15 @@ class LocalSectionTest(unittest.TestCase):
         self.assertIsNone(pr_record("platform", 9, "u", dict(data, editor={"login": "someone"})))
         self.assertIsNone(pr_record("platform", 9, "u", dict(data, author={"login": "someone"})))
 
+    def test_the_record_passes_the_prs_author_to_local_rows(self):
+        row = "| R1.4 | `b.py:5` | major | minor | not-an-issue (an agent's, settled under @RuvinduH's mandate) | x |\n"
+        data = {"reviews": {"nodes": []}, "reviewThreads": {"nodes": []},
+                "body": SECTION.replace("| R2.1 ", row + "| R2.1 "),
+                "author": {"__typename": "User", "login": "RuvinduH"}}
+        self.assertTrue(pr_record("platform", 9, "u", data)["local"][3]["mandated"])
+        data["author"] = {"__typename": "Bot", "login": "akenon-studio-peras"}
+        self.assertFalse(pr_record("platform", 9, "u", data)["local"][3]["mandated"])
+
 
 class ThreadOutcomeTest(unittest.TestCase):
     def test_a_persons_reply_is_their_call(self):
