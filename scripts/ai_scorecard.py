@@ -44,7 +44,7 @@ What it reports (design 6.4):
   outcome and severity (whichever the session gave; restating the outcome the session's re-grade came
   with agrees to that re-grade), so the reviewed author never grades its own reviewer (.github#240). A local row
   the session settled under its mandate reads "(an agent's, settled under @<login>'s mandate)" and is
-  counted apart too, until the partner's own answers agree and it reads "(an agent's, settled)"
+  counted apart the same way, on a PR that login opened, until the partner's own answers agree and it reads "(an agent's, settled)"
   (peras#544).
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
@@ -117,7 +117,7 @@ LOCAL_END = "<!-- local-review:end -->"
 LOCAL_ID = re.compile(r"R(\d+)\.\d+")
 # review-branch.py's mark on a row the session settled under its partner's mandate (design 7.12,
 # peras#544): "(an agent's, settled under @RuvinduH's mandate)"
-LOCAL_MANDATED = re.compile(r"\bsettled under @[A-Za-z0-9-]+'s mandate\b")
+LOCAL_MANDATED = re.compile(r"\bsettled under @([A-Za-z0-9-]+)'s mandate\b")
 LOCAL_RUNS = re.compile(r"(\d+) local run\(s\)")
 LOCAL_OUTCOMES = {"fixed": "fixed", "issue": "issue", "future": "future", "not-an-issue": "not an issue"}
 # Every outcome, in the report's order: local runs give issue or future, CI's replies "Moved to" either
@@ -374,13 +374,15 @@ def local_runs(description):
     return int(found.group(1)) if found else 0
 
 
-def local_findings(description, peras_pr=False):
+def local_findings(description, peras_pr=False, author=None):
     """The critical and major findings review-branch.py wrote into a PR's local-review section (design
     6.4): run, claimed severity, severity after re-grading, outcome, and whether an agent's re-grade
     is still a dispute (`(an agent's, not settled)`) or was settled under a mandate on the session's own
-    work (`(an agent's, settled under @<login>'s mandate)`, design 7.12), counted apart. A section with no end runs to the description's
+    work (`(an agent's, settled under @<login>'s mandate)`, design 7.12): counted apart only on a PR
+    that login opened (`author`), as a CI thread is; elsewhere it is that partner's outcome. A section with no end runs to the description's
     end. On a Peras PR, a finding fixed with no severity after re-grading is ungraded: the person who
     reviews it records that (design 6.4)."""
+    own = lambda m: bool(m and author) and m.group(1).lower() == bot_login(author).lower()
     found, rest = [], description or ""
     while LOCAL_START in rest:
         text, _, after = rest.partition(LOCAL_START)[2].partition(LOCAL_END)
@@ -399,7 +401,7 @@ def local_findings(description, peras_pr=False):
             found.append({"id": row[0], "round": int(ident.group(1)), "severity": claimed,
                           "regraded": again, "outcome": name,
                           "disputed": bool(name) and "not settled" in row[4],
-                          "mandated": bool(name) and LOCAL_MANDATED.search(row[4]) is not None,
+                          "mandated": bool(name) and own(LOCAL_MANDATED.search(row[4])),
                           "ungraded": peras_pr and name == "fixed" and not again,
                           "path": row[1].strip("`").rpartition(":")[0] or row[1].strip("`")})
     return found
@@ -422,7 +424,7 @@ def pr_record(repo, number, url, data, read=file_at):
     ours = readable(data)
     author = (data.get("author") or {}).get("login")
     peras_pr = bot_login(author) == PERAS
-    local = local_findings(data.get("body"), peras_pr) if ours else []
+    local = local_findings(data.get("body"), peras_pr, author) if ours else []
     if not reviews and not (ours and LOCAL_START in (data.get("body") or "")):
         return None
     rounds = [r for r in reviews if is_round(r["body"])]

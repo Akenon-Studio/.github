@@ -236,11 +236,15 @@ class LocalSectionTest(unittest.TestCase):
         # until the partner's own answers agree, when review-branch.py writes a plain "settled"
         row = ("| R1.4 | `b.py:5` | major | minor | not-an-issue (an agent's, settled under @RuvinduH's mandate) "
                "| guarded |\n")
-        found = local_findings(SECTION.replace("| R2.1 ", row + "| R2.1 "))
+        section = SECTION.replace("| R2.1 ", row + "| R2.1 ")
+        found = local_findings(section, author="ruvinduh")
         self.assertEqual([(f["id"], f["disputed"], f["mandated"]) for f in found],
                          [("R1.1", False, False), ("R1.2", False, False), ("R1.3", True, False),
                           ("R1.4", False, True), ("R2.1", False, False)])
         self.assertEqual(found[3]["outcome"], "not an issue")
+        # on a PR another login opened, or Peras, it is that partner's outcome, counted (design 6.4)
+        for author in ("someone-else", "akenon-studio-peras", None):
+            self.assertFalse(local_findings(section, author=author)[3]["mandated"], author)
 
     def test_runs_and_peras_rows(self):
         self.assertEqual(local_runs(SECTION), 2)
