@@ -231,6 +231,17 @@ class LocalSectionTest(unittest.TestCase):
         self.assertEqual([f["disputed"] for f in found], [False, False, True, False])
         self.assertEqual(found[0]["path"], "scripts/a.py")
 
+    def test_a_row_settled_under_a_mandate_is_counted_apart(self):
+        # the session's own work, settled under its partner's mandate (design 7.12, peras#544): apart
+        # until the partner's own answers agree, when review-branch.py writes a plain "settled"
+        row = ("| R1.4 | `b.py:5` | major | minor | not-an-issue (an agent's, settled under @RuvinduH's mandate) "
+               "| guarded |\n")
+        found = local_findings(SECTION.replace("| R2.1 ", row + "| R2.1 "))
+        self.assertEqual([(f["id"], f["disputed"], f["mandated"]) for f in found],
+                         [("R1.1", False, False), ("R1.2", False, False), ("R1.3", True, False),
+                          ("R1.4", False, True), ("R2.1", False, False)])
+        self.assertEqual(found[3]["outcome"], "not an issue")
+
     def test_runs_and_peras_rows(self):
         self.assertEqual(local_runs(SECTION), 2)
         self.assertEqual(local_runs("no section"), 0)

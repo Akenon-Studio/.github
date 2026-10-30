@@ -42,8 +42,10 @@ What it reports (design 6.4):
   partner's; on a PR that login opened, the session's own work, its outcome is mandated: listed and
   counted apart, not in the shares, until a later, unmarked reply of the partner's own states the same
   outcome and severity (whichever the session gave; restating the outcome the session's re-grade came
-  with agrees to that re-grade), so the reviewed author never grades its own reviewer (.github#240). CI's threads
-  only: a local row doesn't say who settled it yet (peras#544).
+  with agrees to that re-grade), so the reviewed author never grades its own reviewer (.github#240). A local row
+  the session settled under its mandate reads "(an agent's, settled under @<login>'s mandate)" and is
+  counted apart too, until the partner's own answers agree and it reads "(an agent's, settled)"
+  (peras#544).
 - escapes: a `fix` PR (not a no-issue bot's, such as Renovate's `fix(deps)`) whose merge changes (removes or rewrites) lines that a reviewed PR (an AI
   review or a local-review section) last changed in the ESCAPE_DAYS before it merged, by blame at
   the fix's parent commit, with that review's findings and outcomes in the files concerned. A fix
@@ -113,6 +115,9 @@ LATER_REF = re.compile(rf"{re.escape(ORG)}/([A-Za-z0-9._-]+)#(\d+)", re.I)
 LOCAL_START = "<!-- local-review:start -->"
 LOCAL_END = "<!-- local-review:end -->"
 LOCAL_ID = re.compile(r"R(\d+)\.\d+")
+# review-branch.py's mark on a row the session settled under its partner's mandate (design 7.12,
+# peras#544): "(an agent's, settled under @RuvinduH's mandate)"
+LOCAL_MANDATED = re.compile(r"\bsettled under @[A-Za-z0-9-]+'s mandate\b")
 LOCAL_RUNS = re.compile(r"(\d+) local run\(s\)")
 LOCAL_OUTCOMES = {"fixed": "fixed", "issue": "issue", "future": "future", "not-an-issue": "not an issue"}
 # Every outcome, in the report's order: local runs give issue or future, CI's replies "Moved to" either
@@ -372,7 +377,8 @@ def local_runs(description):
 def local_findings(description, peras_pr=False):
     """The critical and major findings review-branch.py wrote into a PR's local-review section (design
     6.4): run, claimed severity, severity after re-grading, outcome, and whether an agent's re-grade
-    is still a dispute (`(an agent's, not settled)`). A section with no end runs to the description's
+    is still a dispute (`(an agent's, not settled)`) or was settled under a mandate on the session's own
+    work (`(an agent's, settled under @<login>'s mandate)`, design 7.12), counted apart. A section with no end runs to the description's
     end. On a Peras PR, a finding fixed with no severity after re-grading is ungraded: the person who
     reviews it records that (design 6.4)."""
     found, rest = [], description or ""
@@ -393,6 +399,7 @@ def local_findings(description, peras_pr=False):
             found.append({"id": row[0], "round": int(ident.group(1)), "severity": claimed,
                           "regraded": again, "outcome": name,
                           "disputed": bool(name) and "not settled" in row[4],
+                          "mandated": bool(name) and LOCAL_MANDATED.search(row[4]) is not None,
                           "ungraded": peras_pr and name == "fixed" and not again,
                           "path": row[1].strip("`").rpartition(":")[0] or row[1].strip("`")})
     return found
