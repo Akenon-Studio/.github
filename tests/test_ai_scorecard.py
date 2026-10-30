@@ -231,6 +231,21 @@ class LocalSectionTest(unittest.TestCase):
         self.assertEqual([f["disputed"] for f in found], [False, False, True, False])
         self.assertEqual(found[0]["path"], "scripts/a.py")
 
+    def test_a_row_settled_under_a_mandate_is_counted_apart(self):
+        # the session's own work, settled under its partner's mandate (design 7.12, peras#544): apart
+        # until the partner's own answers agree, when review-branch.py writes a plain "settled"
+        row = ("| R1.4 | `b.py:5` | major | minor | not-an-issue (an agent's, settled under @RuvinduH's mandate) "
+               "| guarded |\n")
+        section = SECTION.replace("| R2.1 ", row + "| R2.1 ")
+        found = local_findings(section, author="ruvinduh")
+        self.assertEqual([(f["id"], f["disputed"], f["mandated"]) for f in found],
+                         [("R1.1", False, False), ("R1.2", False, False), ("R1.3", True, False),
+                          ("R1.4", False, True), ("R2.1", False, False)])
+        self.assertEqual(found[3]["outcome"], "not an issue")
+        # on a PR another login opened, or Peras, it is that partner's outcome, counted (design 6.4)
+        for author in ("someone-else", "akenon-studio-peras", None):
+            self.assertFalse(local_findings(section, author=author)[3]["mandated"], author)
+
     def test_runs_and_peras_rows(self):
         self.assertEqual(local_runs(SECTION), 2)
         self.assertEqual(local_runs("no section"), 0)
@@ -248,6 +263,15 @@ class LocalSectionTest(unittest.TestCase):
         self.assertEqual(len(pr_record("platform", 9, "u", data)["local"]), 4)
         self.assertIsNone(pr_record("platform", 9, "u", dict(data, editor={"login": "someone"})))
         self.assertIsNone(pr_record("platform", 9, "u", dict(data, author={"login": "someone"})))
+
+    def test_the_record_passes_the_prs_author_to_local_rows(self):
+        row = "| R1.4 | `b.py:5` | major | minor | not-an-issue (an agent's, settled under @RuvinduH's mandate) | x |\n"
+        data = {"reviews": {"nodes": []}, "reviewThreads": {"nodes": []},
+                "body": SECTION.replace("| R2.1 ", row + "| R2.1 "),
+                "author": {"__typename": "User", "login": "RuvinduH"}}
+        self.assertTrue(pr_record("platform", 9, "u", data)["local"][3]["mandated"])
+        data["author"] = {"__typename": "Bot", "login": "akenon-studio-peras"}
+        self.assertFalse(pr_record("platform", 9, "u", data)["local"][3]["mandated"])
 
 
 class ThreadOutcomeTest(unittest.TestCase):
