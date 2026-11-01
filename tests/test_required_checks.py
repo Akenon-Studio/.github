@@ -61,6 +61,13 @@ class RequiredChecksTest(unittest.TestCase):
     def test_every_required_check_is_marked_with_what_it_reads(self):
         self.assertEqual(reads_problems(CHECKS), [])
 
+    def test_peras_requires_its_looks_bump_check_read_as_pr(self):
+        # .github#246, peras#608: a render host or runtime bump merges only once its before/after
+        # shows its head. peras's ci.yml reports the job as plain `looks-bump` on every PR; it reads
+        # the PR's comments, so a failure pauses Peras rather than patching code (design 7.13 Stage 10)
+        self.assertIn("looks-bump", CHECKS["peras"])
+        self.assertEqual(CHECKS["reads"]["looks-bump"], "pr")
+
     def test_every_repo_carries_the_callers_of_checks_required_everywhere(self):
         for name in CHECKS["all"]:
             caller = f".github/workflows/{name.split(' / ')[0]}-caller.yml"
