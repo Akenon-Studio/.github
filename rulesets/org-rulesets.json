@@ -1,5 +1,5 @@
 {
-  "_comment": "Org rulesets, set by apply-rules.py and checked by verify-settings.py (design 6.4). A 'workflows' rule names its workflow by 'repository' (this org's repo) instead of GitHub's numeric id; rules.desired_org_rulesets() fills the id in, and applies each ruleset to every repo in repos.txt. Other org rulesets are left alone and listed as a note.",
+  "_comment": "Org rulesets, set by apply-rules.py and checked by verify-settings.py (design 6.4). A 'workflows' rule names its workflow by 'repository' (this org's repo) instead of GitHub's numeric id; rules.desired_org_rulesets() fills the id in, and applies each ruleset to the repos its 'repositories' lists (each must be in repos.txt), or else to every repo in repos.txt. Other org rulesets are left alone and listed as a note.",
   "rulesets": [
     {
       "name": "Action pins",
@@ -16,6 +16,28 @@
             "do_not_enforce_on_create": true,
             "workflows": [
               {"repository": ".github", "path": ".github/workflows/action-pins.yml", "ref": "refs/heads/main"}
+            ]
+          }
+        }
+      ]
+        },
+    {
+      "name": "Release decision",
+      "_comment": "The release-decision check (design 6.3, .github#248): a Release PR merges only on a partner's comment newer than its head. The repos that cut releases with release-please; each also calls release-decision-rerun.yml from main, so a comment re-runs the check.",
+      "repositories": ["peras", "platform"],
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
+      },
+      "rules": [
+        {
+          "type": "workflows",
+          "parameters": {
+            "do_not_enforce_on_create": true,
+            "workflows": [
+              {"repository": ".github", "path": ".github/workflows/release-decision.yml", "ref": "refs/heads/main"}
             ]
           }
         }

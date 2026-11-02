@@ -149,11 +149,17 @@ def desired_rulesets(repo):
 
 
 def desired_org_rulesets():
-    """The org rulesets in org-rulesets.json, as GitHub takes them: each applies to every managed
-    repo, and a workflow's 'repository' becomes its numeric 'repository_id'."""
+    """The org rulesets in org-rulesets.json, as GitHub takes them: each applies to the managed repos
+    its 'repositories' lists, or to every managed repo, and a workflow's 'repository' becomes its
+    numeric 'repository_id'."""
     out = []
     for ruleset in json.loads(json.dumps(load("org-rulesets.json")["rulesets"])):
-        ruleset["conditions"]["repository_name"] = {"include": managed_repos(), "exclude": []}
+        ruleset.pop("_comment", None)
+        repos = ruleset.pop("repositories", None) or managed_repos()
+        unmanaged = sorted(set(repos) - set(managed_repos()))
+        if unmanaged:
+            raise SystemExit(f"org ruleset '{ruleset['name']}' names repos not in repos.txt: {unmanaged}")
+        ruleset["conditions"]["repository_name"] = {"include": repos, "exclude": []}
         for rule in ruleset["rules"]:
             for w in rule.get("parameters", {}).get("workflows", []):
                 w["repository_id"] = gh(f"repos/{ORG}/{w.pop('repository')}")["id"]
