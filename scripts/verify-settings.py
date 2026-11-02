@@ -111,6 +111,8 @@ def main():
         for ruleset in wanted:
             if "_unresolved" in ruleset:
                 print(f"note: can't read {ruleset['_unresolved']} for org ruleset '{ruleset['name']}'; not checked")
+            elif "_problem" in ruleset:
+                problems.append(f"org ruleset '{ruleset['name']}' {ruleset['_problem']}")
             elif ruleset["name"] not in have:
                 problems.append(f"org: ruleset '{ruleset['name']}' is missing")
             else:

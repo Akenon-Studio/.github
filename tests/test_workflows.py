@@ -429,6 +429,57 @@ class OrgRulesetsTest(unittest.TestCase):
         self.assertTrue(any("workflows" in d for d in diffs), diffs)
         self.assertEqual(rules.org_ruleset_differences(want, {**want, "id": 1, "_links": {}}), [])
 
+    def test_github_defaults_are_no_drift(self):
+        # a key GitHub fills in with its default (false, 0, empty) that the file doesn't set
+        rules = self.rules()
+        want = {"conditions": {"repository_name": {"include": ["y"], "exclude": []}},
+                "rules": [{"type": "pull_request", "parameters": {"allowed_merge_methods": ["merge"]}}]}
+        live = {"conditions": {"repository_name": {"include": ["y"], "exclude": [], "protected": False}},
+                "rules": [{"type": "pull_request", "parameters": {"allowed_merge_methods": ["merge"],
+                                                                  "require_code_owner_review": False,
+                                                                  "required_approving_review_count": 0}}]}
+        self.assertEqual(rules.org_ruleset_differences(want, live), [])
+
+    def test_a_missing_or_extra_rule_is_named_once_the_right_way_round(self):
+        rules = self.rules()
+        want = {"rules": [{"type": "deletion"}, {"type": "non_fast_forward"}]}
+        live = {"rules": [{"type": "deletion"}, {"type": "creation"}]}
+        self.assertEqual(rules.org_ruleset_differences(want, live),
+                         ["/rules[non_fast_forward]: expected an object, got None",
+                          "/rules: unexpected rule 'creation'"])
+
+    def test_the_daily_check_reports_an_unarchived_repo_and_goes_on(self):
+        rules = self.rules()
+        got = {r["name"]: r for r in rules.desired_org_rulesets(lookup=self.fake_gh(archived=False))}
+        self.assertIn("as archived, but it is not", got["Merge and PR Gates"]["_problem"])
+        self.assertNotIn("_problem", got["Action pins"])
+
+    def test_the_plan_changes_nothing_and_counts_what_it_would(self):
+        import contextlib, importlib.util, io
+        from unittest import mock
+        self.rules()
+        spec = importlib.util.spec_from_file_location(
+            "apply_rules", WORKFLOWS.parent.parent / "scripts" / "apply-rules.py")
+        apply_rules = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(apply_rules)
+        def gh(*args, body=None):
+            raise AssertionError(f"the plan called gh {args}")
+        same = {"name": "same", "rules": [{"type": "deletion"}]}
+        wanted = [same, {"name": "changed", "rules": [{"type": "deletion"}]}, {"name": "new", "rules": []}]
+        live = {"same": {**same, "id": 1}, "changed": {"name": "changed", "rules": []},
+                "extra": {"name": "extra", "rules": []}}
+        out = io.StringIO()
+        with mock.patch.object(apply_rules, "gh", gh), \
+                mock.patch.object(apply_rules, "org_rulesets", lambda: live), \
+                mock.patch.object(apply_rules, "desired_org_rulesets", lambda: wanted), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(apply_rules.plan_org_rulesets(), 2)
+        text = out.getvalue()
+        self.assertIn("'same' unchanged", text)
+        self.assertIn("'changed' would be updated:\n  /rules[deletion]", text)
+        self.assertIn("'new' would be created", text)
+        self.assertIn("'extra' is not in rulesets/org-rulesets.json; left alone", text)
+
     def test_a_repo_not_in_repos_txt_is_refused(self):
         from unittest import mock
         rules = self.rules()

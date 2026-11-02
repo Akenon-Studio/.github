@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Apply rulesets/ to GitHub: org settings and rulesets (rulesets/org-rulesets.json), issue types
-and teams (rulesets/teams.json), then each managed repo's merge settings, rulesets and labels.
+"""Apply rulesets/ to GitHub: the org's issue types, its teams (rulesets/teams.json) and its rulesets
+(rulesets/org-rulesets.json), then each managed repo's merge settings, rulesets and labels.
 
 Usage: scripts/apply-rules.py [repo ...]     (default: every repo in rulesets/repos.txt)
        scripts/apply-rules.py --plan-org-rulesets
@@ -151,8 +151,8 @@ def main():
         sys.exit(__doc__)
     repos = sys.argv[1:] or managed_repos()
     apply_org()
+    apply_teams()  # first: an org ruleset may name a team that is new in teams.json
     apply_org_rulesets()
-    apply_teams()
     for repo in repos:
         apply_repo(repo)
     print("Done. Now run scripts/verify-settings.py")

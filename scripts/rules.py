@@ -155,7 +155,9 @@ def desired_org_rulesets(lookup=None):
     repos.txt), or else to every managed repo; a workflow's 'repository' becomes its numeric
     'repository_id', and a reviewer's 'team' (a slug in teams.json) its team's numeric 'id'.
     `lookup` reads GitHub (default gh, which exits on a failed read; verify-settings.py passes
-    try_gh, and a ruleset with a name it can't read then carries '_unresolved', naming it)."""
+    try_gh, and a ruleset with a name it can't read then carries '_unresolved', naming it, and one
+    naming an archived repo that isn't carries '_problem', saying so, so the daily check goes on)."""
+    strict = lookup is None
     lookup = lookup or gh
 
     out = []
@@ -182,7 +184,10 @@ def desired_org_rulesets(lookup=None):
             for repo in archived:
                 live = read(f"repos/{ORG}/{repo}", f"repo {repo}")
                 if not live.get("archived"):
-                    raise SystemExit(f"org ruleset '{name}' names {repo} as archived, but it is not")
+                    problem = f"names {repo} as archived, but it is not"
+                    if strict:
+                        raise SystemExit(f"org ruleset '{name}' {problem}")
+                    ruleset.setdefault("_problem", problem)
                 ids.append(live["id"])
             ruleset["conditions"]["repository_id"] = {"repository_ids": ids}
         else:
@@ -220,8 +225,27 @@ def org_ruleset_differences(want, live):
     trimmed = {k: live.get(k) for k in want if not k.startswith("_")}
     diffs = differences(want, trimmed)
     seen = {d.split(": ", 1)[0] for d in diffs}
-    return diffs + [f"live has more: {d}" for d in differences(trimmed, want)
-                    if d.split(": ", 1)[0] not in seen]
+    # The reverse pass reads live without GitHub's defaults (false, 0, empty: a PUT without the key
+    # leaves them as they are, so they are no drift), and leaves a whole rule missing on either side
+    # to the forward pass, which names it the right way round, once.
+    reverse = [d for d in differences(without_defaults(trimmed), want)
+               if d.split(": ", 1)[0] not in seen and not WHOLE_RULE.match(d)]
+    return diffs + [f"live has more: {d}" for d in reverse]
+
+
+# A difference about a whole rule, not a key inside one: '/rules: unexpected rule ...' or
+# '/rules[type]: expected an object, got None'.
+WHOLE_RULE = re.compile(r"/rules(: unexpected rule |\[[^\]]*\]: expected an object, got None$)")
+
+
+def without_defaults(value):
+    """`value` less every object key whose value is a GitHub default: false, 0, null or empty."""
+    if isinstance(value, dict):
+        return {k: without_defaults(v) for k, v in value.items()
+                if v not in (False, 0, None, "", [], {})}
+    if isinstance(value, list):
+        return [without_defaults(v) for v in value]
+    return value
 
 
 def org_rulesets():
