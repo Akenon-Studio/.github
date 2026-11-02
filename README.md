@@ -49,5 +49,8 @@ the PR checks also run on `assigned` and `unassigned`). A repo Peras delivers to
 (`rulesets/peras-repos.json`) adds to its callers of the shared checks (`pr-title`, `security-scan`)
 pushes to `main` and `peras/**` and a `sha` dispatch, as `pr-title.yml` says, and gets Peras's
 control labels (`peras-repos` in `rulesets/labels.json`, design 7.12).
-`scripts/verify-settings.py` reports a copy whose triggers differ. The issue automation logs in as
+`scripts/verify-settings.py` reports a copy whose triggers differ. A repo the org ruleset "Release
+decision" names (`rulesets/org-rulesets.json`) also carries `release-decision-rerun-caller.yml`,
+whose call is in the header of `release-decision-rerun.yml`; without it a partner's comment on a
+Release PR re-runs nothing. The issue automation logs in as
 the org's GitHub App: org variable `AKENON_APP_ID`, org secret `AKENON_APP_PRIVATE_KEY`.

@@ -7,6 +7,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
@@ -126,12 +127,15 @@ class DecisionTest(unittest.TestCase):
 class EventsTest(unittest.TestCase):
     """main(): what each mode does with its event."""
 
-    def run_main(self, mode, event, the_pr, activity=(), runs=(), polls=None):
+    def run_main(self, mode, event, the_pr, activity=(), runs=(), polls=None, refused=0):
         posted, slept = [], []
         polls = iter(polls or [])
+        refusals = iter(range(refused))
 
         def gh(path, *args, **kw):
             if args == ("-X", "POST"):
+                if next(refusals, None) is not None:
+                    sys.exit(f"gh api {path} failed:\nThis workflow is already running (HTTP 403)")
                 posted.append(path)
                 return None
             if "/activity?" in path:
@@ -176,9 +180,22 @@ class EventsTest(unittest.TestCase):
     LABEL = {"pull_request": {"number": 9}, "label": {"name": "autorelease: pending"}}
 
     def run_of(self, id, name="release-decision", event="pull_request", status="completed",
-               path=".github/workflows/release-decision.yml", workflow=100):
+               path=".github/workflows/release-decision.yml", workflow=100, days_old=1):
+        created = (datetime.now(timezone.utc) - timedelta(days=days_old)).strftime("%Y-%m-%dT%H:%M:%SZ")
         return {"id": id, "name": name, "event": event, "status": status, "path": path,
-                "workflow_id": workflow, "html_url": f"https://github.com/akenon-studio/peras/actions/runs/{id}"}
+                "workflow_id": workflow, "created_at": created,
+                "html_url": f"https://github.com/akenon-studio/peras/actions/runs/{id}"}
+
+    def test_a_ruleset_run_in_another_repo_is_found_by_the_source_workflows_name_and_path(self):
+        # The shape GitHub gave "Action pins"' ruleset run 41441981880 in peras (2026-11-02), a repo
+        # with no action-pins.yml of its own: the source workflow's name and path, its own
+        # workflow_id, on the pull_request event.
+        run = {"id": 41441981880, "name": "release-decision", "path": ".github/workflows/release-decision.yml",
+               "workflow_id": 383735657, "event": "pull_request", "status": "completed",
+               "created_at": self.run_of(1)["created_at"],
+               "html_url": "https://github.com/Akenon-Studio/peras/actions/runs/41441981880"}
+        _, posted, _ = self.run_main("rerun", self.COMMENT, pr(), runs=[run])
+        self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/41441981880/rerun"])
 
     def test_a_comment_or_label_on_an_open_release_pr_reruns_the_latest_ruleset_run_on_its_head(self):
         runs = [self.run_of(1), self.run_of(3), self.run_of(4, event="issue_comment"),
@@ -201,6 +218,26 @@ class EventsTest(unittest.TestCase):
                                             runs=[self.run_of(3, status="queued")], polls=polls)
         self.assertEqual((code, len(slept)), (0, 2))
         self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun"])
+
+    def test_a_run_that_finishes_at_the_last_poll_is_rerun(self):
+        polls = [self.run_of(3, status="in_progress")] * (release_decision.POLLS - 1) + [self.run_of(3)]
+        code, posted, _ = self.run_main("rerun", self.COMMENT, pr(),
+                                        runs=[self.run_of(3, status="in_progress")], polls=polls)
+        self.assertEqual(code, 0)
+        self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun"])
+
+    def test_a_rerun_another_comment_started_first_is_waited_for_and_rerun_again(self):
+        polls = [self.run_of(3, status="in_progress"), self.run_of(3)]
+        code, posted, slept = self.run_main("rerun", self.COMMENT, pr(), runs=[self.run_of(3)],
+                                            polls=polls, refused=1)
+        self.assertEqual((code, len(slept)), (0, 2))
+        self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun"])
+
+    def test_a_run_too_old_to_rerun_says_to_close_and_reopen(self):
+        with mock.patch("builtins.print"):
+            code, posted, _ = self.run_main("rerun", self.COMMENT, pr(), runs=[self.run_of(3, days_old=31)])
+        self.assertIn("close and reopen #9", str(code))
+        self.assertEqual(posted, [])
 
     def test_a_run_that_never_finishes_fails_the_reruns_run(self):
         polls = [self.run_of(3, status="in_progress")] * release_decision.POLLS

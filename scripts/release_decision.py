@@ -21,7 +21,9 @@ Usage: scripts/release_decision.py judge|rerun "$GITHUB_EVENT_PATH"
   workflow, never a release branch's. A ruleset's workflow runs only on pull_request events, and only
   on opened, synchronize and reopened, so on an open Release PR this re-runs the check's latest run on
   the PR's head (waiting for it to finish first), and the comment is counted under the required check.
-  A workflow token may re-run a ruleset's run (tried on .github, 2026-11-02, .github#248).
+  A workflow token may re-run a ruleset's run (tried on .github, 2026-11-02, .github#248). In a repo
+  the ruleset names, GitHub reports its run with the source workflow's name and path, as here (seen
+  for "Action pins" in peras and platform, which have no action-pins.yml of their own).
 """
 
 import json
@@ -29,7 +31,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from rules import bot_login, gh, org_people
 
@@ -41,6 +43,7 @@ AGENT = re.compile(r"<!--\s*agent\s*-->", re.IGNORECASE)  # what an agent's comm
 WORKFLOW, WORKFLOW_PATH, PR_EVENT = "release-decision", ".github/workflows/release-decision.yml", "pull_request"
 PUSHES = {"push", "force_push", "branch_creation"}  # activity types that move a branch's head
 WAIT_SECONDS, POLLS = 10, 18
+RERUN_DAYS = 30  # GitHub re-runs no run older than this
 
 PR_FIELDS = """
   number url state isCrossRepository headRefName headRefOid
@@ -172,17 +175,31 @@ def rerun(repo, event):
         print(f"::warning::No release-decision run on #{pr['number']}'s head to re-run; a push starts one")
         return
     for run in runs:
-        # a run still going may have read the comments before this one: let it finish, then re-run it
-        for _ in range(POLLS):
-            if run["status"] == "completed":
-                break
+        rerun_once_finished(repo, run, pr["number"])
+
+
+def rerun_once_finished(repo, run, number):
+    """Re-run `run` once it has finished. A run still going may have read the comments before this
+    one, and so may a re-run another comment started just before this one (GitHub then refuses this
+    re-run): either way, wait for it to finish and re-run it again."""
+    error = "it hadn't finished"
+    for poll in range(POLLS + 1):
+        if poll:
             time.sleep(WAIT_SECONDS)
             run = gh(f"repos/{repo}/actions/runs/{run['id']}")
-        else:
-            sys.exit(f"::error::Run {run['html_url']} hasn't finished; re-run it once it has")
-        gh(f"repos/{repo}/actions/runs/{run['id']}/rerun", "-X", "POST")
-        print(f"Re-ran {run['html_url']} for #{pr['number']}")
-
+        if run["status"] != "completed":
+            continue
+        if datetime.now(timezone.utc) - when(run["created_at"]) > timedelta(days=RERUN_DAYS):
+            sys.exit(f"::error::Run {run['html_url']} is over {RERUN_DAYS} days old, and GitHub re-runs "
+                     f"no run that old: close and reopen #{number}, which runs the check again")
+        try:
+            gh(f"repos/{repo}/actions/runs/{run['id']}/rerun", "-X", "POST")
+        except SystemExit as e:
+            error = e.code
+            continue
+        print(f"Re-ran {run['html_url']} for #{number}")
+        return
+    sys.exit(f"::error::Couldn't re-run {run['html_url']} ({error}); re-run it once it has finished")
 
 MODES = {"judge": lambda repo, event: judge(repo, event["pull_request"]["number"]), "rerun": rerun}
 
