@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Apply rulesets/ to GitHub: the org's issue types, its teams (rulesets/teams.json) and its rulesets
-(rulesets/org-rulesets.json), then each managed repo's merge settings, rulesets and labels.
+"""Apply rulesets/ to GitHub: the org's settings (rulesets/org-settings.json) and issue types, its
+teams (rulesets/teams.json) and its rulesets (rulesets/org-rulesets.json), then each managed repo's merge settings, rulesets and labels.
 
 Usage: scripts/apply-rules.py [repo ...]     (default: every repo in rulesets/repos.txt)
        scripts/apply-rules.py --plan-org-rulesets

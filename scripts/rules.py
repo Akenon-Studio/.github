@@ -225,10 +225,11 @@ def org_ruleset_differences(want, live):
     trimmed = {k: live.get(k) for k in want if not k.startswith("_")}
     diffs = differences(want, trimmed)
     seen = {d.split(": ", 1)[0] for d in diffs}
-    # The reverse pass reads live without GitHub's defaults (false, 0, empty: a PUT without the key
-    # leaves them as they are, so they are no drift), and leaves a whole rule missing on either side
-    # to the forward pass, which names it the right way round, once.
-    reverse = [d for d in differences(without_defaults(trimmed), want)
+    # The reverse pass reads both sides without GitHub's defaults (false, 0, empty: a PUT without the
+    # key leaves them as they are, so they are no drift; both, so a list compared whole still
+    # matches), and leaves a whole rule missing on either side to the forward pass, which names it
+    # the right way round, once.
+    reverse = [d for d in differences(without_defaults(trimmed), without_defaults(want))
                if d.split(": ", 1)[0] not in seen and not WHOLE_RULE.match(d)]
     return diffs + [f"live has more: {d}" for d in reverse]
 

@@ -439,6 +439,10 @@ class OrgRulesetsTest(unittest.TestCase):
                                                                   "require_code_owner_review": False,
                                                                   "required_approving_review_count": 0}}]}
         self.assertEqual(rules.org_ruleset_differences(want, live), [])
+        # a default the file sets inside a list compared whole matches live's too
+        want["bypass_actors"] = [{"actor_id": None, "actor_type": "OrganizationAdmin", "bypass_mode": "always"}]
+        live["bypass_actors"] = [dict(want["bypass_actors"][0])]
+        self.assertEqual(rules.org_ruleset_differences(want, live), [])
 
     def test_a_missing_or_extra_rule_is_named_once_the_right_way_round(self):
         rules = self.rules()
