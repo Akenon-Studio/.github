@@ -315,33 +315,130 @@ class ReusableWorkflowsTest(unittest.TestCase):
 class OrgRulesetsTest(unittest.TestCase):
     """rules.desired_org_rulesets(): what apply-rules.py sends GitHub for org-rulesets.json."""
 
-    def test_each_applies_to_its_repos_or_every_managed_repo(self):
+    ARCHIVED = ["ani-motion-animations", "ani-motion-api", "ani-motion-desktop", "ani-motion-pi-client",
+                "ani-motion-shared", "ani-motion-web"]
+    # the ids GitHub has for them, in that order, and the engineers team's (Merge and PR Gates as live)
+    IDS = [1227934210, 1227931808, 1227933553, 1227933890, 1227931468, 1227932798]
+
+    @classmethod
+    def fake_gh(cls, archived=True):
+        ids = dict(zip(cls.ARCHIVED, cls.IDS))
+        def gh(path):
+            if path.endswith("/teams/engineers"):
+                return {"id": 17359533}
+            name = path.rsplit("/", 1)[1]
+            return {"id": ids.get(name, 7), "archived": archived and name in ids}
+        return gh
+
+    def rules(self):
         import sys
-        from unittest import mock
         sys.path.insert(0, str(WORKFLOWS.parent.parent / "scripts"))
         import rules
-        with mock.patch.object(rules, "gh", lambda path: {"id": 7}):
+        return rules
+
+    def test_each_applies_to_its_repos_or_every_managed_repo(self):
+        from unittest import mock
+        rules = self.rules()
+        with mock.patch.object(rules, "gh", self.fake_gh()):
             got = {r["name"]: r for r in rules.desired_org_rulesets()}
         self.assertEqual(got["Action pins"]["conditions"]["repository_name"]["include"], rules.managed_repos())
         self.assertEqual(got["Release decision"]["conditions"]["repository_name"],
                          {"include": ["peras", "platform"], "exclude": []})
         for r in got.values():  # only keys GitHub takes
-            self.assertFalse({"repositories", "_comment"} & set(r), r["name"])
-            for w in r["rules"][0]["parameters"]["workflows"]:
+            self.assertFalse({"repositories", "archived_repositories", "_comment", "_unresolved"} & set(r),
+                             r["name"])
+            for w in (w for rule in r["rules"] for w in rule.get("parameters", {}).get("workflows", [])):
                 self.assertEqual((w["repository_id"], "repository" in w), (7, False))
 
-    def test_a_repo_not_in_repos_txt_is_refused(self):
-        import sys
+    def test_merge_and_pr_gates_is_sent_exactly_as_live(self):
+        # .github#252: the ruleset made by hand on 2026-08-09, as GET orgs/akenon-studio/rulesets/20604928
+        # returned it on 2026-11-03, less what GitHub adds (id, links, dates, source)
         from unittest import mock
-        sys.path.insert(0, str(WORKFLOWS.parent.parent / "scripts"))
-        import rules
+        rules = self.rules()
+        live = {
+            "name": "Merge and PR Gates", "target": "branch", "enforcement": "active", "bypass_actors": [],
+            "conditions": {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH", "refs/heads/main",
+                                                                  "refs/heads/dev"]},
+                           "repository_id": {"repository_ids": self.IDS}},
+            "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "pull_request", "parameters": {
+                "required_approving_review_count": 1, "dismiss_stale_reviews_on_push": True,
+                "required_reviewers": [{"minimum_approvals": 1, "file_patterns": ["*"],
+                                        "reviewer": {"id": 17359533, "type": "Team"}}],
+                "require_code_owner_review": False, "require_last_push_approval": False,
+                "required_review_thread_resolution": False,
+                "require_extra_approval_for_unattributed_changes": True, "allowed_merge_methods": ["merge"]}}]}
+        with mock.patch.object(rules, "gh", self.fake_gh()):
+            got = next(r for r in rules.desired_org_rulesets() if r["name"] == "Merge and PR Gates")
+        self.assertEqual(got, live)
+        self.assertEqual(rules.org_ruleset_differences(got, {**live, "id": 20604928, "node_id": "x"}), [])
+
+    def test_an_archived_repo_must_be_archived_and_unmanaged(self):
+        from unittest import mock
+        rules = self.rules()
+        with mock.patch.object(rules, "gh", self.fake_gh(archived=False)):
+            with self.assertRaises(SystemExit):
+                rules.desired_org_rulesets()
         real = rules.load
         def load(name):
             data = real(name)
             if name == "org-rulesets.json":
-                data["rulesets"][-1]["repositories"] = ["peras", "nope"]
+                data["rulesets"][-1]["archived_repositories"] = ["ani-motion-api", "peras"]
             return data
-        with mock.patch.object(rules, "gh", lambda path: {"id": 7}), mock.patch.object(rules, "load", load):
+        with mock.patch.object(rules, "gh", self.fake_gh()), mock.patch.object(rules, "load", load):
+            with self.assertRaises(SystemExit):
+                rules.desired_org_rulesets()
+
+    def test_a_reviewer_team_must_be_in_teams_json(self):
+        from unittest import mock
+        rules = self.rules()
+        real = rules.load
+        def load(name):
+            data = real(name)
+            if name == "org-rulesets.json":
+                pr = data["rulesets"][-1]["rules"][-1]["parameters"]
+                pr["required_reviewers"][0]["reviewer"]["team"] = "nobody"
+            return data
+        with mock.patch.object(rules, "gh", self.fake_gh()), mock.patch.object(rules, "load", load):
+            with self.assertRaises(SystemExit):
+                rules.desired_org_rulesets()
+
+    def test_an_unreadable_name_marks_only_its_ruleset(self):
+        # verify-settings.py reads with try_gh: what its token can't read skips that ruleset, with a note
+        rules = self.rules()
+        gh = self.fake_gh()
+        got = {r["name"]: r for r in rules.desired_org_rulesets(
+            lookup=lambda path: None if path.endswith("/teams/engineers") else gh(path))}
+        self.assertEqual(got["Merge and PR Gates"]["_unresolved"], "team engineers")
+        self.assertNotIn("_unresolved", got["Action pins"])
+
+    def test_differences_are_found_both_ways(self):
+        rules = self.rules()
+        want = {"name": "x", "conditions": {"ref_name": {"include": ["a"], "exclude": []}},
+                "rules": [{"type": "pull_request", "parameters": {"allowed_merge_methods": ["merge"]}}]}
+        live = {"name": "x", "id": 1,
+                "conditions": {"ref_name": {"include": ["a"], "exclude": []},
+                               "repository_name": {"include": ["y"], "exclude": []}},
+                "rules": [{"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash"],
+                                                                  "dismiss_stale_reviews_on_push": True}},
+                          {"type": "workflows", "parameters": {"workflows": [
+                              {"repository_id": 1, "path": "p", "ref": "r", "sha": "s"}]}}]}
+        diffs = rules.org_ruleset_differences(want, live)
+        self.assertTrue(any("allowed_merge_methods" in d for d in diffs), diffs)
+        self.assertTrue(any("live has more" in d and "repository_name" in d for d in diffs), diffs)
+        self.assertTrue(any("live has more" in d and "dismiss_stale" in d for d in diffs), diffs)
+        self.assertTrue(any("workflows" in d for d in diffs), diffs)
+        self.assertEqual(rules.org_ruleset_differences(want, {**want, "id": 1, "_links": {}}), [])
+
+    def test_a_repo_not_in_repos_txt_is_refused(self):
+        from unittest import mock
+        rules = self.rules()
+        real = rules.load
+        def load(name):
+            data = real(name)
+            if name == "org-rulesets.json":
+                data["rulesets"][1]["repositories"] = ["peras", "nope"]
+            return data
+        with mock.patch.object(rules, "gh", self.fake_gh()), mock.patch.object(rules, "load", load):
             with self.assertRaises(SystemExit):
                 rules.desired_org_rulesets()
 

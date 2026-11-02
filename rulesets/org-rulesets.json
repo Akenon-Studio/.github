@@ -1,5 +1,5 @@
 {
-  "_comment": "Org rulesets, set by apply-rules.py and checked by verify-settings.py (design 6.4). A 'workflows' rule names its workflow by 'repository' (this org's repo) instead of GitHub's numeric id; rules.desired_org_rulesets() fills the id in, and applies each ruleset to the repos its 'repositories' lists (each must be in repos.txt), or else to every repo in repos.txt. Other org rulesets are left alone and listed as a note.",
+  "_comment": "Org rulesets, set by apply-rules.py and checked by verify-settings.py (design 6.4). A 'workflows' rule names its workflow by 'repository' (this org's repo) instead of GitHub's numeric id; rules.desired_org_rulesets() fills the id in, and applies each ruleset to the repos its 'repositories' lists (each must be in repos.txt), or to the archived repos its 'archived_repositories' lists (each archived and not in repos.txt; by repository id, as GitHub keeps them), or else to every repo in repos.txt. A required reviewer names its team by 'team' (a slug in teams.json) instead of its numeric id, which desired_org_rulesets() fills in. Other org rulesets are left alone and listed as a note.",
   "rulesets": [
     {
       "name": "Action pins",
@@ -39,6 +39,36 @@
             "workflows": [
               {"repository": ".github", "path": ".github/workflows/release-decision.yml", "ref": "refs/heads/main"}
             ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Merge and PR Gates",
+      "_comment": "Kept exactly as it is live (design 6.2, .github#252): made by hand on 2026-08-09, before the move, for the old ani-motion-* repos, all archived since, so it has no effect while they stay archived.",
+      "archived_repositories": ["ani-motion-animations", "ani-motion-api", "ani-motion-desktop", "ani-motion-pi-client", "ani-motion-shared", "ani-motion-web"],
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {"include": ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/dev"], "exclude": []}
+      },
+      "rules": [
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 1,
+            "dismiss_stale_reviews_on_push": true,
+            "required_reviewers": [
+              {"minimum_approvals": 1, "file_patterns": ["*"], "reviewer": {"team": "engineers", "type": "Team"}}
+            ],
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": false,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": ["merge"]
           }
         }
       ]

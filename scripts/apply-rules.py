@@ -3,7 +3,11 @@
 and teams (rulesets/teams.json), then each managed repo's merge settings, rulesets and labels.
 
 Usage: scripts/apply-rules.py [repo ...]     (default: every repo in rulesets/repos.txt)
-Needs an org owner logged in to gh with the admin:org scope.
+       scripts/apply-rules.py --plan-org-rulesets
+                                             change nothing: print what applying would do to each
+                                             org ruleset (create, update with each difference, or
+                                             nothing), and any org ruleset not in the file
+Needs an org owner logged in to gh with the admin:org scope (reads only, for --plan-org-rulesets).
 """
 
 import sys
@@ -11,8 +15,9 @@ import urllib.parse
 
 from rules import (FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ISSUE_TYPE_KEYS, ORG,
                    REPO_SETTING_ENDPOINTS, TEAM_KEYS, desired_labels, desired_org_rulesets,
-                   desired_rulesets, gh, is_public, load, managed_repos, org_roles, org_rulesets,
-                   repo_rulesets, team_org_roles, team_repos, try_gh)
+                   desired_rulesets, gh, is_public, load, managed_repos, org_roles,
+                   org_ruleset_differences, org_rulesets, repo_rulesets, team_org_roles, team_repos,
+                   try_gh)
 
 
 def apply_org():
@@ -37,6 +42,28 @@ def apply_org_rulesets():
         else:
             gh(f"orgs/{ORG}/rulesets", "-X", "POST", body=ruleset)
             print(f"org {ORG}: ruleset '{ruleset['name']}' created")
+
+
+def plan_org_rulesets():
+    """What apply_org_rulesets() would change, changing nothing; returns how many it would."""
+    existing = org_rulesets()
+    wanted = desired_org_rulesets()
+    changes = 0
+    for ruleset in wanted:
+        if ruleset["name"] not in existing:
+            print(f"org {ORG}: ruleset '{ruleset['name']}' would be created")
+            changes += 1
+            continue
+        diffs = org_ruleset_differences(ruleset, existing[ruleset["name"]])
+        if diffs:
+            changes += 1
+            print(f"org {ORG}: ruleset '{ruleset['name']}' would be updated:")
+            print("".join(f"  {d}\n" for d in diffs), end="")
+        else:
+            print(f"org {ORG}: ruleset '{ruleset['name']}' unchanged")
+    for extra in sorted(set(existing) - {r["name"] for r in wanted}):
+        print(f"org {ORG}: ruleset '{extra}' is not in rulesets/org-rulesets.json; left alone")
+    return changes
 
 
 def apply_teams():
@@ -116,6 +143,12 @@ def apply_repo(repo):
 
 
 def main():
+    if sys.argv[1:] == ["--plan-org-rulesets"]:
+        changes = plan_org_rulesets()
+        print(f"Plan: {changes} org ruleset change(s); nothing was applied")
+        return
+    if any(a.startswith("-") for a in sys.argv[1:]):
+        sys.exit(__doc__)
     repos = sys.argv[1:] or managed_repos()
     apply_org()
     apply_org_rulesets()
