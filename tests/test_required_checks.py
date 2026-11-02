@@ -68,6 +68,13 @@ class RequiredChecksTest(unittest.TestCase):
         self.assertIn("looks-bump", CHECKS["peras"])
         self.assertEqual(CHECKS["reads"]["looks-bump"], "pr")
 
+    def test_peras_requires_the_release_decision_read_as_pr(self):
+        # .github#249, peras#682: a Release PR merges only after a partner's own comment on its head
+        # commit (design 6.3, 7.12). It reads the PR's author, branch, labels and comments, so a
+        # failure pauses Peras rather than patching code (design 7.13 Stage 10)
+        self.assertIn("release-decision / decision", CHECKS["peras"])
+        self.assertEqual(CHECKS["reads"]["release-decision / decision"], "pr")
+
     def test_every_repo_carries_the_callers_of_checks_required_everywhere(self):
         for name in CHECKS["all"]:
             caller = f".github/workflows/{name.split(' / ')[0]}-caller.yml"

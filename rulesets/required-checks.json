@@ -20,7 +20,8 @@
   "peras": [
     "workspace-hooks",
     "checks",
-    "looks-bump"
+    "looks-bump",
+    "release-decision / decision"
   ],
   "hardware": [
     "lfs",
@@ -37,6 +38,7 @@
     "desktop-package": "code",
     "workspace-hooks": "code",
     "looks-bump": "pr",
+    "release-decision / decision": "pr",
     "lfs": "code",
     "kicad": "code"
   }
