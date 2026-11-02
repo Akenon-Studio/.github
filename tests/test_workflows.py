@@ -269,9 +269,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
             if "checkout" in step.get("uses", ""):
                 self.assertEqual(step["with"]["ref"], "main")
 
-    def test_release_decision_reruns_itself_on_the_release_prs_head(self):
-        # design 6.3 (.github#248): one job, never skipped or cancelled, main's script; a comment's
-        # run starts this caller by file name on the PR's branch, so the required name lands there
+    def test_release_decision_runs_mains_copy_and_reruns_on_a_comment(self):
+        # design 6.3 (.github#248): one job, never skipped or cancelled, main's workflow and script;
+        # a comment's run re-runs the PR's run, so the required name is reported on the PR's head
         workflow = REUSABLE["release-decision.yml"]
         self.assertEqual(list(workflow["jobs"]), ["decision"])
         job = workflow["jobs"]["decision"]
@@ -284,15 +284,21 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertEqual(checkout["with"], {"repository": "akenon-studio/.github", "ref": "main",
                                             "persist-credentials": False})
         self.assertIn("scripts/release_decision.py", job["steps"][-1]["run"])
+        self.assertNotIn("secrets", (WORKFLOWS / "release-decision.yml").read_text().split("name: release-decision", 1)[1])
         caller = load("release-decision-caller.yml")
         self.assertEqual(caller["permissions"], want)  # a called workflow gets no more than this
-        self.assertEqual(caller["on"]["pull_request"]["types"],
+        # never pull_request or a dispatch: either runs the branch's copy of the workflow
+        self.assertEqual(set(caller["on"]), {"pull_request_target", "issue_comment"})
+        self.assertEqual(caller["on"]["pull_request_target"]["types"],
                          ["opened", "synchronize", "reopened", "labeled", "unlabeled"])
         self.assertEqual(caller["on"]["issue_comment"]["types"], ["created", "edited", "deleted"])
-        self.assertIn("workflow_dispatch", caller["on"])
         self.assertEqual(list(caller["jobs"]), ["release-decision"])
+        # only an issue comment is skipped, and that run never reports on a PR's head
+        self.assertEqual(caller["jobs"]["release-decision"]["if"],
+                         "github.event_name != 'issue_comment' || github.event.issue.pull_request")
+        # the comment's run finds the PR's run by these workflow names
         script = (WORKFLOWS.parent.parent / "scripts" / "release_decision.py").read_text()
-        self.assertIn('CALLER = "release-decision-caller.yml"', script)
+        self.assertIn(f'WORKFLOWS = {{"{caller["name"]}", "{workflow["name"]}"}}', script)
 
 
 class PrAuthorTest(unittest.TestCase):

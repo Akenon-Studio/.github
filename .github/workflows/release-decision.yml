@@ -1,21 +1,22 @@
 # Reusable: the `release-decision` check (design 6.3, 6.6, 7.12; scripts/release_decision.py). A
 # Release PR (the release app's, on a `release-please--` branch, or labelled `autorelease: pending`)
-# passes only once a partner's own comment on it, without the agent marker, is newer than its head
-# commit; every other PR passes. Each repo with a Release PR calls it from a file named exactly
-# `.github/workflows/release-decision-caller.yml` (a comment re-runs the check by starting that file
-# on the PR's branch), with:
+# passes only once a partner's own comment on it, without the agent marker, is newer than the push
+# that made its head commit its head; every other PR passes. A repo with a Release PR calls it with:
 #
-#   on: { pull_request: { types: [opened, synchronize, reopened, labeled, unlabeled] },
-#         issue_comment: { types: [created, edited, deleted] },
-#         workflow_dispatch: {} }
+#   on: { pull_request_target: { types: [opened, synchronize, reopened, labeled, unlabeled] },
+#         issue_comment: { types: [created, edited, deleted] } }
 #   permissions: { contents: read, pull-requests: read, actions: write }
-#   jobs: { release-decision: { uses: akenon-studio/.github/.github/workflows/release-decision.yml@main } }
+#   jobs: { release-decision: { if: github.event_name != 'issue_comment' || github.event.issue.pull_request,
+#                               uses: akenon-studio/.github/.github/workflows/release-decision.yml@main } }
 #
 # A called workflow gets no more permission than its caller grants, so the caller grants all three.
-# The required check is `release-decision / decision`: a PR's run and a dispatched run on the PR's
-# branch report it on the PR's head; a comment's own run reports `decision (comment)` on main. A
-# dispatched run finds its PR from its branch and commit, never from an input. One job, never
-# skipped (a skipped job passes a required check) and never cancelled; the script comes from main.
+# pull_request_target runs main's workflow, not the PR's, so a push to the release branch can't
+# change the check that judges it; it checks out no PR code and holds no secret. The required check
+# is `release-decision / decision`, reported on the PR's head. A comment's own run (`decision
+# (comment)`, on main) re-runs the latest PR run on the head once it has finished, so the comment
+# is counted under the required name. One job, never skipped (a skipped job passes a required
+# check) and never cancelled; the script comes from main. The script judges a run of this workflow
+# the same way if an org ruleset requires it instead of a caller.
 name: release-decision
 
 on:
@@ -24,7 +25,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  actions: write # a comment starts the check again on the Release PR's branch
+  actions: write # a comment re-runs the check on the Release PR's head
 
 jobs:
   decision:
