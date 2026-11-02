@@ -24,7 +24,7 @@ import sensitive_paths
 from rules import (CODEOWNERS_PATHS, FORK_APPROVAL, FORK_APPROVAL_ENDPOINT, ORG, ROOT, is_public,
                    codeowners_team_differences, environment_problems, org_role_differences,
                    org_roles, team_org_roles, desired_labels, peras_repos,
-                   desired_org_rulesets, desired_rulesets, differences, gh, issue_type_differences, label_differences, load,
+                   desired_org_rulesets, desired_rulesets, differences, org_ruleset_differences, gh, issue_type_differences, label_differences, load,
                    managed_repos, read_file, reads_problems, repo_files, repo_rulesets, repo_settings, team_differences,
                    team_repo_permission, try_gh)
 
@@ -107,18 +107,18 @@ def main():
         print("note: can't read the org's rulesets; not checked")
     else:
         have = {r["name"]: try_gh(f"orgs/{ORG}/rulesets/{r['id']}") for r in listed}
-        for ruleset in desired_org_rulesets():
-            if ruleset["name"] not in have:
+        wanted = desired_org_rulesets(lookup=try_gh)
+        for ruleset in wanted:
+            if "_unresolved" in ruleset:
+                print(f"note: can't read {ruleset['_unresolved']} for org ruleset '{ruleset['name']}'; not checked")
+            elif "_problem" in ruleset:
+                problems.append(f"org ruleset '{ruleset['name']}' {ruleset['_problem']}")
+            elif ruleset["name"] not in have:
                 problems.append(f"org: ruleset '{ruleset['name']}' is missing")
             else:
-                live = have[ruleset["name"]]
-                # differences() compares a list of workflows exactly: keep only the keys we set,
-                # so a key GitHub adds to each (e.g. "sha") isn't drift
-                for rule in live.get("rules") or []:
-                    for i, w in enumerate((rule.get("parameters") or {}).get("workflows") or []):
-                        rule["parameters"]["workflows"][i] = {k: w.get(k) for k in ("repository_id", "path", "ref")}
-                problems += [f"org ruleset '{ruleset['name']}': {d}" for d in differences(ruleset, live)]
-        for extra in sorted(set(have) - {r["name"] for r in desired_org_rulesets()}):
+                problems += [f"org ruleset '{ruleset['name']}': {d}"
+                             for d in org_ruleset_differences(ruleset, have[ruleset["name"]])]
+        for extra in sorted(set(have) - {r["name"] for r in wanted}):
             print(f"note: org ruleset '{extra}' is not in rulesets/org-rulesets.json")
 
     types = try_gh(f"orgs/{ORG}/issue-types")

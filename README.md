@@ -16,7 +16,7 @@ never code, secrets or product plans.
 | `scripts/reason.py` | The board's Reason field: why an item waits on a person, which groups the Needs a human view |
 | `tests/` | Unit tests (`python3 -m unittest discover tests`), run by `.github/workflows/tests.yml` |
 | `rulesets/` | Branch and tag rules, repo merge settings, labels, issue types, teams (`teams.json`: the automation owners and engineers), and which repos they apply to |
-| `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only) |
+| `scripts/apply-rules.py` | Applies `rulesets/` to every managed repo (org owners only); `--plan-org-rulesets` changes nothing and prints what it would do to each org ruleset |
 | `rulesets/board.json` | The org project board: fields, linked repos and the views |
 | `scripts/apply-board.py` | Creates or updates the board from `rulesets/board.json` |
 | `.github/workflows/settings-check.yml` | Daily: runs `verify-settings.py` as a read-only app and keeps one `settings-drift` issue open while anything differs |

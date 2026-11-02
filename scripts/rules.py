@@ -148,23 +148,105 @@ def desired_rulesets(repo):
     return [main, load("release-tags.json")]
 
 
-def desired_org_rulesets():
+def desired_org_rulesets(lookup=None):
     """The org rulesets in org-rulesets.json, as GitHub takes them: each applies to the managed repos
-    its 'repositories' lists, or to every managed repo, and a workflow's 'repository' becomes its
-    numeric 'repository_id'."""
+    its 'repositories' lists, or to the archived repos its 'archived_repositories' lists (by numeric
+    'repository_id', as GitHub keeps a ruleset made for repos picked one by one; they are never in
+    repos.txt), or else to every managed repo; a workflow's 'repository' becomes its numeric
+    'repository_id', and a reviewer's 'team' (a slug in teams.json) its team's numeric 'id'.
+    `lookup` reads GitHub (default gh, which exits on a failed read; verify-settings.py passes
+    try_gh, and a ruleset with a name it can't read then carries '_unresolved', naming it, and one
+    naming an archived repo that isn't carries '_problem', saying so, so the daily check goes on)."""
+    strict = lookup is None
+    lookup = lookup or gh
+
     out = []
     for ruleset in json.loads(json.dumps(load("org-rulesets.json")["rulesets"])):
         ruleset.pop("_comment", None)
-        repos = ruleset.pop("repositories", None) or managed_repos()
-        unmanaged = sorted(set(repos) - set(managed_repos()))
-        if unmanaged:
-            raise SystemExit(f"org ruleset '{ruleset['name']}' names repos not in repos.txt: {unmanaged}")
-        ruleset["conditions"]["repository_name"] = {"include": repos, "exclude": []}
+        name = ruleset["name"]
+
+        def read(path, what):
+            got = lookup(path)
+            if got is None:
+                ruleset.setdefault("_unresolved", what)
+                return {"id": None, "archived": True}
+            return got
+
+        archived = ruleset.pop("archived_repositories", None)
+        repos = ruleset.pop("repositories", None)
+        if archived and repos:
+            raise SystemExit(f"org ruleset '{name}' names both 'repositories' and 'archived_repositories'")
+        if archived:
+            managed = sorted(set(archived) & set(managed_repos()))
+            if managed:
+                raise SystemExit(f"org ruleset '{name}' names managed repos as archived: {managed}")
+            ids = []
+            for repo in archived:
+                live = read(f"repos/{ORG}/{repo}", f"repo {repo}")
+                if not live.get("archived"):
+                    problem = f"names {repo} as archived, but it is not"
+                    if strict:
+                        raise SystemExit(f"org ruleset '{name}' {problem}")
+                    ruleset.setdefault("_problem", problem)
+                ids.append(live["id"])
+            ruleset["conditions"]["repository_id"] = {"repository_ids": ids}
+        else:
+            repos = repos or managed_repos()
+            unmanaged = sorted(set(repos) - set(managed_repos()))
+            if unmanaged:
+                raise SystemExit(f"org ruleset '{name}' names repos not in repos.txt: {unmanaged}")
+            ruleset["conditions"]["repository_name"] = {"include": repos, "exclude": []}
+        teams = {t["slug"] for t in load("teams.json")["teams"]}
         for rule in ruleset["rules"]:
-            for w in rule.get("parameters", {}).get("workflows", []):
-                w["repository_id"] = gh(f"repos/{ORG}/{w.pop('repository')}")["id"]
+            params = rule.get("parameters", {})
+            for w in params.get("workflows", []):
+                w["repository_id"] = read(f"repos/{ORG}/{w['repository']}", f"repo {w['repository']}")["id"]
+                del w["repository"]
+            for r in params.get("required_reviewers", []):
+                slug = r["reviewer"].pop("team", None)
+                if slug is None:
+                    continue
+                if slug not in teams:
+                    raise SystemExit(f"org ruleset '{name}' names team '{slug}', which is not in teams.json")
+                r["reviewer"] = {"id": read(f"orgs/{ORG}/teams/{slug}", f"team {slug}")["id"], **r["reviewer"]}
         out.append(ruleset)
     return out
+
+
+def org_ruleset_differences(want, live):
+    """Every way a live org ruleset differs from `want` (from desired_org_rulesets()), both ways: what
+    `want` sets that `live` lacks or has otherwise, and what `live` has under the keys `want` sets
+    that `want` doesn't (another condition, a parameter), so none means a PUT of `want` changes
+    nothing. GitHub's own extras (a workflow's 'sha', the ruleset's id and links) aren't drift."""
+    live = json.loads(json.dumps(live))
+    for rule in live.get("rules") or []:
+        for i, w in enumerate((rule.get("parameters") or {}).get("workflows") or []):
+            rule["parameters"]["workflows"][i] = {k: w.get(k) for k in ("repository_id", "path", "ref")}
+    trimmed = {k: live.get(k) for k in want if not k.startswith("_")}
+    diffs = differences(want, trimmed)
+    seen = {d.split(": ", 1)[0] for d in diffs}
+    # The reverse pass reads both sides without GitHub's defaults (false, 0, empty: a PUT without the
+    # key leaves them as they are, so they are no drift; both, so a list compared whole still
+    # matches), and leaves a whole rule missing on either side to the forward pass, which names it
+    # the right way round, once.
+    reverse = [d for d in differences(without_defaults(trimmed), without_defaults(want))
+               if d.split(": ", 1)[0] not in seen and not WHOLE_RULE.match(d)]
+    return diffs + [f"live has more: {d}" for d in reverse]
+
+
+# A difference about a whole rule, not a key inside one: '/rules: unexpected rule ...' or
+# '/rules[type]: expected an object, got None'.
+WHOLE_RULE = re.compile(r"/rules(: unexpected rule |\[[^\]]*\]: expected an object, got None$)")
+
+
+def without_defaults(value):
+    """`value` less every object key whose value is a GitHub default: false, 0, null or empty."""
+    if isinstance(value, dict):
+        return {k: without_defaults(v) for k, v in value.items()
+                if v not in (False, 0, None, "", [], {})}
+    if isinstance(value, list):
+        return [without_defaults(v) for v in value]
+    return value
 
 
 def org_rulesets():
