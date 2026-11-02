@@ -269,6 +269,32 @@ class ReusableWorkflowsTest(unittest.TestCase):
             if "checkout" in step.get("uses", ""):
                 self.assertEqual(step["with"]["ref"], "main")
 
+    def test_release_decision_reruns_itself_on_the_release_prs_head(self):
+        # design 6.3 (.github#248): one job, never skipped or cancelled, main's script; a comment's
+        # run starts this caller by file name on the PR's branch, so the required name lands there
+        workflow = REUSABLE["release-decision.yml"]
+        self.assertEqual(list(workflow["jobs"]), ["decision"])
+        job = workflow["jobs"]["decision"]
+        self.assertNotIn("if", job)
+        self.assertNotIn("concurrency", job)
+        self.assertEqual(job["name"], "decision${{ github.event_name == 'issue_comment' && ' (comment)' || '' }}")
+        want = {"contents": "read", "pull-requests": "read", "actions": "write"}
+        self.assertEqual(workflow["permissions"], want)
+        checkout = job["steps"][0]
+        self.assertEqual(checkout["with"], {"repository": "akenon-studio/.github", "ref": "main",
+                                            "persist-credentials": False})
+        self.assertIn("scripts/release_decision.py", job["steps"][-1]["run"])
+        caller = load("release-decision-caller.yml")
+        self.assertEqual(caller["permissions"], want)  # a called workflow gets no more than this
+        self.assertEqual(caller["on"]["pull_request"]["types"],
+                         ["opened", "synchronize", "reopened", "labeled", "unlabeled"])
+        self.assertEqual(caller["on"]["issue_comment"]["types"], ["created", "edited", "deleted"])
+        self.assertIn("workflow_dispatch", caller["on"])
+        self.assertEqual(list(caller["jobs"]), ["release-decision"])
+        script = (WORKFLOWS.parent.parent / "scripts" / "release_decision.py").read_text()
+        self.assertIn('CALLER = "release-decision-caller.yml"', script)
+
+
 class PrAuthorTest(unittest.TestCase):
     """The required check that refuses an outsider's PR (design 6.2) can't be changed by the PR."""
 

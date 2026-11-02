@@ -1,0 +1,45 @@
+# Reusable: the `release-decision` check (design 6.3, 6.6, 7.12; scripts/release_decision.py). A
+# Release PR (the release app's, on a `release-please--` branch, or labelled `autorelease: pending`)
+# passes only once a partner's own comment on it, without the agent marker, is newer than its head
+# commit; every other PR passes. Each repo with a Release PR calls it from a file named exactly
+# `.github/workflows/release-decision-caller.yml` (a comment re-runs the check by starting that file
+# on the PR's branch), with:
+#
+#   on: { pull_request: { types: [opened, synchronize, reopened, labeled, unlabeled] },
+#         issue_comment: { types: [created, edited, deleted] },
+#         workflow_dispatch: {} }
+#   permissions: { contents: read, pull-requests: read, actions: write }
+#   jobs: { release-decision: { uses: akenon-studio/.github/.github/workflows/release-decision.yml@main } }
+#
+# A called workflow gets no more permission than its caller grants, so the caller grants all three.
+# The required check is `release-decision / decision`: a PR's run and a dispatched run on the PR's
+# branch report it on the PR's head; a comment's own run reports `decision (comment)` on main. A
+# dispatched run finds its PR from its branch and commit, never from an input. One job, never
+# skipped (a skipped job passes a required check) and never cancelled; the script comes from main.
+name: release-decision
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write # a comment starts the check again on the Release PR's branch
+
+jobs:
+  decision:
+    name: decision${{ github.event_name == 'issue_comment' && ' (comment)' || '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get main's script and team list
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          persist-credentials: false
+
+      - name: A partner's comment records the decision to cut the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release_decision.py "$GITHUB_EVENT_PATH"
