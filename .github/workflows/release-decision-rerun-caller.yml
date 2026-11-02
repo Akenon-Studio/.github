@@ -1,0 +1,19 @@
+name: release-decision-rerun-caller
+
+on:
+  # Both run main's copy of this file, never a release branch's (release-decision-rerun.yml).
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_target:
+    types: [labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write # re-runs the check on the Release PR's head
+
+jobs:
+  release-decision:
+    # a comment on an issue starts no job
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    uses: ./.github/workflows/release-decision-rerun.yml

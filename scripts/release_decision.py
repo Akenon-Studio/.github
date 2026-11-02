@@ -11,15 +11,17 @@ commit its head, as GitHub's repository activity API records it on the server. N
 (both come from the pushing machine's clock), and a head with no such push, such as a fork's, fails.
 Every other PR passes.
 
-Usage: scripts/release_decision.py "$GITHUB_EVENT_PATH"
-(GITHUB_EVENT_NAME and GITHUB_REPOSITORY from Actions; gh reads GH_TOKEN)
-In Actions it is the `decision` job of the reusable release-decision workflow. By event:
-- pull_request_target (or pull_request): judges the event's PR. pull_request_target runs main's
-  workflow, so a push to the PR's branch can't change the check that judges it.
-- issue_comment: on an open Release PR, re-runs the check's latest run on the PR's head (waiting for
-  it to finish first), so the required name is reported again on the head with the comment counted.
-  The comment's own run reports on main, under another name. It finds that run by the workflow's
-  name, so it works from a repo's caller or from an org ruleset's required workflow alike.
+Usage: scripts/release_decision.py judge|rerun "$GITHUB_EVENT_PATH"
+(GITHUB_REPOSITORY from Actions; gh reads GH_TOKEN)
+- judge: the `decision` job of release-decision.yml, which the org ruleset "Release decision"
+  (rulesets/org-rulesets.json) runs from `.github` main on every PR to main in the repos it names, so
+  no repo, branch or PR can change it. It judges the event's PR.
+- rerun: the `rerun` job of release-decision-rerun.yml, which each of those repos calls from main on
+  a comment (issue_comment) and a label change (pull_request_target); both run the default branch's
+  workflow, never a release branch's. A ruleset's workflow runs only on pull_request events, and only
+  on opened, synchronize and reopened, so on an open Release PR this re-runs the check's latest run on
+  the PR's head (waiting for it to finish first), and the comment is counted under the required check.
+  A workflow token may re-run a ruleset's run (tried on .github, 2026-11-02, .github#248).
 """
 
 import json
@@ -35,9 +37,8 @@ RELEASE_APP = "akenon-studio-release"
 RELEASE_BRANCH = "release-please--"
 RELEASE_LABEL = "autorelease: pending"
 AGENT = re.compile(r"<!--\s*agent\s*-->", re.IGNORECASE)  # what an agent's comment carries (design 6.4)
-# The check's runs: a repo's caller workflow, or the reusable workflow run as a required workflow
-WORKFLOWS = {"release-decision-caller", "release-decision"}
-PR_EVENTS = ("pull_request_target", "pull_request")
+# The ruleset's runs of the check: its workflow's name and path, on a pull_request event
+WORKFLOW, WORKFLOW_PATH, PR_EVENT = "release-decision", ".github/workflows/release-decision.yml", "pull_request"
 PUSHES = {"push", "force_push", "branch_creation"}  # activity types that move a branch's head
 WAIT_SECONDS, POLLS = 10, 18
 
@@ -140,50 +141,58 @@ def judge(repo, number):
     print(f"OK: the decision to cut this release is {decision(pr, org_people(), pushed)['url']}")
 
 
-def latest_check_run(repo, sha):
-    """The newest run of this check on `sha` from a PR event, or None."""
-    runs = gh(f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100")["workflow_runs"]
-    runs = [r for r in runs if r.get("name") in WORKFLOWS and r.get("event") in PR_EVENTS]
-    return max(runs, key=lambda r: r["id"]) if runs else None
+def latest_check_runs(repo, sha):
+    """The newest run of this check on `sha` from a PR event, one per workflow (a repo's own workflow
+    of the same name and path is re-run too, but can't stand in for the ruleset's)."""
+    runs = gh(f"repos/{repo}/actions/runs?head_sha={sha}&event={PR_EVENT}&per_page=100")["workflow_runs"]
+    latest = {}
+    for r in runs:
+        if r.get("name") == WORKFLOW and r.get("path") == WORKFLOW_PATH and r.get("event") == PR_EVENT:
+            if r["workflow_id"] not in latest or r["id"] > latest[r["workflow_id"]]["id"]:
+                latest[r["workflow_id"]] = r
+    return sorted(latest.values(), key=lambda r: r["id"])
 
 
 def rerun(repo, event):
-    """On a comment on an open Release PR, run the check again on the PR's head."""
-    issue = event.get("issue") or {}
-    if "pull_request" not in issue or issue.get("state") != "open":
-        print("Not an open PR: nothing to re-run")
-        return
-    pr = pr_by_number(repo, issue["number"])
+    """On a comment on, or a label change of, an open Release PR, run the check again on its head."""
+    if "issue" in event:
+        issue = event["issue"]
+        if "pull_request" not in issue or issue.get("state") != "open":
+            print("Not an open PR: nothing to re-run")
+            return
+        number = issue["number"]
+    else:
+        number = event["pull_request"]["number"]
+    pr = pr_by_number(repo, number)
     if pr["state"] != "OPEN" or not is_release_pr(pr):
         print(f"#{pr['number']} is not an open Release PR: nothing to re-run")
         return
-    run = latest_check_run(repo, pr["headRefOid"])
-    if not run:
-        print(f"::warning::No release-decision run on #{pr['number']}'s head to re-run; a push or a "
-              "label change starts one")
+    runs = latest_check_runs(repo, pr["headRefOid"])
+    if not runs:
+        print(f"::warning::No release-decision run on #{pr['number']}'s head to re-run; a push starts one")
         return
-    # a run still going may have read the comments before this one: let it finish, then re-run it
-    for _ in range(POLLS):
-        if run["status"] == "completed":
-            break
-        time.sleep(WAIT_SECONDS)
-        run = gh(f"repos/{repo}/actions/runs/{run['id']}")
-    else:
-        sys.exit(f"::error::Run {run['html_url']} hasn't finished; re-run it once it has")
-    gh(f"repos/{repo}/actions/runs/{run['id']}/rerun", "-X", "POST")
-    print(f"Re-ran {run['html_url']} for #{pr['number']}")
+    for run in runs:
+        # a run still going may have read the comments before this one: let it finish, then re-run it
+        for _ in range(POLLS):
+            if run["status"] == "completed":
+                break
+            time.sleep(WAIT_SECONDS)
+            run = gh(f"repos/{repo}/actions/runs/{run['id']}")
+        else:
+            sys.exit(f"::error::Run {run['html_url']} hasn't finished; re-run it once it has")
+        gh(f"repos/{repo}/actions/runs/{run['id']}/rerun", "-X", "POST")
+        print(f"Re-ran {run['html_url']} for #{pr['number']}")
+
+
+MODES = {"judge": lambda repo, event: judge(repo, event["pull_request"]["number"]), "rerun": rerun}
 
 
 def main():
-    event_name, repo = os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REPOSITORY"]
-    with open(sys.argv[1]) as f:
+    if len(sys.argv) != 3 or sys.argv[1] not in MODES:
+        sys.exit(__doc__)
+    with open(sys.argv[2]) as f:
         event = json.load(f)
-    if event_name in PR_EVENTS:
-        judge(repo, event["pull_request"]["number"])
-    elif event_name == "issue_comment":
-        rerun(repo, event)
-    else:
-        sys.exit(f"::error::release-decision doesn't run on {event_name}")
+    MODES[sys.argv[1]](os.environ["GITHUB_REPOSITORY"], event)
 
 
 if __name__ == "__main__":

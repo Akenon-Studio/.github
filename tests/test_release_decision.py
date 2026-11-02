@@ -124,9 +124,9 @@ class DecisionTest(unittest.TestCase):
 
 
 class EventsTest(unittest.TestCase):
-    """main(): which PR each event judges, and what a comment does."""
+    """main(): what each mode does with its event."""
 
-    def run_main(self, event_name, event, the_pr, activity=(), runs=(), polls=None):
+    def run_main(self, mode, event, the_pr, activity=(), runs=(), polls=None):
         posted, slept = [], []
         polls = iter(polls or [])
 
@@ -144,15 +144,14 @@ class EventsTest(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(event, f)
-        environ = {"GITHUB_EVENT_NAME": event_name, "GITHUB_REPOSITORY": "akenon-studio/peras"}
         code = 0
         with mock.patch.object(release_decision, "graphql",
                                lambda q, **v: {"repository": {"pullRequest": the_pr}}), \
                 mock.patch.object(release_decision, "gh", gh), \
                 mock.patch.object(release_decision, "org_people", lambda: PEOPLE), \
                 mock.patch.object(release_decision.time, "sleep", slept.append), \
-                mock.patch.dict(os.environ, environ), mock.patch.object(sys, "argv", ["x", f.name]), \
-                mock.patch("builtins.print"):
+                mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "akenon-studio/peras"}), \
+                mock.patch.object(sys, "argv", ["x", mode, f.name]), mock.patch("builtins.print"):
             try:
                 release_decision.main()
             except SystemExit as e:
@@ -162,60 +161,67 @@ class EventsTest(unittest.TestCase):
 
     PR_EVENT = {"pull_request": {"number": 9}}
 
-    def test_a_pr_event_judges_its_pr_against_the_recorded_push(self):
-        for name in ("pull_request_target", "pull_request"):
-            self.assertEqual(self.run_main(name, self.PR_EVENT, pr(comments=[comment()]), [push()])[0], 0)
-            self.assertEqual(self.run_main(name, self.PR_EVENT, pr(), [push()])[0], 1)
-            # pushed after the comment
-            self.assertEqual(self.run_main(name, self.PR_EVENT, pr(comments=[comment()]),
-                                           [push(at="2026-11-02T11:30:00Z")])[0], 1)
-            # no recorded push, and a fork's branch isn't read at all
-            self.assertEqual(self.run_main(name, self.PR_EVENT, pr(comments=[comment()]), [])[0], 1)
-            self.assertEqual(self.run_main(name, self.PR_EVENT, pr(fork=True, comments=[comment()]), [push()])[0], 1)
-        self.assertEqual(self.run_main("pull_request_target", self.PR_EVENT, ordinary())[0], 0)
+    def test_judge_judges_the_events_pr_against_the_recorded_push(self):
+        self.assertEqual(self.run_main("judge", self.PR_EVENT, pr(comments=[comment()]), [push()])[0], 0)
+        self.assertEqual(self.run_main("judge", self.PR_EVENT, pr(), [push()])[0], 1)
+        # pushed after the comment
+        self.assertEqual(self.run_main("judge", self.PR_EVENT, pr(comments=[comment()]),
+                                       [push(at="2026-11-02T11:30:00Z")])[0], 1)
+        # no recorded push, and a fork's branch isn't read at all
+        self.assertEqual(self.run_main("judge", self.PR_EVENT, pr(comments=[comment()]), [])[0], 1)
+        self.assertEqual(self.run_main("judge", self.PR_EVENT, pr(fork=True, comments=[comment()]), [push()])[0], 1)
+        self.assertEqual(self.run_main("judge", self.PR_EVENT, ordinary())[0], 0)
 
     COMMENT = {"issue": {"number": 9, "state": "open", "pull_request": {}}}
+    LABEL = {"pull_request": {"number": 9}, "label": {"name": "autorelease: pending"}}
 
-    def run_of(self, id, name="release-decision-caller", event="pull_request_target", status="completed"):
-        return {"id": id, "name": name, "event": event, "status": status,
-                "html_url": f"https://github.com/akenon-studio/peras/actions/runs/{id}"}
+    def run_of(self, id, name="release-decision", event="pull_request", status="completed",
+               path=".github/workflows/release-decision.yml", workflow=100):
+        return {"id": id, "name": name, "event": event, "status": status, "path": path,
+                "workflow_id": workflow, "html_url": f"https://github.com/akenon-studio/peras/actions/runs/{id}"}
 
-    def test_a_comment_on_an_open_release_pr_reruns_the_latest_pr_run_on_its_head(self):
+    def test_a_comment_or_label_on_an_open_release_pr_reruns_the_latest_ruleset_run_on_its_head(self):
         runs = [self.run_of(1), self.run_of(3), self.run_of(4, event="issue_comment"),
-                self.run_of(5, name="pr-title-caller"), self.run_of(2, name="release-decision")]
-        code, posted, _ = self.run_main("issue_comment", self.COMMENT, pr(), runs=runs)
-        self.assertEqual(code, 0)
-        self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun"])
-        # a run from an org ruleset's required workflow is found the same way
-        _, posted, _ = self.run_main("issue_comment", self.COMMENT, pr(), runs=[self.run_of(7, name="release-decision")])
-        self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/7/rerun"])
+                self.run_of(5, name="pr-title-caller"), self.run_of(6, path=".github/workflows/other.yml"),
+                self.run_of(2)]
+        for event in (self.COMMENT, self.LABEL):
+            code, posted, _ = self.run_main("rerun", event, pr(), runs=runs)
+            self.assertEqual(code, 0)
+            self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun"])
+
+    def test_a_repos_own_workflow_of_the_same_name_cant_hide_the_rulesets_run(self):
+        runs = [self.run_of(3), self.run_of(8, workflow=200)]
+        _, posted, _ = self.run_main("rerun", self.COMMENT, pr(), runs=runs)
+        self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun",
+                                  "repos/akenon-studio/peras/actions/runs/8/rerun"])
 
     def test_a_run_still_going_is_rerun_once_it_finishes(self):
         polls = [self.run_of(3, status="in_progress"), self.run_of(3)]
-        code, posted, slept = self.run_main("issue_comment", self.COMMENT, pr(),
+        code, posted, slept = self.run_main("rerun", self.COMMENT, pr(),
                                             runs=[self.run_of(3, status="queued")], polls=polls)
         self.assertEqual((code, len(slept)), (0, 2))
         self.assertEqual(posted, ["repos/akenon-studio/peras/actions/runs/3/rerun"])
 
-    def test_a_run_that_never_finishes_fails_the_comments_run(self):
+    def test_a_run_that_never_finishes_fails_the_reruns_run(self):
         polls = [self.run_of(3, status="in_progress")] * release_decision.POLLS
-        code, posted, _ = self.run_main("issue_comment", self.COMMENT, pr(),
+        code, posted, _ = self.run_main("rerun", self.COMMENT, pr(),
                                         runs=[self.run_of(3, status="in_progress")], polls=polls)
         self.assertNotEqual(code, 0)
         self.assertEqual(posted, [])
 
-    def test_any_other_comment_reruns_nothing(self):
+    def test_any_other_comment_or_label_reruns_nothing(self):
         for event, the_pr, runs in (({"issue": {"number": 9, "state": "open"}}, pr(), [self.run_of(3)]),  # an issue
                                     ({"issue": {"number": 9, "state": "closed", "pull_request": {}}}, pr(), [self.run_of(3)]),
                                     (self.COMMENT, ordinary(), [self.run_of(3)]),
+                                    (self.LABEL, ordinary(), [self.run_of(3)]),
+                                    (self.LABEL, pr(state="CLOSED"), [self.run_of(3)]),
                                     (self.COMMENT, pr(), [])):  # no run on the head yet
-            code, posted, _ = self.run_main("issue_comment", event, the_pr, runs=runs)
+            code, posted, _ = self.run_main("rerun", event, the_pr, runs=runs)
             self.assertEqual(code, 0)
             self.assertEqual(posted, [], event)
 
-    def test_another_event_fails(self):
-        self.assertNotEqual(self.run_main("workflow_dispatch", {}, pr())[0], 0)
-        self.assertNotEqual(self.run_main("push", {}, pr())[0], 0)
+    def test_another_mode_fails(self):
+        self.assertNotEqual(self.run_main("dispatch", {}, pr())[0], 0)
 
 
 if __name__ == "__main__":

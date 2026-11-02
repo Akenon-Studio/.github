@@ -269,36 +269,81 @@ class ReusableWorkflowsTest(unittest.TestCase):
             if "checkout" in step.get("uses", ""):
                 self.assertEqual(step["with"]["ref"], "main")
 
-    def test_release_decision_runs_mains_copy_and_reruns_on_a_comment(self):
-        # design 6.3 (.github#248): one job, never skipped or cancelled, main's workflow and script;
-        # a comment's run re-runs the PR's run, so the required name is reported on the PR's head
-        workflow = REUSABLE["release-decision.yml"]
+    def test_release_decision_is_the_rulesets_and_a_comment_reruns_it(self):
+        # design 6.3 (.github#248): the org ruleset runs release-decision.yml from main on PR events
+        # only; one job, never skipped or cancelled, main's script, a read token and no secret
+        import json
+        rulesets = json.loads((WORKFLOWS.parent.parent / "rulesets" / "org-rulesets.json").read_text())
+        ruleset = next(r for r in rulesets["rulesets"] if r["name"] == "Release decision")
+        self.assertEqual(ruleset["repositories"], ["peras", "platform"])
+        self.assertEqual(ruleset["bypass_actors"], [])
+        self.assertEqual(ruleset["rules"], [{"type": "workflows", "parameters": {
+            "do_not_enforce_on_create": True, "workflows": [
+                {"repository": ".github", "path": ".github/workflows/release-decision.yml",
+                 "ref": "refs/heads/main"}]}}])
+        workflow = load("release-decision.yml")
+        self.assertEqual(workflow["on"], {"pull_request": {"types": ["opened", "synchronize", "reopened"]}})
+        self.assertEqual(workflow["permissions"], {"contents": "read", "pull-requests": "read"})
         self.assertEqual(list(workflow["jobs"]), ["decision"])
         job = workflow["jobs"]["decision"]
         self.assertNotIn("if", job)
         self.assertNotIn("concurrency", job)
-        self.assertEqual(job["name"], "decision${{ github.event_name == 'issue_comment' && ' (comment)' || '' }}")
+        self.assertNotIn("concurrency", workflow)
+        self.assertEqual(job["steps"][0]["with"], {"repository": "akenon-studio/.github", "ref": "main",
+                                                   "persist-credentials": False})
+        self.assertIn('scripts/release_decision.py judge "$GITHUB_EVENT_PATH"', job["steps"][-1]["run"])
+        self.assertNotIn("secrets.", (WORKFLOWS / "release-decision.yml").read_text())
+        # the re-run: from main only, never a PR's code, and it reports no check of its own on a head
+        rerun = REUSABLE["release-decision-rerun.yml"]
         want = {"contents": "read", "pull-requests": "read", "actions": "write"}
-        self.assertEqual(workflow["permissions"], want)
-        checkout = job["steps"][0]
-        self.assertEqual(checkout["with"], {"repository": "akenon-studio/.github", "ref": "main",
-                                            "persist-credentials": False})
-        self.assertIn("scripts/release_decision.py", job["steps"][-1]["run"])
-        self.assertNotIn("secrets", (WORKFLOWS / "release-decision.yml").read_text().split("name: release-decision", 1)[1])
-        caller = load("release-decision-caller.yml")
+        self.assertEqual(rerun["permissions"], want)
+        self.assertEqual(rerun["jobs"]["rerun"]["steps"][0]["with"]["ref"], "main")
+        self.assertIn('scripts/release_decision.py rerun "$GITHUB_EVENT_PATH"', rerun["jobs"]["rerun"]["steps"][-1]["run"])
+        self.assertNotIn("secrets.", (WORKFLOWS / "release-decision-rerun.yml").read_text())
+        caller = load("release-decision-rerun-caller.yml")
         self.assertEqual(caller["permissions"], want)  # a called workflow gets no more than this
-        # never pull_request or a dispatch: either runs the branch's copy of the workflow
-        self.assertEqual(set(caller["on"]), {"pull_request_target", "issue_comment"})
-        self.assertEqual(caller["on"]["pull_request_target"]["types"],
-                         ["opened", "synchronize", "reopened", "labeled", "unlabeled"])
-        self.assertEqual(caller["on"]["issue_comment"]["types"], ["created", "edited", "deleted"])
-        self.assertEqual(list(caller["jobs"]), ["release-decision"])
-        # only an issue comment is skipped, and that run never reports on a PR's head
+        # both run the default branch's caller; never pull_request or a dispatch (a branch's copy)
+        self.assertEqual(caller["on"], {"issue_comment": {"types": ["created", "edited", "deleted"]},
+                                        "pull_request_target": {"types": ["labeled", "unlabeled"]}})
         self.assertEqual(caller["jobs"]["release-decision"]["if"],
                          "github.event_name != 'issue_comment' || github.event.issue.pull_request")
-        # the comment's run finds the PR's run by these workflow names
+        # the re-run finds the ruleset's run by the workflow's name and path
         script = (WORKFLOWS.parent.parent / "scripts" / "release_decision.py").read_text()
-        self.assertIn(f'WORKFLOWS = {{"{caller["name"]}", "{workflow["name"]}"}}', script)
+        self.assertIn(f'WORKFLOW, WORKFLOW_PATH, PR_EVENT = "{workflow["name"]}", '
+                      '".github/workflows/release-decision.yml", "pull_request"', script)
+
+class OrgRulesetsTest(unittest.TestCase):
+    """rules.desired_org_rulesets(): what apply-rules.py sends GitHub for org-rulesets.json."""
+
+    def test_each_applies_to_its_repos_or_every_managed_repo(self):
+        import sys
+        from unittest import mock
+        sys.path.insert(0, str(WORKFLOWS.parent.parent / "scripts"))
+        import rules
+        with mock.patch.object(rules, "gh", lambda path: {"id": 7}):
+            got = {r["name"]: r for r in rules.desired_org_rulesets()}
+        self.assertEqual(got["Action pins"]["conditions"]["repository_name"]["include"], rules.managed_repos())
+        self.assertEqual(got["Release decision"]["conditions"]["repository_name"],
+                         {"include": ["peras", "platform"], "exclude": []})
+        for r in got.values():  # only keys GitHub takes
+            self.assertFalse({"repositories", "_comment"} & set(r), r["name"])
+            for w in r["rules"][0]["parameters"]["workflows"]:
+                self.assertEqual((w["repository_id"], "repository" in w), (7, False))
+
+    def test_a_repo_not_in_repos_txt_is_refused(self):
+        import sys
+        from unittest import mock
+        sys.path.insert(0, str(WORKFLOWS.parent.parent / "scripts"))
+        import rules
+        real = rules.load
+        def load(name):
+            data = real(name)
+            if name == "org-rulesets.json":
+                data["rulesets"][-1]["repositories"] = ["peras", "nope"]
+            return data
+        with mock.patch.object(rules, "gh", lambda path: {"id": 7}), mock.patch.object(rules, "load", load):
+            with self.assertRaises(SystemExit):
+                rules.desired_org_rulesets()
 
 
 class PrAuthorTest(unittest.TestCase):

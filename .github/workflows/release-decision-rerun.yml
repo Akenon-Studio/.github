@@ -1,0 +1,44 @@
+# Reusable: re-runs the `release-decision` check on a Release PR's head when a comment or a label
+# changes (design 6.3; scripts/release_decision.py rerun). The org ruleset "Release decision" runs
+# release-decision.yml only on pull_request events, so without this a partner's comment would not be
+# counted until the next push. Each repo the ruleset names calls it from main with:
+#
+#   on: { issue_comment: { types: [created, edited, deleted] },
+#         pull_request_target: { types: [labeled, unlabeled] } }
+#   permissions: { contents: read, pull-requests: read, actions: write }
+#   jobs: { release-decision: { if: github.event_name != 'issue_comment' || github.event.issue.pull_request,
+#                               uses: akenon-studio/.github/.github/workflows/release-decision-rerun.yml@main } }
+#
+# Both events run the default branch's caller, never a release branch's, and this file and the
+# script come from `.github` main. It only re-runs the ruleset's own run, which judges again with
+# main's script: it reports no check of its own on the PR's head, so neither it nor a caller changed
+# by a PR can pass a Release PR. Without a caller a comment re-runs nothing and the check stays red
+# until a person re-runs it (fails closed). A called workflow gets no more permission than its
+# caller grants, so the caller grants all three. It holds no secret.
+name: release-decision-rerun
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write # re-runs the check on the Release PR's head
+
+jobs:
+  rerun:
+    name: rerun
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get main's script and team list
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: akenon-studio/.github
+          ref: main
+          persist-credentials: false
+
+      - name: Re-run the check on the Release PR's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release_decision.py rerun "$GITHUB_EVENT_PATH"

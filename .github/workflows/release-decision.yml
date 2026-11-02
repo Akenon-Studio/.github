@@ -1,35 +1,30 @@
-# Reusable: the `release-decision` check (design 6.3, 6.6, 7.12; scripts/release_decision.py). A
-# Release PR (the release app's, on a `release-please--` branch, or labelled `autorelease: pending`)
-# passes only once a partner's own comment on it, without the agent marker, is newer than the push
-# that made its head commit its head; every other PR passes. A repo with a Release PR calls it with:
+# Required by the org ruleset "Release decision" in rulesets/org-rulesets.json (design 6.3, 6.4,
+# 6.6, 7.12): the `release-decision` check (scripts/release_decision.py). A Release PR (the release
+# app's, on a `release-please--` branch, or labelled `autorelease: pending`) passes only once a
+# partner's own comment on it, without the agent marker, is newer than the push that made its head
+# commit its head; every other PR passes.
 #
-#   on: { pull_request_target: { types: [opened, synchronize, reopened, labeled, unlabeled] },
-#         issue_comment: { types: [created, edited, deleted] } }
-#   permissions: { contents: read, pull-requests: read, actions: write }
-#   jobs: { release-decision: { if: github.event_name != 'issue_comment' || github.event.issue.pull_request,
-#                               uses: akenon-studio/.github/.github/workflows/release-decision.yml@main } }
+# The ruleset runs main's copy of this workflow from this repo, and it takes the script and the team
+# list from main too, so no repo, branch or PR can change the check that judges it (in this repo,
+# GitHub also runs the PR's own copy as an ordinary workflow, which nothing requires). It checks out
+# no PR code and holds no secret: only the workflow's read token.
 #
-# A called workflow gets no more permission than its caller grants, so the caller grants all three.
-# pull_request_target runs main's workflow, not the PR's, so a push to the release branch can't
-# change the check that judges it; it checks out no PR code and holds no secret. The required check
-# is `release-decision / decision`, reported on the PR's head. A comment's own run (`decision
-# (comment)`, on main) re-runs the latest PR run on the head once it has finished, so the comment
-# is counted under the required name. One job, never skipped (a skipped job passes a required
-# check) and never cancelled; the script comes from main. The script judges a run of this workflow
-# the same way if an org ruleset requires it instead of a caller.
+# A ruleset's workflow runs only on pull_request events, so a comment (or a label change) re-runs
+# this run on the PR's head through release-decision-rerun.yml, which each repo the ruleset names
+# calls from main (release-decision-rerun-caller.yml). One job, never skipped (a skipped job passes)
+# and never cancelled (a ruleset's workflow may not cancel in progress).
 name: release-decision
 
 on:
-  workflow_call:
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
   pull-requests: read
-  actions: write # a comment re-runs the check on the Release PR's head
 
 jobs:
   decision:
-    name: decision${{ github.event_name == 'issue_comment' && ' (comment)' || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -40,7 +35,13 @@ jobs:
           ref: main
           persist-credentials: false
 
+      # Only the PR that brings the check (.github#248) runs before main has it: then, in this repo
+      # only, nothing is judged (the ruleset that requires it is applied after that PR merges).
       - name: A partner's comment records the decision to cut the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release_decision.py "$GITHUB_EVENT_PATH"
+        run: |
+          if [ ! -f scripts/release_decision.py ] && [ "${GITHUB_REPOSITORY,,}" = "akenon-studio/.github" ]; then
+            echo "main has no release_decision.py yet"; exit 0
+          fi
+          python3 scripts/release_decision.py judge "$GITHUB_EVENT_PATH"
