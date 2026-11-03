@@ -11,9 +11,10 @@ naming the commenter's own mandate, "... under @<commenter>'s mandate over <scop
 and is at least as new as the latest push to the PR's head branch that made the head
 commit its head, as GitHub's repository activity API records it on the server. No commit date is read
 (both come from the pushing machine's clock), and a head with no such push, such as a fork's, fails.
-Every other PR passes. The check can't see whether a mandate is live or covers the release (that
-list is the partner's own gate-handover.json); that rests on the session (7.12), and it is no weaker
-than an unmarked comment from the same login.
+Every other PR passes. As 6.3 says, the check reads no wording but that line: it can't see whether
+the mandate is live or covers the release (a Release PR is in a mandate's scope only under a phase
+mandate or one that names it, 7.12; the mandates list is the partner's own gate-handover.json), so
+that rests on the session, as the `Decision:` line's honesty does, an accepted risk (7.12).
 
 Usage: scripts/release_decision.py judge|rerun "$GITHUB_EVENT_PATH"
 (GITHUB_REPOSITORY from Actions; gh reads GH_TOKEN)
@@ -129,7 +130,8 @@ def problems(pr, people, pushed):
             f"({pushed}), a partner (a person in .github's rulesets/teams.json) comments on it either "
             "themselves, without the agent marker, or through their mandated lead session, with the "
             "marker and a line \"Decision: the agent's call, taken under @<their login>'s mandate over "
-            "<scope>.\" (design 7.12). Every push needs a new comment, since it changes what would ship "
+            "<scope>.\" (design 7.12; a Release PR is in a mandate's scope only under a phase mandate or "
+            "one that names it). Every push needs a new comment, since it changes what would ship "
             "(design 6.3, 6.6). The comment runs this check again."]
 
 
