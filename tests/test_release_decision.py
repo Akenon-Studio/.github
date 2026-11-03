@@ -1,5 +1,5 @@
-"""Tests for scripts/release_decision.py: a Release PR merges only on a partner's own comment newer
-than the push that made its head commit its head (design 6.3). Run: python3 -m unittest discover tests"""
+"""Tests for scripts/release_decision.py: a Release PR merges only on a partner's comment (their own,
+or their mandated session's, 7.12) newer than the push that made its head commit its head (design 6.3). Run: python3 -m unittest discover tests"""
 
 import json
 import os

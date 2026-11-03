@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The `release-decision` check (design 6.3, 6.6, 7.12): a Release PR merges only once a partner's own
-comment on it records the decision to cut the release, made after the PR's head commit became its head.
+"""The `release-decision` check (design 6.3, 6.6, 7.12): a Release PR merges only once a partner's
+comment on it (their own, or their mandated lead session's) records the decision to cut the release, made after the PR's head commit became its head.
 
 A Release PR is one the release app (`akenon-studio-release`, rulesets/bots.json) opened, one on a
 `release-please--` branch, or one labelled `autorelease: pending`, now or ever (taking the label off
