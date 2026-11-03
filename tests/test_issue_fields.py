@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 from issue_fields import (all_problems, assignee_problems, board_values, check,  # noqa: E402
                           confirmation_problems, confirmed_by_person, finished_parent_problems,
-                          link_problems, load_forms, reclose_due, source_problems,
+                          link_problems, load_forms, needs_parent, reclose_due, source_problems,
                           open_sub_issues, parse_body, people_assigned, problems_text,
                           reopen_reasons, reopen_text, start_status, ancestors, epic_of, epic_options,
                           want_reason, ready_problems, unread_cancel, cancel_problems,
@@ -203,9 +203,13 @@ class LinkProblemsTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("no parent", problems[0])
 
-    def test_epics_and_untriaged_bugs_need_no_parent(self):
+    def test_epics_need_no_parent(self):
         self.assertEqual(link_problems("Epic", False, "Todo", 0), [])
-        self.assertEqual(link_problems("Bug", False, "Todo", 0), [])
+
+    def test_an_intent_needs_a_parent_whoever_opened_it(self):
+        self.assertTrue(needs_parent("Intent"))
+        self.assertTrue(needs_parent("Intent", by_bot=True))
+        self.assertFalse(needs_parent("Task", by_bot=True))
 
     def test_an_intent_without_a_parent_fails(self):
         # design 6.8: an intent's parent is the epic, part or step it serves (handbook#367)

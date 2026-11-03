@@ -13,8 +13,10 @@ them; once fixed, the label goes and the comment says so. The issue body is the 
 board follows.
 
 Links between issues are checked too (design 6.8): every issue has a parent unless it is top level
-(an Epic, which only a person creates, design 6.6), a Bug report not yet triaged, or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report), and an epic has none; an issue whose
-board Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
+(an Epic, which only a person creates, design 6.6), a Bug report not yet triaged, or an issue a
+bot opened (the org's GitHub App, e.g. the settings-drift report); an intent always needs one, the
+epic, part or step it serves, whoever opened it; and an epic has none. An issue whose board
+Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
 flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
 and a closed issue with open sub-issues is reopened with a comment naming them. Adding a
 sub-issue to a closed parent sends the parent no event, so an open issue's own run reopens its
@@ -193,14 +195,14 @@ NO_PARENT_TYPES = {"Epic", "Bug"}  # Bug: a report needs no parent until it is t
 
 
 def needs_parent(issue_type, by_bot=False):
-    """False for issues design 6.8 lets stand alone."""
-    return not (issue_type in NO_PARENT_TYPES or by_bot)
+    """False for issues design 6.8 lets stand alone. An intent is never one, whoever opened it."""
+    return issue_type == "Intent" or not (issue_type in NO_PARENT_TYPES or by_bot)
 
 
 def link_problems(issue_type, has_parent, status, blocked_by, by_bot=False):
     """Problems with an issue's links (design 6.8, checks 3 and 4). `blocked_by` is a count."""
     problems = []
-    if not has_parent and issue_type == "Intent":
+    if not has_parent and needs_parent(issue_type, by_bot) and issue_type == "Intent":
         problems.append("The intent has no parent. Add it as a sub-issue of the epic, part or step "
                         "it serves, so its work counts toward that epic (design 6.8); Peras's "
                         "intake refuses it until then. If no epic covers it yet, ask a partner to "
