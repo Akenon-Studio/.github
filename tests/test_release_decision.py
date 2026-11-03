@@ -1,5 +1,5 @@
-"""Tests for scripts/release_decision.py: a Release PR merges only on a partner's own comment newer
-than the push that made its head commit its head (design 6.3). Run: python3 -m unittest discover tests"""
+"""Tests for scripts/release_decision.py: a Release PR merges only on a partner's comment (their own,
+or their mandated session's, 7.12) newer than the push that made its head commit its head (design 6.3). Run: python3 -m unittest discover tests"""
 
 import json
 import os
@@ -104,6 +104,40 @@ class DecisionTest(unittest.TestCase):
     def test_an_agents_comment_never_counts(self):
         for body in ("<!-- agent -->\nCut it.", "Cut it. <!--agent-->", "<!-- AGENT -->"):
             self.assertEqual(len(problems(pr(comments=[comment(body=body)]), PEOPLE, PUSHED)), 1, body)
+
+    def test_a_mandated_sessions_comment_naming_the_commenters_own_mandate_passes(self):
+        line = "Decision: the agent's call, taken under @RuvinduH's mandate over Akenon-Studio/handbook#142."
+        for body in (f"<!-- agent -->\nCutting it.\n\n{line}", f"Cut. <!--agent-->\n{line}",
+                     f"<!-- agent -->\n{line.replace(chr(39), chr(0x2019))}"):
+            self.assertEqual(problems(pr(comments=[comment(body=body)]), PEOPLE, PUSHED), [], body)
+        # the login's case doesn't matter
+        lower = f"<!-- agent -->\n{line.replace('@RuvinduH', '@ruvinduh')}"
+        self.assertEqual(problems(pr(comments=[comment(body=lower)]), PEOPLE, PUSHED), [])
+
+    def test_a_marked_comment_naming_another_logins_mandate_fails(self):
+        body = "<!-- agent -->\nDecision: the agent's call, taken under @Thytus777's mandate over handbook#142."
+        self.assertEqual(len(problems(pr(comments=[comment(body=body)]), PEOPLE, PUSHED)), 1)
+
+    def test_a_marked_comment_without_a_mandate_decision_line_fails(self):
+        for body in ("<!-- agent -->\nDecision: cut it.",
+                     "<!-- agent -->\nAs under @RuvinduH's mandate over handbook#142, cut it.",
+                     "<!-- agent -->\nDecision: the agent's call, taken under @RuvinduH's mandate over"):
+            self.assertEqual(len(problems(pr(comments=[comment(body=body)]), PEOPLE, PUSHED)), 1, body)
+
+    def test_a_mandated_comment_older_than_the_push_fails(self):
+        body = "<!-- agent -->\nDecision: the agent's call, taken under @RuvinduH's mandate over handbook#142."
+        old = comment(body=body, at="2026-11-02T09:59:59Z")
+        self.assertEqual(len(problems(pr(comments=[old]), PEOPLE, PUSHED)), 1)
+
+    def test_a_mandated_comment_from_outside_the_teams_fails(self):
+        body = "<!-- agent -->\nDecision: the agent's call, taken under @outsider's mandate over handbook#142."
+        self.assertEqual(len(problems(pr(comments=[comment(login="outsider", body=body)]), PEOPLE, PUSHED)), 1)
+
+    def test_the_failure_names_both_ways_to_record_the_decision(self):
+        found = problems(pr(), PEOPLE, PUSHED)[0]
+        self.assertIn("without the agent marker", found)
+        self.assertIn("mandate over", found)
+        self.assertIn("7.12", found)
 
     def test_only_a_person_in_the_teams_counts(self):
         self.assertEqual(len(problems(pr(comments=[comment(login="outsider")]), PEOPLE, PUSHED)), 1)

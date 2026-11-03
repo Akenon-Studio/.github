@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""The `release-decision` check (design 6.3, 6.6, 7.12): a Release PR merges only once a partner's own
-comment on it records the decision to cut the release, made after the PR's head commit became its head.
+"""The `release-decision` check (design 6.3, 6.6, 7.12): a Release PR merges only once a partner's
+comment on it (their own, or their mandated lead session's) records the decision to cut the release, made after the PR's head commit became its head.
 
 A Release PR is one the release app (`akenon-studio-release`, rulesets/bots.json) opened, one on a
 `release-please--` branch, or one labelled `autorelease: pending`, now or ever (taking the label off
 doesn't make it an ordinary PR). It passes when a comment on it is from a person in
-rulesets/teams.json (rules.org_people(); a bot's never counts), has no agent marker (`<!-- agent -->`,
-design 6.4) and is at least as new as the latest push to the PR's head branch that made the head
+rulesets/teams.json (rules.org_people(); a bot's never counts), is the partner's own (no agent marker,
+`<!-- agent -->`, design 6.4) or their mandated lead session's (the marker and a `Decision:` line
+naming the commenter's own mandate, "... under @<commenter>'s mandate over <scope>", design 7.12),
+and is at least as new as the latest push to the PR's head branch that made the head
 commit its head, as GitHub's repository activity API records it on the server. No commit date is read
 (both come from the pushing machine's clock), and a head with no such push, such as a fork's, fails.
-Every other PR passes.
+Every other PR passes. As 6.3 says, the check reads no wording but that line: it can't see whether
+the mandate is live or covers the release (a Release PR is in a mandate's scope only under a phase
+mandate or one that names it, 7.12; the mandates list is the partner's own gate-handover.json), so
+that rests on the session, as the `Decision:` line's honesty does, an accepted risk (7.12).
 
 Usage: scripts/release_decision.py judge|rerun "$GITHUB_EVENT_PATH"
 (GITHUB_REPOSITORY from Actions; gh reads GH_TOKEN)
@@ -39,6 +44,8 @@ RELEASE_APP = "akenon-studio-release"
 RELEASE_BRANCH = "release-please--"
 RELEASE_LABEL = "autorelease: pending"
 AGENT = re.compile(r"<!--\s*agent\s*-->", re.IGNORECASE)  # what an agent's comment carries (design 6.4)
+# A mandated session's decision line (design 7.12): "Decision: ... under @<login>'s mandate over <scope>"
+MANDATE = re.compile(r"^\s*Decision:.*\bunder @([A-Za-z0-9-]+)['\u2019]s mandate over \S", re.IGNORECASE | re.MULTILINE)
 # The ruleset's runs of the check: its workflow's name and path, on a pull_request event
 WORKFLOW, WORKFLOW_PATH, PR_EVENT = "release-decision", ".github/workflows/release-decision.yml", "pull_request"
 PUSHES = {"push", "force_push", "branch_creation"}  # activity types that move a branch's head
@@ -86,6 +93,14 @@ def head_pushed_at(activity, branch, sha):
     return max(times, key=when) if times else None
 
 
+def records_decision(body, login):
+    """True when a partner's comment body records the decision: their own (no agent marker), or their
+    mandated session's (the marker and a `Decision:` line naming `login`'s own mandate, 7.12)."""
+    if not AGENT.search(body):
+        return True
+    return any(named.lower() == login for named in MANDATE.findall(body))
+
+
 def decision(pr, people, pushed):
     """The newest comment that records the decision to cut this release, or None. `people` are the
     partners' lowercase logins; `pushed` is when the head commit became the head."""
@@ -93,8 +108,10 @@ def decision(pr, people, pushed):
         return None
     for comment in reversed(pr["comments"]["nodes"]):
         author = comment.get("author") or {}
-        if (author.get("__typename") == "User" and (author.get("login") or "").lower() in people
-                and not AGENT.search(comment.get("body") or "") and when(comment["createdAt"]) >= when(pushed)):
+        login = (author.get("login") or "").lower()
+        if (author.get("__typename") == "User" and login in people
+                and records_decision(comment.get("body") or "", login)
+                and when(comment["createdAt"]) >= when(pushed)):
             return comment
     return None
 
@@ -109,11 +126,13 @@ def problems(pr, people, pushed):
                 "shown to postdate it (design 6.3). release-please opens its PR from a branch in this repo."]
     if decision(pr, people, pushed):
         return []
-    return [f"Release PR #{pr['number']} has no decision to cut the release: a partner (a person in "
-            ".github's rulesets/teams.json) comments on it, without the agent marker, after its head "
-            f"was pushed ({pushed}). Every push needs a new comment, since it changes what would ship "
-            "(design 6.3, 6.6; 7.12 for a mandated session's merge, whose `Decision:` line cites that "
-            "comment). The comment runs this check again."]
+    return [f"Release PR #{pr['number']} has no decision to cut the release: after its head was pushed "
+            f"({pushed}), a partner (a person in .github's rulesets/teams.json) comments on it either "
+            "themselves, without the agent marker, or through their mandated lead session, with the "
+            "marker and a line \"Decision: the agent's call, taken under @<their login>'s mandate over "
+            "<scope>.\" (design 7.12; a Release PR is in a mandate's scope only under a phase mandate or "
+            "one that names it). Every push needs a new comment, since it changes what would ship "
+            "(design 6.3, 6.6). The comment runs this check again."]
 
 
 def pr_by_number(repo, number):
