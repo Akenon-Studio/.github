@@ -13,8 +13,7 @@ them; once fixed, the label goes and the comment says so. The issue body is the 
 board follows.
 
 Links between issues are checked too (design 6.8): every issue has a parent unless it is top level
-(an Epic, which only a person creates, design 6.6; or an Intent), a Bug report not yet triaged,
-or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report), and an epic has none; an issue whose
+(an Epic, which only a person creates, design 6.6), a Bug report not yet triaged, or an issue a bot opened (the org's GitHub App, e.g. the settings-drift report), and an epic has none; an issue whose
 board Status is Blocked has a "blocked by" link; an open issue whose sub-issues are all closed is
 flagged, since a parent holds no work of its own (close it, or add a sub-issue for the work left);
 and a closed issue with open sub-issues is reopened with a comment naming them. Adding a
@@ -188,8 +187,9 @@ def confirmation_problems(issue_type, text, confirmed):
             "agent's batch."]
 
 
-# The top level (design 6.6): epics, which only a person creates, and intents.
-NO_PARENT_TYPES = {"Epic", "Intent", "Bug"}  # Bug: a report needs no parent until it is triaged
+# The top level (design 6.6): epics, which only a person creates. An intent's parent is the epic,
+# part or step it serves (design 6.8, handbook#367).
+NO_PARENT_TYPES = {"Epic", "Bug"}  # Bug: a report needs no parent until it is triaged
 
 
 def needs_parent(issue_type, by_bot=False):
@@ -200,10 +200,15 @@ def needs_parent(issue_type, by_bot=False):
 def link_problems(issue_type, has_parent, status, blocked_by, by_bot=False):
     """Problems with an issue's links (design 6.8, checks 3 and 4). `blocked_by` is a count."""
     problems = []
-    if not has_parent and needs_parent(issue_type, by_bot):
+    if not has_parent and issue_type == "Intent":
+        problems.append("The intent has no parent. Add it as a sub-issue of the epic, part or step "
+                        "it serves, so its work counts toward that epic (design 6.8); Peras's "
+                        "intake refuses it until then. If no epic covers it yet, ask a partner to "
+                        "place it: only a person creates an epic.")
+    elif not has_parent and needs_parent(issue_type, by_bot):
         problems.append("The issue has no parent. Add it as a sub-issue of the epic, step or part "
                         "it belongs to (deferred findings and later-phase work go under handbook#83, "
-                        "Deferred work). Only epics, intents and untriaged bugs stand alone.")
+                        "Deferred work). Only epics and untriaged bugs stand alone.")
     if has_parent and issue_type == "Epic":
         problems.append("An epic is top level (design 6.6): remove its parent, or make it a Task "
                         "if it is a part of another epic.")
