@@ -202,7 +202,7 @@ def needs_parent(issue_type, by_bot=False):
 def link_problems(issue_type, has_parent, status, blocked_by, by_bot=False):
     """Problems with an issue's links (design 6.8, checks 3 and 4). `blocked_by` is a count."""
     problems = []
-    if not has_parent and needs_parent(issue_type, by_bot) and issue_type == "Intent":
+    if not has_parent and issue_type == "Intent":
         problems.append("The intent has no parent. Add it as a sub-issue of the epic, part or step "
                         "it serves, so its work counts toward that epic (design 6.8); Peras's "
                         "intake refuses it until then. If no epic covers it yet, ask a partner to "
