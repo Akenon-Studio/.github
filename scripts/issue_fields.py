@@ -209,8 +209,9 @@ def link_problems(issue_type, has_parent, status, blocked_by, by_bot=False):
                         "place it: only a person creates an epic.")
     elif not has_parent and needs_parent(issue_type, by_bot):
         problems.append("The issue has no parent. Add it as a sub-issue of the epic, step or part "
-                        "it belongs to (deferred findings and later-phase work go under handbook#83, "
-                        "Deferred work). Only epics and untriaged bugs stand alone.")
+                        "it belongs to (workflow bugs go under the current Peras and workflow fixes "
+                        "epic, handbook#401 in Phase 2; ask a partner to place work nothing fits, "
+                        "design 6.8). Only epics and untriaged bugs stand alone.")
     if has_parent and issue_type == "Epic":
         problems.append("An epic is top level (design 6.6): remove its parent, or make it a Task "
                         "if it is a part of another epic.")

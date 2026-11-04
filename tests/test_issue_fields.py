@@ -202,6 +202,8 @@ class LinkProblemsTest(unittest.TestCase):
         problems = link_problems("Task", False, "Todo", 0)
         self.assertEqual(len(problems), 1)
         self.assertIn("no parent", problems[0])
+        self.assertIn("Peras and workflow fixes", problems[0])
+        self.assertNotIn("handbook#83", problems[0])
 
     def test_epics_need_no_parent(self):
         self.assertEqual(link_problems("Epic", False, "Todo", 0), [])
