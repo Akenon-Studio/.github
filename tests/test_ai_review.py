@@ -242,7 +242,7 @@ class RequestTest(unittest.TestCase):
         self.assertGreater(docs.index("these meanings replace"), docs.index("- critical: harm"))
         system, _ = request("", "design", "t", "d", {}, "diff", repo="handbook")
         self.assertEqual(system[0]["text"], docs)
-        self.assertNotIn("cache_control", system[1], "the PR's own design changes on most pushes")
+        self.assertNotIn("cache_control", system[1], "the PR's own design changes on most rounds")
 
     def test_the_shared_part_is_cached_and_a_later_round_says_so(self):
         system, user = request("rules", "design", "t", "d", {"a.py": "x = 1"}, "diff")
@@ -452,7 +452,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(len(self.posted), 1)
 
     def test_a_cut_off_review_records_no_fingerprint_and_fails(self):
-        # .github#87: the diff must be reviewed again by a re-run or the next push
+        # .github#87: the diff must be reviewed again by a re-run or the next round
         def cut_off(system, user):
             e = CutOff("max_tokens")
             e.usage = {"model": "m", "input": 1, "cache_read": 0, "cache_write": 0, "output": 9}
@@ -1146,6 +1146,67 @@ class PerasMainTest(unittest.TestCase):
         posted, user = self.run_main({"login": "akenon-studio-peras[bot]", "type": "Bot"})
         self.assertEqual((posted, user), ([], ""))
 
+
+
+class AskClaudeTest(unittest.TestCase):
+    """The request CI sends (design 6.4, Akenon-Studio/handbook#404): Sonnet 5.5 at medium effort,
+    adaptive thinking, the cached system as built, and the tokens it used logged and recorded."""
+
+    def test_asks_sonnet_at_medium_with_the_cached_prefix_and_records_usage(self):
+        import contextlib
+        import io
+        import types
+        seen = {}
+        usage = types.SimpleNamespace(input_tokens=10, output_tokens=5, cache_read_input_tokens=100,
+                                      cache_creation_input_tokens=0)
+        message = types.SimpleNamespace(model="claude-sonnet-5-5", usage=usage, stop_reason="end_turn",
+                                        content=[types.SimpleNamespace(type="text", text='{"summary": "ok"}')])
+
+        class Stream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get_final_message(self):
+                return message
+
+        def stream(**kwargs):
+            seen.update(kwargs)
+            return Stream()
+
+        fake = types.SimpleNamespace(messages=types.SimpleNamespace(stream=stream))
+        saved_client, saved_mod = ai_review.client, sys.modules.get("anthropic")
+        sys.modules["anthropic"] = types.SimpleNamespace(BadRequestError=type("E", (Exception,), {}))
+        ai_review.client = lambda: fake
+        try:
+            system, user = request("rules", "design", "t", "d", {}, "diff", repo="peras")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                review, used = ai_review.ask_claude(system, user)
+        finally:
+            ai_review.client = saved_client
+            if saved_mod is None:
+                sys.modules.pop("anthropic", None)
+            else:
+                sys.modules["anthropic"] = saved_mod
+        self.assertEqual(review, {"summary": "ok"})
+        self.assertEqual((ai_review.MODEL, ai_review.EFFORT), ("claude-sonnet-5-5", "medium"))
+        self.assertEqual(seen["model"], "claude-sonnet-5-5")
+        self.assertEqual(seen["output_config"]["effort"], "medium")
+        self.assertEqual(seen["output_config"]["format"]["type"], "json_schema")
+        self.assertEqual(seen["thinking"], {"type": "adaptive"})
+        # Sonnet 5.5 refuses sampling parameters and forced tool choice (they 400)
+        for refused in ("temperature", "top_p", "top_k", "tool_choice"):
+            self.assertNotIn(refused, seen)
+        # the stable prefix first and cached, the PR after it
+        self.assertEqual(seen["system"], system)
+        self.assertEqual(system[-1]["cache_control"], {"type": "ephemeral", "ttl": "1h"})
+        self.assertEqual(seen["messages"], [{"role": "user", "content": user}])
+        self.assertIn("+100 cached", out.getvalue())
+        self.assertEqual(used["cache_read"], 100)
+        self.assertEqual(used["requested"], "claude-sonnet-5-5")
 
 
 if __name__ == "__main__":

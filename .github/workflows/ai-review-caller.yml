@@ -4,7 +4,7 @@ on:
   # main's copy of this workflow, never the PR's: the review app's key is in the `ai-review`
   # environment, which only main can use (ai-review.yml)
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened]
 
 permissions:
   contents: read

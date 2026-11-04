@@ -127,6 +127,9 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertEqual(checkout["with"]["persist-credentials"], False)
         caller = load("ai-review-caller.yml")
         self.assertEqual(list(caller["on"]), ["pull_request_target"])
+        # a round when a PR opens, reopens or is marked ready, never on a push alone (design 6.4,
+        # Akenon-Studio/handbook#404: cost)
+        self.assertEqual(caller["on"]["pull_request_target"]["types"], ["opened", "ready_for_review", "reopened"])
         self.assertNotIn("pull-requests", caller["permissions"])
         self.assertEqual(caller["jobs"]["ai-review"]["secrets"]["AI_REVIEW_APP_PRIVATE_KEY"],
                          "${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}")
