@@ -79,7 +79,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
           ISSUES_TOKEN: ${{ steps.issues.outputs.token }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}  # also reads the AI review's runs (actions: write includes read)
         run: |
           status=0
           python3 .akenon-github/scripts/merge_lane.py || status=$?

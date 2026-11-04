@@ -133,7 +133,7 @@ MIN_CHARS = 25  # shorter than this together (`}`, `return x`) is in most files:
 # USD per million tokens: input, cache write (1 hour), cache read, output. Matched by prefix, so a
 # dated snapshot id prices too. platform.claude.com/docs/en/about-claude/pricing, read 2026-10-10
 # (Opus 5.5's cache reads are 0.05x input, not the usual 0.1x).
-PRICES = {"claude-opus-5-5": (4.0, 8.0, 0.20, 20.0)}
+PRICES = {"claude-opus-5-5": (4.0, 8.0, 0.20, 20.0), "claude-sonnet-5-5": (2.0, 4.0, 0.20, 10.0)}
 
 PRS_QUERY = """query($q: String!, $after: String) {
   search(query: $q, type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor }

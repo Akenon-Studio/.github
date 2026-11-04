@@ -83,6 +83,9 @@ class PartsTest(unittest.TestCase):
         # a dated snapshot id, or priced on the model that was asked for
         self.assertAlmostEqual(cost({"model": "claude-opus-5-5-20261001", "output": 1_000_000}), 20)
         self.assertAlmostEqual(cost({"model": "other", "requested": "claude-opus-5-5", "input": 1_000_000}), 4)
+        # CI's reviewer since Akenon-Studio/handbook#404: half Opus's price, the same cache reads
+        self.assertAlmostEqual(cost({"model": "claude-sonnet-5-5", "input": 1_000_000, "output": 100_000,
+                                     "cache_read": 1_000_000, "cache_write": 1_000_000}), 2 + 1 + 0.2 + 4)
 
 
 class RecordTest(unittest.TestCase):

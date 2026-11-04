@@ -127,6 +127,15 @@ class ReusableWorkflowsTest(unittest.TestCase):
         self.assertEqual(checkout["with"]["persist-credentials"], False)
         caller = load("ai-review-caller.yml")
         self.assertEqual(list(caller["on"]), ["pull_request_target"])
+        # a round when a PR opens, reopens or is marked ready; a push starts one only on the Peras
+        # app's draft, skipped at the caller so no runner starts (design 6.4, Akenon-Studio/handbook#404)
+        self.assertEqual(caller["on"]["pull_request_target"]["types"],
+                         ["opened", "synchronize", "ready_for_review", "reopened"])
+        gate = caller["jobs"]["ai-review"]["if"]
+        self.assertIn("github.event.action != 'synchronize'", gate)
+        self.assertIn("github.event.pull_request.draft", gate)
+        self.assertIn("github.event.pull_request.user.login == 'akenon-studio-peras[bot]'", gate)
+        self.assertIn("github.event.pull_request.user.type == 'Bot'", gate)
         self.assertNotIn("pull-requests", caller["permissions"])
         self.assertEqual(caller["jobs"]["ai-review"]["secrets"]["AI_REVIEW_APP_PRIVATE_KEY"],
                          "${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}")

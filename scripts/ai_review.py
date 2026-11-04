@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """AI review of a PR (design 6.4: advisory; comments only, never approves).
 
-Round one is the full review: the strongest model, more effort, no cap on findings, with the PR,
-the repo's CLAUDE.md, the design sections that apply to the repo and every changed file in full.
+Round one is the full review: Sonnet 5.5 at medium effort (for cost), no cap on findings, with the
+PR, the repo's CLAUDE.md, the design sections that apply to the repo and every changed file in full.
 Each finding carries an absolute severity (critical, major, minor, nit) and a confidence; critical
 and major findings become review threads, minor ones and nits lines in the summary. Later rounds
 review only the changes since the last review, with the earlier findings and the replies to them;
@@ -14,7 +14,10 @@ A push that leaves the PR's diff as it was (bringing `main` in without conflicts
 review: each review records the diff's `git patch-id --verbatim`, which ignores line numbers but not
 whitespace (indentation is code in Python and YAML), with the repo's CLAUDE.md, so a new rule
 brought in from `main` does get a review (design 6.4). A review cut off before it finished records
-no fingerprint and fails the job, so a re-run or the next push reviews the diff again.
+no fingerprint and fails the job, so a re-run or the next round asked for reviews the diff again.
+A round runs when a PR is opened, reopened or marked ready for review, and on a push only to the
+Peras app's draft or, in handbook, the merge lane's update (design 6.2, 6.4, the callers' `if`): another author asks for a later round by
+converting the PR to a draft and marking it ready again, or by closing and reopening it.
 
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
 (GitHub's tokens are single-use there), so no API key exists anywhere.
@@ -57,8 +60,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-opus-5-5")
-EFFORT = "high"
+# Sonnet at medium effort, for cost (design 6.4, Akenon-Studio/handbook#404); the local review
+# (review-branch.py) keeps the strongest model at its own effort
+MODEL = os.environ.get("AI_REVIEW_MODEL", "claude-sonnet-5-5")
+EFFORT = "medium"
 MAX_TOKENS = 64000  # no cap on findings: the output limit is the only bound
 MARKER = "<!-- ai-review -->"  # on every inline comment this script posts, to find them again
 # Who posts the reviews: the review's own GitHub App (ai-review.yml), which nothing else can post as
@@ -527,7 +532,7 @@ def request(claude_md, design, title, description, files, diff_text, later=None,
     message to keep the cached prefix the same. A later round's `files` are those the changes
     touch (all the PR's, when the design moved on `main`: later_paths), and it gets no `diff_text`. `history` is the earlier rounds for a full review that isn't
     the first (CLAUDE.md changed, or too much changed), so it doesn't repeat what was settled. For
-    the design's own repo the design is the PR's, which most pushes change, so it isn't cached:
+    the design's own repo the design is the PR's, which most rounds change, so it isn't cached:
     writing it to the cache costs more than reading it plainly. `design_changes` is, in a later
     round there, the design's diff brought in from `main` (design_moved), labelled as such."""
     shared = {"type": "text", "text": tagged("claude_md", claude_md) + "\n\n" + tagged("design", design)}
@@ -1020,11 +1025,11 @@ def main(argv):
         try:
             found, usage = ask_claude(system, user)
         except CutOff as e:
-            # No fingerprint: this diff was not reviewed, so a re-run or the next push reviews it
+            # No fingerprint: this diff was not reviewed, so a re-run or the next round reviews it
             github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body={
                 "event": "COMMENT", "commit_id": pr["head"]["sha"],
                 "body": f"**AI review (advisory)**\n\nThe review was cut off ({e}) before it finished. "
-                        "Re-run the `ai-review` job, or push again." + usage_marker(e.usage)})
+                        "Re-run the `ai-review` job." + usage_marker(e.usage)})
             print(f"Cut off ({e}); posted a note and recorded no fingerprint.")
             return 1
         review = to_github(found, files, left_out, earlier_comments(repo, number, token),
