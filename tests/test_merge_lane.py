@@ -25,7 +25,7 @@ def pr(contexts=None, state="OPEN", draft=False, mergeable="MERGEABLE", status="
     if contexts is None:
         contexts = [run("pr-title / checks"), run("security-scan / code")]
     return {"number": 7, "state": state, "isDraft": draft, "mergeable": mergeable,
-            "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head, "baseRefName": "main",
+            "mergeStateStatus": status, "reviewDecision": review, "headRefOid": head, "headRefName": "feat/7-x", "baseRefName": "main",
             "author": {"__typename": "User", "login": "someone"}, "repository": {"isPrivate": True},
             "labels": {"nodes": [{"name": n} for n in labels]},
             "reviewThreads": {"nodes": [{"isResolved": r} for r in threads]},
@@ -158,6 +158,12 @@ class ReviewWaitTest(unittest.TestCase):
         other = run("ai-review-extra / review", status="IN_PROGRESS", conclusion=None, required=False)
         self.assertEqual(decide(green(other), REQUIRED, 0)[0], "merge")
 
+    def test_a_run_actions_has_queued_waits_before_its_check_shows(self):
+        self.assertEqual(decide(green(), REQUIRED, 0, review_queued=True)[0], "wait")
+        behind = green()
+        behind["mergeStateStatus"] = "BEHIND"
+        self.assertEqual(decide(behind, REQUIRED, 0, review_queued=True)[0], "wait")
+
     def test_failed_required_checks_still_drop_while_the_review_runs(self):
         p = pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code"),
                          review(status="IN_PROGRESS", conclusion=None)], status="BLOCKED")
@@ -203,8 +209,12 @@ class FakeGitHub:
     """Serves a list of PR states, one per look, and records every write."""
     repo = "Akenon-Studio/x"
 
-    def __init__(self, looks, fail=None):
-        self.looks, self.calls, self.fail = list(looks), [], fail or {}
+    def __init__(self, looks, fail=None, queued=(False,)):
+        self.looks, self.calls, self.fail, self.queued = list(looks), [], fail or {}, list(queued)
+
+    def review_queued(self, branch):
+        """Actions' answer, one per look (the last repeats)."""
+        return self.queued.pop(0) if len(self.queued) > 1 else self.queued[0]
 
     def graphql(self, query, **variables):
         return {"pullRequest": self.looks.pop(0) if len(self.looks) > 1 else self.looks[0]}
@@ -429,29 +439,20 @@ class RunOneTest(unittest.TestCase):
         self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"))[0], "merged")
         self.assertEqual(len(gh.looks), 1)
 
-    def test_in_a_reviewed_repo_a_review_that_appears_late_is_waited_for(self):
-        # the checks are green before GitHub shows the review run: the lane gives it REVIEW_GRACE
-        gh = FakeGitHub([green(), green(), green(review(status="QUEUED", conclusion=None)), green(review())])
+    def test_in_a_reviewed_repo_a_run_actions_has_queued_is_waited_for(self):
+        # handbook#404: Actions shows the run (queued, or waiting on its concurrency group) before
+        # its check appears on the commit; the lane waits for it, then merges once it has finished
+        gh = FakeGitHub([green(), green(), green(review(status="QUEUED", conclusion=None)), green(review())],
+                        queued=(True, True, True, False))
         self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"), reviewed=True)[0], "merged")
-        self.assertEqual(len(gh.looks), 1)  # it merged only once the late review had finished
+        self.assertEqual(len(gh.looks), 1)  # it merged only once the review had finished
         self.assertEqual(self.writes(gh), [("PUT", "7/merge")])
 
-    def test_in_a_reviewed_repo_a_review_that_never_starts_holds_it_only_for_the_grace(self):
+    def test_in_a_reviewed_repo_no_run_queued_merges_at_once(self):
+        # handbook#404: a push starts no review, so a commit with no run waits for nothing
         gh = FakeGitHub([green()])
         self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"), reviewed=True)[0], "merged")
-        waited = merge_lane.time.time() - 1_000_000.0
-        self.assertGreaterEqual(waited, merge_lane.REVIEW_GRACE)
-        self.assertLess(waited, merge_lane.REVIEW_GRACE + 2 * merge_lane.POLL)
-
-    def test_slow_checks_do_not_use_up_the_review_grace(self):
-        # the checks take 10 minutes; the review run shows a minute after they pass
-        slow = pr(contexts=[run("pr-title / checks", status="IN_PROGRESS", conclusion=None),
-                            run("security-scan / code")], status="BLOCKED")
-        minute = 60 // merge_lane.POLL
-        gh = FakeGitHub([slow] * (10 * minute) + [green()] * minute
-                        + [green(review(status="QUEUED", conclusion=None)), green(review())])
-        self.assertEqual(run_one(gh, 7, REQUIRED, float("inf"), reviewed=True)[0], "merged")
-        self.assertEqual(len(gh.looks), 1)  # it waited for the late review, then merged
+        self.assertEqual(merge_lane.time.time(), 1_000_000.0)
 
     def test_without_the_review_a_green_pr_merges_at_once(self):
         gh = FakeGitHub([green()])
@@ -514,6 +515,38 @@ class CallsReviewTest(unittest.TestCase):
             self.gh(502).calls_review()
 
 
+class ReviewQueuedTest(unittest.TestCase):
+    def gh(self, *statuses):
+        gh, asked = merge_lane.GitHub("t", "Akenon-Studio/x"), []
+        def call(path, method="GET", body=None, tries=4):
+            asked.append(path)
+            return {"workflow_runs": [{"status": s} for s in statuses]}
+        gh.call, gh.asked = call, asked
+        return gh
+
+    def test_a_run_not_completed_is_queued(self):
+        for status in ("queued", "pending", "waiting", "requested", "in_progress"):
+            self.assertTrue(self.gh("completed", status).review_queued("feat/7-x"), status)
+
+    def test_only_completed_runs_or_none_are_not(self):
+        self.assertFalse(self.gh("completed", "completed").review_queued("feat/7-x"))
+        self.assertFalse(self.gh().review_queued("feat/7-x"))
+
+    def test_it_asks_for_the_callers_runs_on_the_pr_branch(self):
+        gh = self.gh()
+        gh.review_queued("feat/7-a b")
+        self.assertEqual(gh.asked, ["repos/Akenon-Studio/x/actions/workflows/ai-review-caller.yml"
+                                    "/runs?branch=feat/7-a%20b&per_page=10"])
+
+
+    def test_it_asks_with_the_workflows_token_the_app_cannot_read_actions(self):
+        reader = self.gh("in_progress")
+        app = merge_lane.GitHub("app", "Akenon-Studio/x", runs=reader)
+        app.call = lambda *a, **k: self.fail("asked with the app's token")
+        self.assertTrue(app.review_queued("feat/7-x"))
+        self.assertEqual(len(reader.asked), 1)
+
+
 class MainTest(unittest.TestCase):
     def test_an_outage_stops_the_run_and_leaves_every_label_on(self):
         class Down(FakeGitHub):
@@ -528,8 +561,8 @@ class MainTest(unittest.TestCase):
                     return {"pullRequests": {"nodes": [{"number": 7, "timelineItems": {"nodes": []}}]}}
                 raise urllib.error.HTTPError("graphql", 502, "bad gateway", {}, None)
         gh = Down([pr()])
-        with mock.patch.object(merge_lane, "GitHub", lambda token, repo: gh), \
-                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "t", "ISSUES_TOKEN": "i",
+        with mock.patch.object(merge_lane, "GitHub", lambda token, repo, runs=None: gh), \
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "t", "ISSUES_TOKEN": "i", "GH_TOKEN": "g",
                                                  "GITHUB_REPOSITORY": "Akenon-Studio/x"}):
             with self.assertRaises(urllib.error.HTTPError):
                 merge_lane.main()
