@@ -16,7 +16,7 @@ whitespace (indentation is code in Python and YAML), with the repo's CLAUDE.md, 
 brought in from `main` does get a review (design 6.4). A review cut off before it finished records
 no fingerprint and fails the job, so a re-run or the next round asked for reviews the diff again.
 A round runs when a PR is opened, reopened or marked ready for review, and on a push only to the
-Peras app's draft (design 6.4, the callers' `if`): another author asks for a later round by
+Peras app's draft or, in handbook, the merge lane's update (design 6.2, 6.4, the callers' `if`): another author asks for a later round by
 converting the PR to a draft and marking it ready again, or by closing and reopening it.
 
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
