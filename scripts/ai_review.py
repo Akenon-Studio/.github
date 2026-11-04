@@ -15,8 +15,9 @@ review: each review records the diff's `git patch-id --verbatim`, which ignores 
 whitespace (indentation is code in Python and YAML), with the repo's CLAUDE.md, so a new rule
 brought in from `main` does get a review (design 6.4). A review cut off before it finished records
 no fingerprint and fails the job, so a re-run or the next round asked for reviews the diff again.
-A round runs when a PR is opened, reopened or marked ready for review, never on a push alone
-(design 6.4): an author asks for a later round by marking the PR ready again or reopening it.
+A round runs when a PR is opened, reopened or marked ready for review, and on a push only to the
+Peras app's draft (design 6.4, the callers' `if`): another author asks for a later round by
+converting the PR to a draft and marking it ready again, or by closing and reopening it.
 
 Signs in with workload identity federation: each exchange presents a fresh GitHub OIDC token
 (GitHub's tokens are single-use there), so no API key exists anywhere.
@@ -1028,7 +1029,7 @@ def main(argv):
             github(f"repos/{repo}/pulls/{number}/reviews", token, method="POST", body={
                 "event": "COMMENT", "commit_id": pr["head"]["sha"],
                 "body": f"**AI review (advisory)**\n\nThe review was cut off ({e}) before it finished. "
-                        "Re-run the `ai-review` job, or mark the PR ready for review again." + usage_marker(e.usage)})
+                        "Re-run the `ai-review` job." + usage_marker(e.usage)})
             print(f"Cut off ({e}); posted a note and recorded no fingerprint.")
             return 1
         review = to_github(found, files, left_out, earlier_comments(repo, number, token),

@@ -159,10 +159,14 @@ class ReviewWaitTest(unittest.TestCase):
         self.assertEqual(decide(green(other), REQUIRED, 0)[0], "merge")
 
     def test_a_run_actions_has_queued_waits_before_its_check_shows(self):
-        self.assertEqual(decide(green(), REQUIRED, 0, review_queued=True)[0], "wait")
+        self.assertEqual(decide(green(), REQUIRED, 0, review_queued=lambda: True)[0], "wait")
         behind = green()
         behind["mergeStateStatus"] = "BEHIND"
-        self.assertEqual(decide(behind, REQUIRED, 0, review_queued=True)[0], "wait")
+        self.assertEqual(decide(behind, REQUIRED, 0, review_queued=lambda: True)[0], "wait")
+        # asked only when nothing before it decides: each answer is a call to GitHub
+        failed = pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code")],
+                    status="BLOCKED")
+        self.assertEqual(decide(failed, REQUIRED, 0, review_queued=lambda: self.fail("asked"))[0], "drop")
 
     def test_failed_required_checks_still_drop_while_the_review_runs(self):
         p = pr(contexts=[run("pr-title / checks", conclusion="FAILURE"), run("security-scan / code"),

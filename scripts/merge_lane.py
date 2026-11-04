@@ -222,12 +222,13 @@ def too_many_checks(pr):
             or {}).get("hasNextPage", False)
 
 
-def decide(pr, required, missing_for, threads_required=True, review_queued=False):
+def decide(pr, required, missing_for, threads_required=True, review_queued=lambda: False):
     """What to do with the PR at the front of the lane: (action, reason).
     action: merge, update (bring main in), wait, blocked (green, but the rules block it: dropped
     once it stays so), drop (leave the lane), gone (no longer in it).
     `missing_for`: seconds the lane has seen a required check with no run on this commit.
-    `review_queued`: Actions has an AI review run for the PR not yet finished (GitHub.review_queued)."""
+    `review_queued`: asks whether Actions has an AI review run for the PR not yet finished
+    (GitHub.review_queued); asked only once nothing before it has decided, as it costs a call."""
     if pr["state"] != "OPEN" or LABEL not in {l["name"] for l in pr["labels"]["nodes"]}:
         return "gone", "no longer open or labelled"
     if pr["baseRefName"] != "main":
@@ -251,7 +252,7 @@ def decide(pr, required, missing_for, threads_required=True, review_queued=False
     if waiting_on:
         return "blocked", "the rules block it: " + waiting_on
     # Before bringing main in or merging: the findings it posts are threads the rules want resolved
-    if review_running(pr) or review_queued:
+    if review_running(pr) or review_queued():
         return "wait", "the AI review is still queued or running"
     if pr["mergeStateStatus"] == "BEHIND":
         return "update", "behind main"
@@ -357,7 +358,7 @@ def run_one(gh, number, required, deadline, threads_required=True, reviewed=Fals
             return "merged", pr.get("author") or {}
         action, reason = decide(pr, required, time.time() - missing_since[head] if missing else 0,
                                 threads_required,
-                                reviewed and pr["state"] == "OPEN" and gh.review_queued(pr["headRefName"]))
+                                lambda: reviewed and gh.review_queued(pr["headRefName"]))
         if updated_from and head != updated_from[0]:
             updated_from = None
         if updated_from and action not in ("gone", "drop"):

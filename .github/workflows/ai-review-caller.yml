@@ -4,7 +4,7 @@ on:
   # main's copy of this workflow, never the PR's: the review app's key is in the `ai-review`
   # environment, which only main can use (ai-review.yml)
   pull_request_target:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened]
 
 permissions:
   contents: read
@@ -12,6 +12,14 @@ permissions:
 
 jobs:
   ai-review:
+    # A round when a PR opens, reopens or is marked ready; a push starts one only on the Peras app's
+    # draft, whose builder rounds wait for it (design 6.4, 7.13 Stage 10). Skipped here, a push to any
+    # other PR starts no runner (Akenon-Studio/handbook#404: cost).
+    if: >-
+      github.event.action != 'synchronize' ||
+      (github.event.pull_request.draft &&
+       github.event.pull_request.user.login == 'akenon-studio-peras[bot]' &&
+       github.event.pull_request.user.type == 'Bot')
     # The main copy, not ./: the sign-in trusts only ai-review.yml on main (see ai-review.yml).
     uses: akenon-studio/.github/.github/workflows/ai-review.yml@main
     secrets:
