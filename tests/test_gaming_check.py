@@ -128,10 +128,10 @@ class DeletedTestFileTest(unittest.TestCase):
             "import { frameMetrics } from './frame-metrics.mjs';"]))
         self.assertEqual(flagged, [])
         self.assertEqual(blocking, ["tools/capture/frame-metrics.test.mjs: test file deleted; "
-                                    "./frame-metrics.mjs not deleted with it"])
+                                    "./frame-metrics.mjs not shown deleted with it"])
 
     def test_a_test_with_no_local_import_blocks(self):
-        blocking, _ = run(self.deleted("src/a.test.ts", ["import { test } from 'vitest';",
+        blocking, _ = run(self.deleted("src/a.test.ts", ["import { test } from 'node:test';",
                                                          "import fs from 'node:fs';"]),
                           self.deleted("src/a.ts", ["export const a = 1;"]))
         self.assertEqual(blocking, ["src/a.test.ts: test file deleted; it imports no repo module "
@@ -141,7 +141,8 @@ class DeletedTestFileTest(unittest.TestCase):
         blocking, _ = run(self.deleted("src/a.test.ts", ["import { a } from './a';",
                                                          "const { b } = require('../lib/b.js');"]),
                           self.deleted("src/a.ts", ["export const a = 1;"]))
-        self.assertEqual(blocking, ["src/a.test.ts: test file deleted; ../lib/b.js not deleted with it"])
+        self.assertEqual(blocking, ["src/a.test.ts: test file deleted; ../lib/b.js not shown deleted "
+                                    "with it"])
 
     def test_js_forms_resolve_with_or_without_extension_or_index(self):
         blocking, flagged = run(
@@ -177,6 +178,21 @@ class DeletedTestFileTest(unittest.TestCase):
             blocking, _ = run(self.deleted("src/test_x.py", lines + ["from .y import g"]),
                               self.deleted("src/y.py", ["g = 1"]))
             self.assertEqual(len(blocking), 1, lines)
+
+    def test_python_from_import_checks_every_name(self):
+        blocking, _ = run(self.deleted("app/test_core.py", ["from app import fixtures, core"]),
+                          self.deleted("app/fixtures.py", ["x = 1"]))
+        self.assertEqual(blocking, ["app/test_core.py: test file deleted; app not shown deleted with it"])
+        blocking, flagged = run(self.deleted("app/test_core.py", ["from app import fixtures, core"]),
+                                self.deleted("app/fixtures.py", ["x = 1"]),
+                                self.deleted("app/core.py", ["y = 1"]))
+        self.assertEqual((blocking, len(flagged)), ([], 1))
+
+    def test_with_diff_only_a_bare_js_package_cant_be_told_from_the_repos_own(self):
+        blocking, _ = run(self.deleted("src/a.test.ts", ["import { test } from 'vitest';",
+                                                         "import { a } from './a';"]),
+                          self.deleted("src/a.ts", ["export const a = 1;"]))
+        self.assertEqual(blocking, ["src/a.test.ts: test file deleted; vitest not shown deleted with it"])
 
     def test_a_deleted_test_without_its_content_blocks(self):
         bare = "diff --git a/src/a.test.ts b/src/a.test.ts\ndeleted file mode 100644\n"
@@ -240,12 +256,34 @@ class OffAPrTest(unittest.TestCase):
         self.git("commit", "-q", "-am", "drop the test and one module")
         code, summary = self.gaming("base")
         self.assertEqual(code, 1)
-        self.assertIn("src/test_d.py: test file deleted; c not deleted with it", summary)
+        self.assertIn("src/test_d.py: test file deleted; c not shown deleted with it", summary)
         (pathlib.Path(self.dir) / "src/c.py").unlink()
         self.git("commit", "-q", "-am", "drop the other module")
         code, summary = self.gaming("base")  # pytest isn't in the repo: a package, not local
         self.assertEqual(code, 0)
         self.assertIn("look at: src/test_d.py: test file deleted with what it tests", summary)
+
+    def test_with_a_base_sha_the_repos_own_names_are_local(self):
+        self.write("packages/runtime/package.json", '{"name": "@akenon/runtime"}\n')
+        self.write("packages/runtime/src/load.ts", "export const load = 1;\n")
+        self.write("packages/runtime/src/fixtures.ts", "export const f = 1;\n")
+        self.write("packages/runtime/src/load.test.ts",
+                   "import { test } from 'vitest';\nimport { load } from '@akenon/runtime';\n"
+                   "import { f } from './fixtures';\n")
+        self.write("scripts/tool.py", "t = 1\n")
+        self.write("scripts/helper.py", "h = 1\n")
+        self.write("scripts/test_tool.py", "from scripts import tool\nimport helper\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "runtime")
+        self.git("tag", "base")
+        self.git("rm", "-q", "packages/runtime/src/load.test.ts", "packages/runtime/src/fixtures.ts",
+                 "scripts/test_tool.py", "scripts/helper.py")
+        self.git("commit", "-q", "-m", "drop tests and helpers, keep the code")
+        code, summary = self.gaming("base")
+        self.assertEqual(code, 1)
+        self.assertIn("load.test.ts: test file deleted; @akenon/runtime not shown deleted", summary)
+        self.assertIn("scripts/test_tool.py: test file deleted; scripts.tool not shown deleted", summary)
+        self.assertNotIn("vitest", summary)  # a package the repo doesn't hold: not local
 
     def test_with_a_base_sha_a_deletion_left_out_of_the_diff_is_read_at_the_base(self):
         self.write("src/m.py", "m = 1\n")

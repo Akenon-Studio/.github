@@ -17,10 +17,12 @@ gains, a test file deleted with the modules it imports, and bulk snapshot update
 A deleted test's imports are read from its removed lines (a deletion's whole content is in the
 diff; with a base sha, a file missing there is read at the merge base). JS/TS: `import ... from`,
 `export ... from`, `require()` and `import()` of a `./` or `../` path, with or without its extension
-or `/index`; a bare package or `node:` name isn't local. Python: `from .x import` resolved from the
-test's folder, and `import x`/`from x import` matched against the PR's deleted files; with a base
-sha, a name that is neither deleted nor a file at HEAD is a package and isn't local, while with
-`--diff` (no repo to look in) a name that isn't the standard library's can't be resolved and blocks.
+or `/index`. Python: `from .x import` resolved from the test's folder, and `import x`/`from x
+import a, b` matched against the PR's deleted files (each of `a`, `b` that is a module must go, and
+`x` itself when any isn't). Anything still at HEAD survives. A `node:` or standard-library name
+isn't local; with a base sha, neither is a bare name the repo doesn't hold (not a file or folder,
+for JS not a workspace package's `name` or a tsconfig `paths` alias), while with `--diff` (no repo
+to look in) such a name can't be told from the repo's own and blocks.
 
 A line that must stay carries `gaming-check: <reason>` on the same line (after `--` in an eslint
 comment), which the reviewer sees in the diff. Peras's own gate refuses that marker from agents.
@@ -30,7 +32,9 @@ Usage: scripts/gaming_check.py <base sha> [repo dir]   (diffs <base>...HEAD)
 In Actions it runs as the `gaming` job of the reusable pr-title workflow.
 """
 
+import json
 import os
+import pathlib
 import posixpath
 import re
 import subprocess
@@ -104,43 +108,73 @@ def read_deleted(files, base, cwd):
             files[path]["removed"] = shown.stdout.splitlines()
 
 
-def repo_files(cwd):
-    return set(subprocess.run(["git", "ls-files"], cwd=cwd, capture_output=True, text=True,
-                              check=True).stdout.splitlines())
+def repo_at_head(cwd):
+    """What a deleted test's imports are resolved against: the repo's files at HEAD, and the bare
+    names that are the repo's own JS code (each package.json's `name`, each tsconfig `paths` key)."""
+    files = set(subprocess.run(["git", "ls-files"], cwd=cwd, capture_output=True, text=True,
+                               check=True).stdout.splitlines())
+    js_names = []
+    for path in sorted(files):
+        name = posixpath.basename(path)
+        config = name == "package.json" or re.fullmatch(r"[jt]sconfig.*\.json", name)
+        if SKIP_PATH.search(path) or not config:
+            continue
+        try:
+            text = pathlib.Path(cwd, path).read_text()
+        except OSError:
+            continue
+        if name == "package.json":
+            try:
+                js_names.append(str(json.loads(text).get("name") or ""))
+            except (ValueError, AttributeError):
+                continue
+        elif m := re.search(r'"paths"\s*:\s*\{([^}]*)\}', text):
+            js_names += [k.split("*")[0] for k in re.findall(r'"([^"]+)"\s*:\s*\[', m.group(1))]
+    return {"files": files, "js_names": [n for n in js_names if n]}
 
 
-def js_module(test, spec, deleted):
-    """The deleted path a relative import names, or None."""
+def js_module(test, spec, paths):
+    """The path in `paths` a relative import names, or None."""
     base = posixpath.normpath(posixpath.join(posixpath.dirname(test), spec))
     if base.startswith("../"):
         return None
     stem = base[: -len(ext)] if (ext := posixpath.splitext(base)[1]) in JS_EXT else base
     for c in [base] + [stem + e for e in JS_EXT] + [f"{base}/index{e}" for e in JS_EXT]:
-        if c in deleted:
+        if c in paths:
             return c
     return None
 
 
-def py_paths(module):
-    rel = module.replace(".", "/")
-    return (f"{rel}.py", f"{rel}/__init__.py")
+def js_local_name(spec, names):
+    """Whether a bare import names the repo's own code: a workspace package (`@scope/pkg`, or a
+    file in it) or a tsconfig alias (`@app/*` is the prefix `@app/`)."""
+    return any(spec.startswith(n) if n.endswith("/") else spec == n or spec.startswith(n + "/")
+               for n in names)
 
 
 def py_find(module, paths):
     """A path in `paths` that is the module `a.b` (a/b.py or a/b/__init__.py, under any folder)."""
-    for want in py_paths(module):
+    rel = module.replace(".", "/")
+    for want in (f"{rel}.py", f"{rel}/__init__.py"):
         for p in paths:
             if p == want or p.endswith("/" + want):
                 return p
     return None
 
 
+def py_folder(module, paths):
+    """Whether `a.b` is a folder of the repo (a namespace package such as a `scripts/` on sys.path)."""
+    rel = module.replace(".", "/") + "/"
+    return any(p.startswith(rel) or ("/" + rel) in p for p in paths)
+
+
 def deleted_with_modules(test, lines, deleted, at_head):
     """(modules, None) when every repo-local module the deleted test imports is deleted too, or
-    (None, why it still blocks). `at_head` is the repo's files at HEAD, or None with --diff."""
+    (None, why it still blocks). `at_head` is repo_at_head(), or None with --diff (no repo)."""
     if not lines:
         return None, "its content isn't in the diff"
     text = "\n".join(lines)
+    head = at_head["files"] if at_head else set()
     found, unresolved = set(), []
     if JS.search(test):
         if JS_COMPUTED.search(text):
@@ -149,9 +183,13 @@ def deleted_with_modules(test, lines, deleted, at_head):
             for spec in pattern.findall(text):
                 if spec.startswith(("./", "../")) or spec in (".", ".."):
                     hit = js_module(test, spec, deleted)
-                    (found.add(hit) if hit else unresolved.append(spec))
+                    (found.add(hit) if hit and not js_module(test, spec, head) else unresolved.append(spec))
                 elif spec.startswith(("@/", "~/", "#", "/")):
                     unresolved.append(spec)  # a path alias or absolute path: not read here
+                elif spec.startswith("node:"):
+                    continue
+                elif at_head is None or js_local_name(spec, at_head["js_names"]):
+                    unresolved.append(spec)  # a workspace package or alias, or no repo to tell
     else:
         if PY_COMPUTED.search(text):
             return None, "an import it makes with importlib can't be read"
@@ -162,7 +200,7 @@ def deleted_with_modules(test, lines, deleted, at_head):
             imported = [w.split(" as ")[0].strip() for w in imported]
             imported = [w for w in imported if w and w != "*"]
             if not dots:
-                names.append((module, [f"{module}.{w}" for w in imported]))
+                names.append((module, imported))
                 continue
             folder = here
             for _ in range(len(dots) - 1):
@@ -172,25 +210,32 @@ def deleted_with_modules(test, lines, deleted, at_head):
             else:  # from . import x: the module x, or a name in the folder's __init__.py
                 options = [(f"{folder}/{w}".lstrip("/"), f"{dots}{w}", True) for w in imported]
             for option, name, in_init in options:
-                candidates = [f"{option}.py", f"{option}/__init__.py"]
-                if in_init:
-                    candidates.append(f"{folder}/__init__.py".lstrip("/"))
-                hit = next((c for c in candidates if c in deleted), None)
-                (found.add(hit) if hit else unresolved.append(name))
+                own = [f"{option}.py", f"{option}/__init__.py"]
+                hit = next((c for c in own if c in deleted), None)
+                if not hit and in_init and not any(c in head for c in own):
+                    hit = next((c for c in [f"{folder}/__init__.py".lstrip("/")] if c in deleted), None)
+                (found.add(hit) if hit and not any(c in head for c in own) else unresolved.append(name))
         for what in PY_IMPORT.findall(text):
             for w in what.split("#")[0].split(","):
                 if w.strip():
                     names.append((w.split(" as ")[0].strip(), []))
-        for module, subs in names:
-            hit = next((h for m in subs + [module] if (h := py_find(m, deleted))), None)
-            if hit:
-                found.add(hit)
-            elif module.split(".")[0] in sys.stdlib_module_names:
-                continue
-            elif at_head is None or py_find(module, at_head):
-                unresolved.append(module)  # survives at HEAD, or no repo to tell it from a package
+        for module, imported in names:
+            # Each imported name that is a module in its own right must go; the rest are names in
+            # `module`, which must go itself.
+            subs = [f"{module}.{w}" for w in imported]
+            sub_modules = [m for m in subs if py_find(m, deleted) or py_find(m, head)]
+            need_module = not subs or len(sub_modules) < len(subs)
+            for m in sub_modules + ([module] if need_module else []):
+                if py_find(m, head) or (m == module and py_folder(m, head) and not py_find(m, deleted)):
+                    unresolved.append(m)  # still in the repo
+                elif hit := py_find(m, deleted):
+                    found.add(hit)
+                elif m.split(".")[0] in sys.stdlib_module_names:
+                    continue
+                elif at_head is None:
+                    unresolved.append(m)  # no repo to tell it from a package
     if unresolved:
-        return None, f"{', '.join(sorted(set(unresolved)))} not deleted with it"
+        return None, f"{', '.join(sorted(set(unresolved)))} not shown deleted with it"
     if not found:
         return None, "it imports no repo module deleted with it"
     return sorted(found), None
@@ -219,8 +264,8 @@ def parse(diff):
 
 
 def check(files, at_head=None):
-    """(blocking, flagged): lists of 'path:line: reason' strings. `at_head` is the repo's files at
-    HEAD when there is a repo to look in (it tells a surviving Python module from a package)."""
+    """(blocking, flagged): lists of 'path:line: reason' strings. `at_head` is repo_at_head() when
+    there is a repo to look in (it tells a surviving module from a package)."""
     blocking, flagged = [], []
     deleted = {p for p, f in files.items() if f["deleted"]}
     snapshots = [p for p in files if SNAPSHOT.search(p)]
@@ -264,7 +309,7 @@ def main(argv):
         files, at_head = parse(open(argv[1]).read()), None
     elif argv:
         cwd = argv[1] if len(argv) > 1 else "."
-        files, at_head = parse(run_diff(argv[0], cwd)), repo_files(cwd)
+        files, at_head = parse(run_diff(argv[0], cwd)), repo_at_head(cwd)
         read_deleted(files, argv[0], cwd)
     else:
         print(__doc__)
