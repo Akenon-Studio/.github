@@ -326,8 +326,22 @@ class OrgRulesetsTest(unittest.TestCase):
 
     ARCHIVED = ["ani-motion-animations", "ani-motion-api", "ani-motion-desktop", "ani-motion-pi-client",
                 "ani-motion-shared", "ani-motion-web"]
-    # the ids GitHub has for them, in that order, and the engineers team's (Merge and PR Gates as live)
+    # the ids GitHub has for them, in that order, and the engineers team's
     IDS = [1227934210, 1227931808, 1227933553, 1227933890, 1227931468, 1227932798]
+    # A ruleset for archived repos with a reviewer team, as the file would write it: the shape of
+    # Merge and PR Gates, kept as code by .github#252 and dropped from the file by .github#254.
+    GATES = {
+        "name": "Gates", "archived_repositories": ARCHIVED, "target": "branch", "enforcement": "active",
+        "bypass_actors": [],
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/dev"],
+                                    "exclude": []}},
+        "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "pull_request", "parameters": {
+            "required_approving_review_count": 1, "dismiss_stale_reviews_on_push": True,
+            "required_reviewers": [{"minimum_approvals": 1, "file_patterns": ["*"],
+                                    "reviewer": {"team": "engineers", "type": "Team"}}],
+            "require_code_owner_review": False, "require_last_push_approval": False,
+            "required_review_thread_resolution": False,
+            "require_extra_approval_for_unattributed_changes": True, "allowed_merge_methods": ["merge"]}}]}
 
     @classmethod
     def fake_gh(cls, archived=True):
@@ -345,10 +359,24 @@ class OrgRulesetsTest(unittest.TestCase):
         import rules
         return rules
 
+    def with_gates(self, rules, change=lambda gates: None):
+        """A patch of rules.load whose org-rulesets.json also has GATES, after change(gates)."""
+        import copy
+        from unittest import mock
+        real = rules.load
+        def load(name):
+            data = real(name)
+            if name == "org-rulesets.json":
+                gates = copy.deepcopy(self.GATES)
+                change(gates)
+                data["rulesets"].append(gates)
+            return data
+        return mock.patch.object(rules, "load", load)
+
     def test_each_applies_to_its_repos_or_every_managed_repo(self):
         from unittest import mock
         rules = self.rules()
-        with mock.patch.object(rules, "gh", self.fake_gh()):
+        with mock.patch.object(rules, "gh", self.fake_gh()), self.with_gates(rules):
             got = {r["name"]: r for r in rules.desired_org_rulesets()}
         self.assertEqual(got["Action pins"]["conditions"]["repository_name"]["include"], rules.managed_repos())
         self.assertEqual(got["Release decision"]["conditions"]["repository_name"],
@@ -359,13 +387,13 @@ class OrgRulesetsTest(unittest.TestCase):
             for w in (w for rule in r["rules"] for w in rule.get("parameters", {}).get("workflows", [])):
                 self.assertEqual((w["repository_id"], "repository" in w), (7, False))
 
-    def test_merge_and_pr_gates_is_sent_exactly_as_live(self):
-        # .github#252: the ruleset made by hand on 2026-08-09, as GET orgs/akenon-studio/rulesets/20604928
-        # returned it on 2026-11-03, less what GitHub adds (id, links, dates, source)
+    def test_archived_repos_and_a_team_are_sent_by_id(self):
+        # as GET orgs/akenon-studio/rulesets/20604928 returned Merge and PR Gates on 2026-11-03 (.github#252),
+        # less what GitHub adds (id, links, dates, source)
         from unittest import mock
         rules = self.rules()
         live = {
-            "name": "Merge and PR Gates", "target": "branch", "enforcement": "active", "bypass_actors": [],
+            "name": "Gates", "target": "branch", "enforcement": "active", "bypass_actors": [],
             "conditions": {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH", "refs/heads/main",
                                                                   "refs/heads/dev"]},
                            "repository_id": {"repository_ids": self.IDS}},
@@ -376,38 +404,29 @@ class OrgRulesetsTest(unittest.TestCase):
                 "require_code_owner_review": False, "require_last_push_approval": False,
                 "required_review_thread_resolution": False,
                 "require_extra_approval_for_unattributed_changes": True, "allowed_merge_methods": ["merge"]}}]}
-        with mock.patch.object(rules, "gh", self.fake_gh()):
-            got = next(r for r in rules.desired_org_rulesets() if r["name"] == "Merge and PR Gates")
+        with mock.patch.object(rules, "gh", self.fake_gh()), self.with_gates(rules):
+            got = next(r for r in rules.desired_org_rulesets() if r["name"] == "Gates")
         self.assertEqual(got, live)
         self.assertEqual(rules.org_ruleset_differences(got, {**live, "id": 20604928, "node_id": "x"}), [])
 
     def test_an_archived_repo_must_be_archived_and_unmanaged(self):
         from unittest import mock
         rules = self.rules()
-        with mock.patch.object(rules, "gh", self.fake_gh(archived=False)):
+        with mock.patch.object(rules, "gh", self.fake_gh(archived=False)), self.with_gates(rules):
             with self.assertRaises(SystemExit):
                 rules.desired_org_rulesets()
-        real = rules.load
-        def load(name):
-            data = real(name)
-            if name == "org-rulesets.json":
-                data["rulesets"][-1]["archived_repositories"] = ["ani-motion-api", "peras"]
-            return data
-        with mock.patch.object(rules, "gh", self.fake_gh()), mock.patch.object(rules, "load", load):
+        def change(gates):
+            gates["archived_repositories"] = ["ani-motion-api", "peras"]
+        with mock.patch.object(rules, "gh", self.fake_gh()), self.with_gates(rules, change):
             with self.assertRaises(SystemExit):
                 rules.desired_org_rulesets()
 
     def test_a_reviewer_team_must_be_in_teams_json(self):
         from unittest import mock
         rules = self.rules()
-        real = rules.load
-        def load(name):
-            data = real(name)
-            if name == "org-rulesets.json":
-                pr = data["rulesets"][-1]["rules"][-1]["parameters"]
-                pr["required_reviewers"][0]["reviewer"]["team"] = "nobody"
-            return data
-        with mock.patch.object(rules, "gh", self.fake_gh()), mock.patch.object(rules, "load", load):
+        def change(gates):
+            gates["rules"][-1]["parameters"]["required_reviewers"][0]["reviewer"]["team"] = "nobody"
+        with mock.patch.object(rules, "gh", self.fake_gh()), self.with_gates(rules, change):
             with self.assertRaises(SystemExit):
                 rules.desired_org_rulesets()
 
@@ -415,9 +434,10 @@ class OrgRulesetsTest(unittest.TestCase):
         # verify-settings.py reads with try_gh: what its token can't read skips that ruleset, with a note
         rules = self.rules()
         gh = self.fake_gh()
-        got = {r["name"]: r for r in rules.desired_org_rulesets(
-            lookup=lambda path: None if path.endswith("/teams/engineers") else gh(path))}
-        self.assertEqual(got["Merge and PR Gates"]["_unresolved"], "team engineers")
+        with self.with_gates(rules):
+            got = {r["name"]: r for r in rules.desired_org_rulesets(
+                lookup=lambda path: None if path.endswith("/teams/engineers") else gh(path))}
+        self.assertEqual(got["Gates"]["_unresolved"], "team engineers")
         self.assertNotIn("_unresolved", got["Action pins"])
 
     def test_differences_are_found_both_ways(self):
@@ -463,8 +483,9 @@ class OrgRulesetsTest(unittest.TestCase):
 
     def test_the_daily_check_reports_an_unarchived_repo_and_goes_on(self):
         rules = self.rules()
-        got = {r["name"]: r for r in rules.desired_org_rulesets(lookup=self.fake_gh(archived=False))}
-        self.assertIn("as archived, but it is not", got["Merge and PR Gates"]["_problem"])
+        with self.with_gates(rules):
+            got = {r["name"]: r for r in rules.desired_org_rulesets(lookup=self.fake_gh(archived=False))}
+        self.assertIn("as archived, but it is not", got["Gates"]["_problem"])
         self.assertNotIn("_problem", got["Action pins"])
 
     def test_the_plan_changes_nothing_and_counts_what_it_would(self):

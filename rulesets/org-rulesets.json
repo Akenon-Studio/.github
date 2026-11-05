@@ -42,36 +42,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "Merge and PR Gates",
-      "_comment": "Kept exactly as it is live (design 6.2, .github#252): made by hand on 2026-08-09, before the move, for the old ani-motion-* repos, all archived since, so it has no effect while they stay archived.",
-      "archived_repositories": ["ani-motion-animations", "ani-motion-api", "ani-motion-desktop", "ani-motion-pi-client", "ani-motion-shared", "ani-motion-web"],
-      "target": "branch",
-      "enforcement": "active",
-      "bypass_actors": [],
-      "conditions": {
-        "ref_name": {"include": ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/dev"], "exclude": []}
-      },
-      "rules": [
-        {"type": "deletion"},
-        {"type": "non_fast_forward"},
-        {
-          "type": "pull_request",
-          "parameters": {
-            "required_approving_review_count": 1,
-            "dismiss_stale_reviews_on_push": true,
-            "required_reviewers": [
-              {"minimum_approvals": 1, "file_patterns": ["*"], "reviewer": {"team": "engineers", "type": "Team"}}
-            ],
-            "require_code_owner_review": false,
-            "require_last_push_approval": false,
-            "required_review_thread_resolution": false,
-            "require_extra_approval_for_unattributed_changes": true,
-            "allowed_merge_methods": ["merge"]
-          }
-        }
-      ]
     }
   ]
 }
