@@ -21,7 +21,8 @@ or `/index`. Python: `from .x import` resolved from the test's folder, and `impo
 import a, b` matched against the PR's deleted files (each of `a`, `b` that is a module must go, and
 `x` itself when any isn't). Anything still at HEAD survives. A `node:` or standard-library name
 isn't local; with a base sha, neither is a bare name the repo doesn't hold (not a file or folder,
-for JS not a workspace package's `name` or a tsconfig `paths` alias), while with `--diff` (no repo
+for JS not a workspace package's `name`, a tsconfig `paths` alias or a file or folder under
+its `baseUrl`), while with `--diff` (no repo
 to look in) such a name can't be told from the repo's own and blocks.
 
 A line that must stay carries `gaming-check: <reason>` on the same line (after `--` in an eslint
@@ -128,9 +129,17 @@ def repo_at_head(cwd):
                 js_names.append(str(json.loads(text).get("name") or ""))
             except (ValueError, AttributeError):
                 continue
-        elif m := re.search(r'"paths"\s*:\s*\{([^}]*)\}', text):
-            js_names += [k.split("*")[0] for k in re.findall(r'"([^"]+)"\s*:\s*\[', m.group(1))]
-    return {"files": files, "js_names": [n for n in js_names if n]}
+        else:
+            if m := re.search(r'"paths"\s*:\s*\{([^}]*)\}', text):
+                js_names += [k.split("*")[0] for k in re.findall(r'"([^"]+)"\s*:\s*\[', m.group(1))]
+            if m := re.search(r'"baseUrl"\s*:\s*"([^"]*)"', text):
+                # A bare import resolved from baseUrl: each file or folder there is a name of the repo.
+                root = posixpath.normpath(posixpath.join(posixpath.dirname(path), m.group(1)))
+                prefix = "" if root == "." else root + "/"
+                for f in files:
+                    if f.startswith(prefix) and (top := f[len(prefix):].split("/")[0]):
+                        js_names.append(posixpath.splitext(top)[0] if "/" not in f[len(prefix):] else top)
+    return {"files": files, "js_names": sorted({n for n in js_names if n})}
 
 
 def js_module(test, spec, paths):
@@ -163,9 +172,10 @@ def py_find(module, paths):
 
 
 def py_folder(module, paths):
-    """Whether `a.b` is a folder of the repo (a namespace package such as a `scripts/` on sys.path)."""
+    """Whether `a.b` is a folder of Python files in the repo (a namespace package such as a
+    `scripts/` on sys.path)."""
     rel = module.replace(".", "/") + "/"
-    return any(p.startswith(rel) or ("/" + rel) in p for p in paths)
+    return any((p.startswith(rel) or ("/" + rel) in p) and p.endswith(".py") for p in paths)
 
 
 def deleted_with_modules(test, lines, deleted, at_head):
@@ -226,12 +236,12 @@ def deleted_with_modules(test, lines, deleted, at_head):
             sub_modules = [m for m in subs if py_find(m, deleted) or py_find(m, head)]
             need_module = not subs or len(sub_modules) < len(subs)
             for m in sub_modules + ([module] if need_module else []):
+                if m.split(".")[0] in sys.stdlib_module_names:
+                    continue
                 if py_find(m, head) or (m == module and py_folder(m, head) and not py_find(m, deleted)):
                     unresolved.append(m)  # still in the repo
                 elif hit := py_find(m, deleted):
                     found.add(hit)
-                elif m.split(".")[0] in sys.stdlib_module_names:
-                    continue
                 elif at_head is None:
                     unresolved.append(m)  # no repo to tell it from a package
     if unresolved:

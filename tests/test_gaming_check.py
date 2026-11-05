@@ -285,6 +285,34 @@ class OffAPrTest(unittest.TestCase):
         self.assertIn("scripts/test_tool.py: test file deleted; scripts.tool not shown deleted", summary)
         self.assertNotIn("vitest", summary)  # a package the repo doesn't hold: not local
 
+    def test_with_a_base_sha_tsconfig_names_and_files_at_head_are_local(self):
+        self.write("tsconfig.json", '{"compilerOptions": {"baseUrl": "lib", "paths": {"@app/*": '
+                                    '["app/*"]}}}\n')
+        self.write("app/load.ts", "export const load = 1;\n")
+        self.write("lib/runtime/x.ts", "export const x = 1;\n")
+        self.write("src/a.ts", "export const a = 1;\n")
+        self.write("src/a/index.ts", "export const a = 2;\n")
+        self.write("src/f.ts", "export const f = 1;\n")
+        self.write("os/notes.md", "not python\n")
+        self.write("tools/s.py", "s = 1\n")
+        for name, line in (("alias", "import { load } from '@app/load';"),
+                           ("base", "import { x } from 'runtime/x';"),
+                           ("index", "import { a } from './a/';")):
+            self.write(f"src/{name}.test.ts", f"{line}\nimport {{ f }} from './f';\n")
+        self.write("tools/test_s.py", "import os\nfrom os import path\nfrom .s import s\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "aliases")
+        self.git("tag", "base")
+        self.git("rm", "-q", "src/f.ts", "src/a.ts", "tools/s.py", "tools/test_s.py",
+                 *[f"src/{n}.test.ts" for n in ("alias", "base", "index")])
+        self.git("commit", "-q", "-m", "drop tests, keep what they test")
+        code, summary = self.gaming("base")
+        self.assertEqual(code, 1)
+        for name, spec in (("alias", "@app/load"), ("base", "runtime/x"), ("index", "./a/")):
+            self.assertIn(f"src/{name}.test.ts: test file deleted; {spec} not shown deleted", summary)
+        # A folder named like the standard library's `os` (holding no Python) doesn't make it local.
+        self.assertIn("look at: tools/test_s.py: test file deleted with what it tests (tools/s.py)", summary)
+
     def test_with_a_base_sha_a_deletion_left_out_of_the_diff_is_read_at_the_base(self):
         self.write("src/m.py", "m = 1\n")
         self.write("src/test_m.py", "from .m import m\n")
