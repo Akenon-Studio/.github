@@ -2,14 +2,17 @@
 
 The patterns the check blocks are built from parts here, so this file's own diff passes it."""
 
+import contextlib
+import io
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
-from gaming_check import check, parse, run_diff  # noqa: E402
+from gaming_check import check, main, parse, run_diff  # noqa: E402
 
 ONLY, SKIP = "it." + "only(", "it." + "skip("
 TS_IGNORE, LINT_OFF = "// @ts-" + "ignore", "// eslint-" + "disable-next-line no-console"
@@ -60,7 +63,8 @@ class BlockingTest(unittest.TestCase):
 
     def test_deleted_test_file_blocks_but_rename_does_not(self):
         blocking, _ = run(diff("tests/test_old.py", removed=["def test_x(): pass"], deleted=True))
-        self.assertEqual(blocking, ["tests/test_old.py: test file deleted"])
+        self.assertEqual(blocking, ["tests/test_old.py: test file deleted; it imports no repo module "
+                                    "deleted with it"])
         rename = ("diff --git a/tests/test_a.py b/tests/test_b.py\nsimilarity index 100%\n"
                   "rename from tests/test_a.py\nrename to tests/test_b.py\n")
         self.assertEqual(run(rename), ([], []))
@@ -99,6 +103,86 @@ class FlaggedTest(unittest.TestCase):
         self.assertEqual(flagged, ["3 snapshot files updated: check each change is intended"])
 
 
+class DeletedTestFileTest(unittest.TestCase):
+    """A deleted test is flagged, not blocked, only when every repo-local module it imports goes in
+    the same PR (the code and its tests retired together); anything else still blocks."""
+
+    def deleted(self, path, lines):
+        return diff(path, removed=lines, deleted=True)
+
+    def test_a_test_deleted_with_its_module_is_flagged(self):
+        # Shaped like animations#161: tools/capture/frame-metrics.test.mjs goes with frame-metrics.mjs.
+        blocking, flagged = run(
+            self.deleted("tools/capture/frame-metrics.test.mjs", [
+                "import test from 'node:test';", "import assert from 'node:assert/strict';",
+                "import zlib from 'node:zlib';",
+                "import { frameMetrics, decodePng } from './frame-metrics.mjs';",
+                "test('metrics', () => { assert.ok(frameMetrics(decodePng(zlib))); });"]),
+            self.deleted("tools/capture/frame-metrics.mjs", ["export function frameMetrics() {}"]))
+        self.assertEqual(blocking, [])
+        self.assertEqual(flagged, ["tools/capture/frame-metrics.test.mjs: test file deleted with what it "
+                                   "tests (tools/capture/frame-metrics.mjs)"])
+
+    def test_a_test_whose_module_survives_blocks(self):
+        blocking, flagged = run(self.deleted("tools/capture/frame-metrics.test.mjs", [
+            "import { frameMetrics } from './frame-metrics.mjs';"]))
+        self.assertEqual(flagged, [])
+        self.assertEqual(blocking, ["tools/capture/frame-metrics.test.mjs: test file deleted; "
+                                    "./frame-metrics.mjs not deleted with it"])
+
+    def test_a_test_with_no_local_import_blocks(self):
+        blocking, _ = run(self.deleted("src/a.test.ts", ["import { test } from 'vitest';",
+                                                         "import fs from 'node:fs';"]),
+                          self.deleted("src/a.ts", ["export const a = 1;"]))
+        self.assertEqual(blocking, ["src/a.test.ts: test file deleted; it imports no repo module "
+                                    "deleted with it"])
+
+    def test_a_test_where_one_of_two_modules_survives_blocks(self):
+        blocking, _ = run(self.deleted("src/a.test.ts", ["import { a } from './a';",
+                                                         "const { b } = require('../lib/b.js');"]),
+                          self.deleted("src/a.ts", ["export const a = 1;"]))
+        self.assertEqual(blocking, ["src/a.test.ts: test file deleted; ../lib/b.js not deleted with it"])
+
+    def test_js_forms_resolve_with_or_without_extension_or_index(self):
+        blocking, flagged = run(
+            self.deleted("src/x/a.spec.ts", [
+                "import type { A } from './a.js';", "import {", "  b,", "} from '../b';",
+                "const c = require('./c');", "const d = await import('./d');", "import './e';"]),
+            *[self.deleted(p, ["x"]) for p in ("src/x/a.ts", "src/b/index.ts", "src/x/c.cjs",
+                                               "src/x/d.mjs", "src/x/e.js")])
+        self.assertEqual(blocking, [])
+        self.assertEqual(len(flagged), 1)
+
+    def test_an_unreadable_or_aliased_js_import_blocks(self):
+        for line in ("const m = require(name);", "const m = await import(`./${name}.js`);",
+                     "import { a } from '@/a';"):
+            blocking, _ = run(self.deleted("src/a.test.ts", ["import { a } from './a';", line]),
+                              self.deleted("src/a.ts", ["export const a = 1;"]))
+            self.assertEqual(len(blocking), 1, line)
+
+    def test_python_relative_and_absolute_imports(self):
+        blocking, flagged = run(
+            self.deleted("pkg/sub/test_x.py", [
+                "import os, unittest", "from __future__ import annotations",
+                "from ..x import f  # noqa: E402", "from . import (", "    helpers,", ")",
+                "from pkg.y import g"]),
+            *[self.deleted(p, ["x = 1"]) for p in ("pkg/x.py", "pkg/sub/helpers.py", "pkg/y.py")])
+        self.assertEqual(blocking, [])
+        self.assertEqual(flagged, ["pkg/sub/test_x.py: test file deleted with what it tests "
+                                   "(pkg/sub/helpers.py, pkg/x.py, pkg/y.py)"])
+
+    def test_python_module_not_deleted_blocks(self):
+        for lines in (["from .x import f"], ["import gaming_check"], ["import importlib",
+                                                                     "m = importlib.import_module('x')"]):
+            blocking, _ = run(self.deleted("src/test_x.py", lines + ["from .y import g"]),
+                              self.deleted("src/y.py", ["g = 1"]))
+            self.assertEqual(len(blocking), 1, lines)
+
+    def test_a_deleted_test_without_its_content_blocks(self):
+        bare = "diff --git a/src/a.test.ts b/src/a.test.ts\ndeleted file mode 100644\n"
+        blocking, _ = run(bare, self.deleted("src/a.ts", ["export const a = 1;"]))
+        self.assertEqual(blocking, ["src/a.test.ts: test file deleted; its content isn't in the diff"])
+
 
 class OffAPrTest(unittest.TestCase):
     """Off a PR, pr-title.yml passes `origin/main` as the base: the diff is from where the commit left
@@ -135,6 +219,49 @@ class OffAPrTest(unittest.TestCase):
 
     def test_a_commit_of_main_has_nothing_to_check(self):
         self.assertEqual(parse(run_diff("main", self.dir)), {})
+
+    def gaming(self, base="main"):
+        out = pathlib.Path(self.dir) / "summary.md"
+        with unittest.mock.patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(out)}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = main([base, self.dir])
+        return code, out.read_text()
+
+    def test_with_a_base_sha_a_surviving_python_module_blocks_and_a_package_does_not(self):
+        self.git("switch", "-q", "-c", "retire")
+        self.write("src/c.py", "c = 1\n")
+        self.write("src/test_d.py", "import pytest\nimport c\nimport a_mod\n")
+        self.write("src/a_mod.py", "a = 1\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "more")
+        self.git("tag", "base")
+        (pathlib.Path(self.dir) / "src/test_d.py").unlink()
+        (pathlib.Path(self.dir) / "src/a_mod.py").unlink()
+        self.git("commit", "-q", "-am", "drop the test and one module")
+        code, summary = self.gaming("base")
+        self.assertEqual(code, 1)
+        self.assertIn("src/test_d.py: test file deleted; c not deleted with it", summary)
+        (pathlib.Path(self.dir) / "src/c.py").unlink()
+        self.git("commit", "-q", "-am", "drop the other module")
+        code, summary = self.gaming("base")  # pytest isn't in the repo: a package, not local
+        self.assertEqual(code, 0)
+        self.assertIn("look at: src/test_d.py: test file deleted with what it tests", summary)
+
+    def test_with_a_base_sha_a_deletion_left_out_of_the_diff_is_read_at_the_base(self):
+        self.write("src/m.py", "m = 1\n")
+        self.write("src/test_m.py", "from .m import m\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "m")
+        self.git("tag", "base")
+        self.git("rm", "-q", "src/m.py", "src/test_m.py")
+        self.git("commit", "-q", "-m", "retire m")
+        no_content = subprocess.run(["git", "-C", self.dir, "diff", "-M", "-D", "--unified=0",
+                                     "base...HEAD"], capture_output=True, text=True).stdout
+        self.assertEqual(parse(no_content)["src/test_m.py"]["removed"], [])
+        with unittest.mock.patch("gaming_check.run_diff", return_value=no_content):
+            code, summary = self.gaming("base")
+        self.assertEqual(code, 0)
+        self.assertIn("test file deleted with what it tests (src/m.py)", summary)
 
 
 if __name__ == "__main__":
