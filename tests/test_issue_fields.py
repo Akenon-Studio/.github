@@ -44,6 +44,7 @@ INTENT = {
     "Risk": "Low",
     "Limits": "_No response_",
     "Bug details (required when Kind is Bug fix)": "_No response_",
+    "Kind of change (required when Kind is Animation)": "_No response_",
     "Animation details (required when Kind is Animation)": "_No response_",
     "Feature details (required when Kind is Feature)": "For everyone with a display",
     "Discipline": "Software",
@@ -133,6 +134,17 @@ class CheckTest(unittest.TestCase):
         problems = check("Intent", body(**{**INTENT, "Kind": "Bug fix"}), FORMS)
         self.assertEqual(problems, ["**Bug details (required when Kind is Bug fix)** is required "
                                     "when Kind is Bug fix, but empty."])
+
+    def test_animation_needs_its_kind_of_change(self):
+        answers = {**INTENT, "Kind": "Animation",
+                   "Animation details (required when Kind is Animation)": "calmer at the drop"}
+        self.assertEqual(check("Intent", body(**answers), FORMS),
+                         ["**Kind of change (required when Kind is Animation)** is required "
+                          "when Kind is Animation, but empty."])
+        answers["Kind of change (required when Kind is Animation)"] = "Fix"
+        self.assertEqual(check("Intent", body(**answers), FORMS), [])
+        answers["Kind of change (required when Kind is Animation)"] = "Tweak"
+        self.assertEqual(len(check("Intent", body(**answers), FORMS)), 1)
 
     def test_issue_made_without_the_form(self):
         problems = check("Task", "Just do the thing", FORMS)

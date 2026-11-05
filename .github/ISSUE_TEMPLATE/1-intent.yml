@@ -74,12 +74,20 @@ body:
     attributes:
       label: Bug details (required when Kind is Bug fix)
       description: Steps to reproduce, expected vs actual, evidence (screenshots, logs), environment (app version, OS, display).
+  - type: dropdown
+    id: change-kind
+    attributes:
+      label: Kind of change (required when Kind is Animation)
+      description: |
+        Picks the flow (design 7.14). Fix: a defect at a moment. Improvement: one iteration, no creative stage.
+        Rework: rethink a part, creative stage again. New: a new animation.
+      options: [Fix, Improvement, Rework, New]
   - type: textarea
     id: animation-details
     attributes:
       label: Animation details (required when Kind is Animation)
       description: |
-        Kind of change, references, mood, which signals drive what, target displays and performance tier,
+        References, mood, which signals drive what, target displays and performance tier,
         creative freedom (exact / explore within the brief / surprise me), and elements that must stay.
   - type: textarea
     id: feature-details
