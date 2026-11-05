@@ -62,7 +62,8 @@ class PerasControlLabelsTest(unittest.TestCase):
     CONTROL = {"peras:ready", "peras:cancel", "peras:pause", "peras:resume", "risk:low", "risk:medium",
                "risk:high", "spec:approved", "spec:answered", "spec:rework", "plan:approved",
                "verdict:proceed", "verdict:rework", "look:approved", "look:rework",
-               "escalation:grant", "escalation:deny", "escalation:answer"}
+               "escalation:grant", "escalation:deny", "escalation:answer",
+               "feedback:ready", "animation:approved"}
 
     def test_every_peras_repo_has_the_control_labels(self):
         for repo in load("peras-repos.json")["repos"]:
