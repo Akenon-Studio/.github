@@ -35,7 +35,9 @@
     {"name": "look:rework", "color": "fbca04", "description": "Peras control: the visual-review gate sends it back (design 7.13 Stage 7)"},
     {"name": "escalation:grant", "color": "0e8a16", "description": "Peras control: an escalation is granted (design 7.12)"},
     {"name": "escalation:deny", "color": "b60205", "description": "Peras control: an escalation is denied (design 7.12)"},
-    {"name": "escalation:answer", "color": "c5def5", "description": "Peras control: an escalation is answered (design 7.12)"}
+    {"name": "escalation:answer", "color": "c5def5", "description": "Peras control: an escalation is answered (design 7.12)"},
+    {"name": "feedback:ready", "color": "c5def5", "description": "Peras control: a partner says an animation's notes count for the next cycle (design 7.14)"},
+    {"name": "animation:approved", "color": "0e8a16", "description": "Peras control: a partner approves an animation project for release (design 7.14)"}
   ],
   ".github-private": [
     {"name": "automation-failures", "color": "b60205", "description": "The automation failures report: what failed with no one told (design 6.8)"},
