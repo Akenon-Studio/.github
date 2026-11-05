@@ -329,7 +329,10 @@ class OrgRulesetsTest(unittest.TestCase):
     # the ids GitHub has for them, in that order, and the engineers team's
     IDS = [1227934210, 1227931808, 1227933553, 1227933890, 1227931468, 1227932798]
     # A ruleset for archived repos with a reviewer team, as the file would write it: the shape of
-    # Merge and PR Gates, kept as code by .github#252 and dropped from the file by .github#254.
+    # Merge and PR Gates, kept as code by .github#252 and dropped from the file by .github#254 (design
+    # 6.2, Appendix A 2026-11-05). No ruleset in the file uses either now; rules.py keeps them because
+    # they are how GitHub stores such a ruleset (repo ids, a team id), so a hand-made one can still be
+    # taken in as code and checked for drift without new code, and this fixture keeps them tested.
     GATES = {
         "name": "Gates", "archived_repositories": ARCHIVED, "target": "branch", "enforcement": "active",
         "bypass_actors": [],
