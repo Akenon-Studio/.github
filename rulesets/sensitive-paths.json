@@ -12,7 +12,7 @@
                             "/packages/config/",
                             "/apps/desktop/scripts/check-size.mjs"],
                "animations": ["/tools/licences/", "/tools/validate-all.mjs",
-                              "/tools/capture/witness-gate.mjs"]}},
+                              "/tools/witness/"]}},
     {"area": "payments", "codeowners": true, "team": "engineers",
      "paths": {"platform": ["/apps/web/src/app/(store)/checkout/"]},
      "planned": {"platform": ["/apps/api/src/modules/purchases/", "/apps/api/src/modules/subscriptions/",
